@@ -109,6 +109,8 @@ produces confusing results that look like product bugs.
 ## Conventions
 
 - Tests: `samples/basic` is the published fixture and backs most tests.
+  `samples/references` is a second published one for `resolve()` typing: urn-linked
+  references, a multi-target path, and a target that only arrives in a later load.
   `BiobankPoolTest` and `RenderTest` use a deeper, domain-specific fixture under
   `samples/biobank/` that is **gitignored and deliberately not published** — it is not
   reproducible from a clone. Those tests call `assumeTrue` on its presence, so they

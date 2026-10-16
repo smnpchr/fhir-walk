@@ -10,6 +10,8 @@ import org.hl7.fhir.instance.model.api.IBaseHasExtensions
 import org.hl7.fhir.instance.model.api.IBaseHasModifierExtensions
 import org.hl7.fhir.instance.model.api.IBaseReference
 import org.hl7.fhir.instance.model.api.IBaseResource
+import org.hl7.fhir.instance.model.api.IIdType
+import org.hl7.fhir.instance.model.api.IPrimitiveType
 
 /**
  * The corpus axis of completion: what is actually *present* in the imported data,
@@ -43,6 +45,15 @@ class Census {
 
     /** path -> referenced resource type -> count, from every Reference element. */
     val referenceTargets: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
+
+    /**
+     * References whose string names no type (`urn:uuid:…`, a bare id), keyed by the
+     * path they sit on. Their target is usually not loaded yet when they are walked,
+     * so the owning pool settles them into [referenceTargets] once an import is done
+     * (see `ResourcePool.settleReferences`). Unresolved ones stay queued for a later
+     * load to settle.
+     */
+    val pendingReferences: MutableList<Pair<String, IIdType>> = mutableListOf()
 
     /** path -> Coding.system -> count. */
     val codeSystems: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
@@ -109,6 +120,7 @@ class Census {
     fun clear() {
         extensions.clear()
         referenceTargets.clear()
+        pendingReferences.clear()
         codeSystems.clear()
         profiles.clear()
         choiceTypes.clear()
@@ -173,9 +185,11 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
 
     private fun recordLeafFacts(element: IBase, path: String) {
         if (element is IBaseReference) {
-            val target = runCatching { element.referenceElement?.resourceType }.getOrNull()
-            if (!target.isNullOrBlank()) {
-                census.referenceTargets.getOrPut(path) { linkedMapOf() }.merge(target, 1, Int::plus)
+            val reference = runCatching { element.referenceElement }.getOrNull()
+            val target = reference?.resourceType?.takeIf { it.isNotBlank() } ?: declaredType(element)
+            when {
+                target != null -> census.referenceTargets.getOrPut(path) { linkedMapOf() }.merge(target, 1, Int::plus)
+                !reference?.value.isNullOrBlank() -> census.pendingReferences += path to reference!!
             }
         }
         if (element is IBaseCoding) {
@@ -184,6 +198,19 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
                 census.codeSystems.getOrPut(path) { linkedMapOf() }.merge(system, 1, Int::plus)
             }
         }
+    }
+
+    /**
+     * `Reference.type`, for references whose string does not name the type
+     * (identifier-only, `urn:uuid:…`). `IBaseReference` does not expose it, so it is
+     * read through the runtime child like any other element; versions without the
+     * element (DSTU3) simply yield null. It may be a full StructureDefinition URL.
+     */
+    private fun declaredType(reference: IBaseReference): String? {
+        val def = ctx.getElementDefinition(reference.javaClass) as? BaseRuntimeElementCompositeDefinition<*> ?: return null
+        val child = def.getChildByName("type") ?: return null
+        val value = runCatching { child.accessor.getFirstValueOrNull<IBase>(reference).orElse(null) }.getOrNull()
+        return (value as? IPrimitiveType<*>)?.valueAsString?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
     }
 
     @Suppress("UNCHECKED_CAST")

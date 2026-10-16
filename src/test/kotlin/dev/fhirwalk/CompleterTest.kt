@@ -173,6 +173,61 @@ class CompleterTest {
         assertTrue(values.none { it == "valueQuantity" }, "wire names must not be offered")
     }
 
+    @Test
+    fun `resolve keeps its type through filters, subsetting and indexers`() {
+        // Census keys hold no call syntax, so these used to miss and offer functions only.
+        for (path in listOf(
+            "Observation.subject.where(reference.startsWith('Patient')).resolve().",
+            "Observation.subject.first().resolve().",
+            "Observation.subject[0].resolve().",
+        )) {
+            assertTrue("birthDate" in values(path), "no Patient elements after $path")
+        }
+    }
+
+    @Test
+    fun `elements after resolve are counted against the target type`() {
+        val name = candidates("Observation.subject.resolve().").single { it.value() == "name" }
+        assertEquals("elements (in pool)", name.group())
+    }
+
+    @Test
+    fun `extension urls stay scoped through a filter`() {
+        val scoped = candidates("Patient.name.where(use = 'official').extension('")
+        assertTrue(scoped.isNotEmpty() && scoped.all { it.group().startsWith("observed on") }, "got ${scoped.map { it.group() }}")
+        assertTrue(scoped.any { it.displ().endsWith("humanname-namenszusatz") }, "got ${scoped.map { it.displ() }}")
+        assertTrue(scoped.none { it.displ().endsWith("patient-birthPlace") }, "got ${scoped.map { it.displ() }}")
+    }
+
+    @Test
+    fun `resolve over urn references completes the target's elements`() {
+        val pool = ResourcePool(ctx)
+        Importer(ctx, pool).load(Paths.get("samples/references/transaction.json"))
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        val line = parser.parse("Encounter.subject.resolve().", 28, Parser.ParseContext.COMPLETE)
+        val out = mutableListOf<Candidate>()
+        completer.complete(reader, line, out)
+        assertTrue(out.any { it.value() == "birthDate" }, "got ${out.map { it.value() }}")
+    }
+
+    @Test
+    fun `resolve over several target types offers whole ofType steps`() {
+        val pool = ResourcePool(ctx)
+        Importer(ctx, pool).load(Paths.get("samples/references/transaction.json"))
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        fun complete(expression: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(expression, expression.length, Parser.ParseContext.COMPLETE), it)
+        }
+
+        // Patient twice, Group once: ranked by count, closed so the next TAB has elements.
+        val steps = complete("Observation.subject.resolve().").filter { it.group().startsWith("ofType()") }
+        assertEquals(listOf("ofType(Patient)", "ofType(Group)"), steps.map { it.value() })
+        assertTrue(complete("Observation.subject.resolve().ofType(Group).").any { it.value() == "member" })
+
+        // A single target needs no narrowing.
+        assertTrue(complete("Encounter.subject.resolve().").none { it.group().startsWith("ofType()") })
+    }
+
     private companion object {
         /** Stands in for the REPL's own command list. */
         val COMMANDS = listOf(

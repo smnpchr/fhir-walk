@@ -7,6 +7,7 @@ import ca.uhn.fhir.context.BaseRuntimeElementDefinition
 import ca.uhn.fhir.context.FhirContext
 import ca.uhn.fhir.context.RuntimeChildChoiceDefinition
 import ca.uhn.fhir.context.RuntimeChildResourceDefinition
+import ca.uhn.fhir.context.RuntimeResourceDefinition
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.pool.Census
 
@@ -35,23 +36,58 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
         runCatching { ctx.resourceTypes.sorted() }.getOrDefault(emptyList())
 
     /** Resolves the declared type of [path], or null when it cannot be known statically. */
-    fun resolveType(path: String): BaseRuntimeElementDefinition<*>? {
+    fun resolveType(path: String): BaseRuntimeElementDefinition<*>? = walk(path)?.type
+
+    /**
+     * The census key for [path]: the same location, spelled the way the census
+     * records it. Falls back to [path] itself when even that cannot be known, so a
+     * lookup still has its old chance of matching.
+     */
+    fun censusPath(path: String): String = walk(path)?.censusPath ?: path
+
+    /** Either half can be lost independently; see [walk]. */
+    private class Walked(val type: BaseRuntimeElementDefinition<*>?, val censusPath: String?)
+
+    /**
+     * Two accumulators, because the census never records call syntax: `where(…)`,
+     * `first()` and `[0]` leave the census path untouched while the type carries on,
+     * `extension('url')` is kept verbatim (that is how the census records it), and
+     * `resolve()` / `ofType(Resource)` restart it at the resource type, since census
+     * paths are rooted per resource type.
+     *
+     * The census path outlives the type: an untyped choice (`Extension.value` for an
+     * unobserved URL) still has a perfectly good census spelling. Only `resolve()`
+     * needs the type to know where the path restarts.
+     */
+    private fun walk(path: String): Walked? {
         val segments = FhirPathTokenizer.segments(path).filter { it.text.isNotBlank() }
         if (segments.isEmpty()) return null
 
-        var current: BaseRuntimeElementDefinition<*> = resourceOrElement(segments.first().name) ?: return null
-        var walked = segments.first().text
+        var current: BaseRuntimeElementDefinition<*>? = resourceOrElement(segments.first().name) ?: return null
+        var censusPath: String? = segments.first().name
 
         for (segment in segments.drop(1)) {
-            val next = if (segment.isCall) {
-                applyCall(segment, current, walked)
-            } else {
-                childType(current, segment.name, "$walked.${segment.name}")
-            } ?: return null
-            current = next
-            walked = "$walked.${segment.text}"
+            if (!segment.isCall) {
+                censusPath = censusPath?.let { "$it.${segment.name}" }
+                current = current?.let { childType(it, segment.name, censusPath.orEmpty()) }
+                continue
+            }
+            current = applyCall(segment, current, censusPath)
+            when (FhirPathFunctions[segment.name]?.typeEffect) {
+                FhirPathFunction.TypeEffect.EXTENSION -> censusPath = censusPath?.let { "$it.${segment.text.trim()}" }
+                FhirPathFunction.TypeEffect.RESOLVE -> censusPath = current?.name
+                FhirPathFunction.TypeEffect.FROM_ARGUMENT -> {
+                    if (current is RuntimeResourceDefinition) censusPath = current.name
+                }
+                FhirPathFunction.TypeEffect.PRESERVES -> {}
+                // select(), children(), primitives: the census has no spelling for that.
+                else -> censusPath = null
+            }
         }
-        return current
+        // Both can be lost mid-way and restored later: ofType(Group) after a
+        // resolve() whose targets are mixed recovers the type and the census path.
+        if (current == null && censusPath == null) return null
+        return Walked(current, censusPath)
     }
 
     fun childrenAt(path: String): List<Child> {
@@ -137,8 +173,8 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
     /** Tracks the type across a function call using the static effect table. */
     private fun applyCall(
         segment: FhirPathTokenizer.Segment,
-        current: BaseRuntimeElementDefinition<*>,
-        pathSoFar: String,
+        current: BaseRuntimeElementDefinition<*>?,
+        pathSoFar: String?,
     ): BaseRuntimeElementDefinition<*>? {
         val fn = FhirPathFunctions[segment.name] ?: return null
         return when (fn.typeEffect) {
@@ -149,7 +185,7 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
             FhirPathFunction.TypeEffect.RESOLVE -> {
                 // The static model cannot answer this; the corpus can, when every
                 // observed reference at this path points at the same type.
-                val observed = census?.referenceTargetsAt(pathSoFar).orEmpty()
+                val observed = pathSoFar?.let { census?.referenceTargetsAt(it) }.orEmpty()
                 observed.singleOrNull()?.let { resourceOrElement(it.value) }
             }
             else -> null
