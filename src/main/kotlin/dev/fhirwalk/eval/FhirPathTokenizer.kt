@@ -13,8 +13,8 @@ object FhirPathTokenizer {
 
     /** One `.`-separated step, e.g. `name`, `where(use = 'official')`, `extension(url)`. */
     data class Segment(val text: String, val start: Int, val end: Int) {
-        /** Identifier part, without any call parentheses. */
-        val name: String get() = text.substringBefore('(').trim()
+        /** Identifier part, without any call parentheses or `[n]` indexer. */
+        val name: String get() = text.substringBefore('(').substringBefore('[').trim()
 
         val isCall: Boolean get() = text.contains('(')
 

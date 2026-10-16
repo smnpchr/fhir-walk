@@ -143,6 +143,41 @@ class PoolTest {
         assertEquals("Patient", navigator.resolveType("Observation.subject.resolve()")?.name)
     }
 
+    @Test
+    fun `references the string cannot type are typed by what they resolve to`() {
+        val pool = ResourcePool(ctx)
+        val importer = Importer(ctx, pool)
+        importer.load(Paths.get("samples/references/transaction.json"))
+
+        // urn:uuid links name no type; resolving them against the pool does.
+        assertEquals<Map<String, Int>?>(mapOf("Patient" to 2, "Group" to 1), pool.census.referenceTargets["Observation.subject"])
+        assertEquals<Map<String, Int>?>(mapOf("Patient" to 1), pool.census.referenceTargets["Encounter.subject"])
+        assertEquals<Map<String, Int>?>(mapOf("Patient" to 1), pool.census.referenceTargets["Group.member.entity"])
+        // Identifier-only: Reference.type is all there is.
+        assertEquals<Map<String, Int>?>(mapOf("Practitioner" to 1), pool.census.referenceTargets["Observation.performer"])
+
+        // A bare id whose target is not loaded yet stays queued, then settles on a later load.
+        assertEquals<Map<String, Int>?>(null, pool.census.referenceTargets["Encounter.participant.individual"])
+        importer.load(Paths.get("samples/references/late"))
+        assertEquals<Map<String, Int>?>(mapOf("Practitioner" to 1), pool.census.referenceTargets["Encounter.participant.individual"])
+        assertTrue(pool.census.pendingReferences.isEmpty(), "left pending: ${pool.census.pendingReferences}")
+    }
+
+    @Test
+    fun `navigator keeps the census path through calls and indexers`() {
+        val navigator = ModelNavigator(ctx, pool.census)
+        assertEquals("Patient", navigator.resolveType("Observation.subject.where(x).resolve()")?.name)
+        assertEquals("Patient", navigator.resolveType("Observation.subject.first().resolve()")?.name)
+        assertEquals("Patient", navigator.resolveType("Observation.subject[0].resolve()")?.name)
+        assertEquals("Patient.name", navigator.censusPath("Observation.subject.resolve().name.where(use = 'official')"))
+        assertEquals(
+            "Patient.extension('http://x').value",
+            navigator.censusPath("Patient.extension('http://x').first().value"),
+        )
+        // A projection has no census spelling; the raw path goes through untouched.
+        assertEquals("Patient.select(name).given", navigator.censusPath("Patient.select(name).given"))
+    }
+
     private fun assertIsValues(outcome: Outcome): List<org.hl7.fhir.instance.model.api.IBase> =
         when (outcome) {
             is Outcome.Values -> outcome.values

@@ -76,6 +76,21 @@ class ResourcePool(val ctx: FhirContext) {
         return null
     }
 
+    /**
+     * Types the references the census could not type from their string, by resolving
+     * them the same way `resolve()` does at eval time -- so completion after
+     * `resolve()` sees exactly what evaluation would. Called after each import,
+     * because a reference is typically walked before its target is loaded.
+     */
+    fun settleReferences() {
+        census.pendingReferences.removeAll { (path, reference) ->
+            val target = resolve(reference) ?: return@removeAll false
+            census.referenceTargets.getOrPut(path) { linkedMapOf() }
+                .merge(ctx.getResourceType(target), 1, Int::plus)
+            true
+        }
+    }
+
     fun clear() {
         items.clear()
         byKey.clear()

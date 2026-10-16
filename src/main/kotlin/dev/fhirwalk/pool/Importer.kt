@@ -43,6 +43,7 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
             path.isRegularFile() -> loadFile(path, report)
             else -> report.problems += "not found: $path"
         }
+        pool.settleReferences()
         return report
     }
 

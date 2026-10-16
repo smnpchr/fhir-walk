@@ -107,7 +107,7 @@ class FhirPathCompleter(
                 // After resolve(), the plausible types are the ones actually referenced.
                 // Targets are censused on the Reference element itself, so the
                 // trailing resolve() step comes off before the lookup.
-                val observed = census.referenceTargetsAt(withoutTrailingResolve(context.basePath))
+                val observed = census.referenceTargetsAt(nav.censusPath(withoutTrailingResolve(context.basePath)))
                 observed.forEach { candidates += cand(it.value, it.value, "observed", "${it.count} ×") }
                 // When the corpus has an answer, trust it rather than dumping 146
                 // resource types the user would have to page through.
@@ -117,7 +117,7 @@ class FhirPathCompleter(
             // What follows the cursor decides whether the candidate has to close the
             // string literal itself.
             CursorKind.STRING_ARG ->
-                stringArgument(context, census, candidates, slice.substring(cursor.coerceAtMost(slice.length)))
+                stringArgument(context, nav, census, candidates, slice.substring(cursor.coerceAtMost(slice.length)))
 
             CursorKind.MEMBER -> {
                 if (context.basePath.isBlank()) {
@@ -152,8 +152,11 @@ class FhirPathCompleter(
         census: Census,
         candidates: MutableList<Candidate>,
     ) {
+        // Census keys carry no where()/first()/[n] and restart at the resource type
+        // after resolve(), so counts and extensions are looked up by that spelling.
+        val censusPath = nav.censusPath(basePath)
         for (child in nav.childrenAt(basePath)) {
-            val observed = census.countAt("$basePath.${child.name}")
+            val observed = census.countAt("$censusPath.${child.name}")
             val cardinality = if (child.isCollection) "*" else "1"
             val detail = buildString {
                 append(child.typeName)
@@ -166,7 +169,30 @@ class FhirPathCompleter(
             val group = if (observed > 0) "elements (in pool)" else "elements"
             candidates += cand(child.name, child.name, group, detail)
         }
-        extensionSteps(basePath, census, candidates)
+        extensionSteps(censusPath, census, candidates)
+        targetSteps(basePath, nav, census, candidates)
+    }
+
+    /**
+     * Whole `ofType(X)` steps after a `resolve()` whose references point at more than
+     * one type. The navigator cannot pick one, so no elements are offered; one TAB on
+     * a step narrows the collection to a single type and the next TAB has elements
+     * again. Ranked by how many references point at each type.
+     */
+    private fun targetSteps(
+        basePath: String,
+        nav: ModelNavigator,
+        census: Census,
+        candidates: MutableList<Candidate>,
+    ) {
+        val referencePath = withoutTrailingResolve(basePath)
+        if (referencePath == basePath) return
+        val targets = census.referenceTargetsAt(nav.censusPath(referencePath))
+        if (targets.size < 2) return
+        for (target in targets) {
+            val step = "ofType(${target.value})"
+            candidates += cand(step, step, "ofType() — referenced here", "${target.count} ×")
+        }
     }
 
     /**
@@ -208,6 +234,7 @@ class FhirPathCompleter(
 
     private fun stringArgument(
         context: FhirPathTokenizer.CursorContext,
+        nav: ModelNavigator,
         census: Census,
         candidates: MutableList<Candidate>,
         tail: String,
@@ -223,9 +250,10 @@ class FhirPathCompleter(
         fun stringCand(value: String, group: String, descr: String?) =
             cand(value + closer, value, group, descr)
 
+        val censusPath = nav.censusPath(context.basePath)
         when (context.enclosingCall) {
             "extension" -> {
-                val scoped = census.extensionsAt(context.basePath)
+                val scoped = census.extensionsAt(censusPath)
                 scoped.forEach {
                     candidates += stringCand(it.value, "observed on ${context.basePath}", detail(it))
                 }
@@ -240,8 +268,8 @@ class FhirPathCompleter(
             else -> {
                 // A quoted literal being compared against a Coding: offer the systems
                 // observed at the sibling path.
-                val systems = census.codeSystemsAt(context.basePath)
-                    .ifEmpty { census.codeSystemsAt(context.basePath.substringBeforeLast('.')) }
+                val systems = census.codeSystemsAt(censusPath)
+                    .ifEmpty { census.codeSystemsAt(censusPath.substringBeforeLast('.')) }
                 systems.take(MAX_ROWS).forEach {
                     candidates += stringCand(it.value, "systems in pool", "${it.count} ×")
                 }
