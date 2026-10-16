@@ -24,7 +24,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         FhirPathCompleter.CommandInfo(":pool", "", "what is in the pool"),
         FhirPathCompleter.CommandInfo(":focus", "[label|#index]", "evaluate against one resource (blank to clear)"),
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
-        FhirPathCompleter.CommandInfo(":why", "<expr>", "find the step where the expression goes empty"),
+        FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
         FhirPathCompleter.CommandInfo(":more", "", "reprint the last listing in full, nothing shortened"),
         FhirPathCompleter.CommandInfo(":limit", "[rows|off]", "rows per listing before the rest waits for :more"),
@@ -47,6 +47,16 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private class Listing(val header: String?, val preview: List<String>, val full: List<String>)
 
     private var lastListing: Listing? = null
+
+    /**
+     * The last expression that was run, so a bare `:why` can re-diagnose it.
+     *
+     * The hint that leads to `:why` is printed the moment an expression comes back
+     * empty, which is exactly when retyping a long path — or a path with an extension
+     * URL in it — is most annoying. Only expressions are remembered, so `:pool`
+     * between the two does not lose it.
+     */
+    private var lastExpression: String? = null
 
     /** Rows printed per listing before the rest is held for `:more`; 0 = unlimited. */
     private var rowLimit = DEFAULT_ROW_LIMIT
@@ -126,6 +136,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 out.println("! not a FHIRPath expression — did you mean  :$input")
                 return true
             }
+            lastExpression = input
             evaluate(input, out)
             return true
         }
@@ -137,8 +148,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             ":load" -> if (argument.isBlank()) out.println("usage: :load <path>") else load(argument, out)
             ":pool" -> poolSummary(out)
             ":focus" -> focus(argument, out)
-            ":all" -> if (argument.isBlank()) out.println("usage: :all <expr>") else evaluateAll(argument, out)
-            ":why" -> if (argument.isBlank()) out.println("usage: :why <expr>") else why(argument, out)
+            ":all" -> if (argument.isBlank()) {
+                out.println("usage: :all <expr>")
+            } else {
+                lastExpression = argument
+                evaluateAll(argument, out)
+            }
+            ":why" -> why(argument, out)
             ":ext" -> extensions(argument, out)
             ":more" -> more(out)
             ":limit" -> limit(argument, out)
@@ -166,7 +182,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             is Outcome.Failure -> out.println("! ${outcome.message}")
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
-                    out.println("{} empty — :why $expression")
+                    out.println("{} empty — :why")
                     return
                 }
                 emit(
@@ -313,7 +329,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             if (result.errors == 0) {
                 // Nothing matched anywhere, and it parsed: the question is which step
                 // goes empty, which is exactly what :why answers.
-                out.println("  nothing matched — :why $expression")
+                out.println("  nothing matched — :why")
             }
             lastListing = null
             return
@@ -337,7 +353,14 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         )
     }
 
-    private fun why(expression: String, out: PrintWriter) {
+    /** @param argument the expression, or blank to re-diagnose [lastExpression]. */
+    private fun why(argument: String, out: PrintWriter) {
+        val expression = argument.ifBlank { lastExpression ?: "" }
+        if (expression.isBlank()) {
+            out.println("usage: :why <expr>  —  or :why alone, to re-run the last expression")
+            return
+        }
+        lastExpression = expression
         if (reportSyntaxError(expression, out)) return
         if (session.pool.size == 0) {
             out.println("pool is empty")
@@ -491,6 +514,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println()
         out.println("With a focus set, an expression runs against that resource;")
         out.println("with no focus it runs across the whole pool.")
+        out.println()
+        out.println(":why with no expression re-diagnoses the last one you ran, so the")
+        out.println("hint printed after an empty result can be followed by just :why.")
         out.println()
         out.println()
         out.println("A listing fills the window and keeps the rest for :more, which")
