@@ -22,6 +22,7 @@ class Style(val enabled: Boolean) {
     fun hint(text: String) = paint(FAINT, text)
     fun count(text: String) = paint(YELLOW, text)
     fun url(text: String) = paint(GREEN, text)
+    fun error(text: String) = paint(RED, text)
 
     /**
      * Highlights a rendered value if it is JSON, and returns it as is otherwise --
@@ -123,6 +124,7 @@ class Style(val enabled: Boolean) {
         private const val ESC = "\u001b["
         private const val BOLD = "1"
         private const val FAINT = "2"
+        private const val RED = "31"
         private const val GREEN = "32"
         private const val YELLOW = "33"
         private const val BLUE = "34"

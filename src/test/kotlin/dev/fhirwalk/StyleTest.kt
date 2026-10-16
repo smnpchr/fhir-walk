@@ -16,6 +16,7 @@ class StyleTest {
         val line = """{"system": "http://loinc.org", "code": "1234-5"}"""
         assertEquals(line, Style.PLAIN.json(line))
         assertEquals("Patient", Style.PLAIN.type("Patient"))
+        assertEquals("! boom", Style.PLAIN.error("! boom"))
     }
 
     @Test
@@ -70,5 +71,10 @@ class StyleTest {
         // Inner lines of Render.pretty start with a key or a value, not a bracket.
         val line = """    "family": "Chalmers","""
         assertTrue(on.json(line).contains("\u001b[34m\"family\""), on.json(line))
+    }
+
+    @Test
+    fun `errors are red`() {
+        assertEquals("\u001b[31m! boom\u001b[0m", on.error("! boom"))
     }
 }

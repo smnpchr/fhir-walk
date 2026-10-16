@@ -115,7 +115,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             try {
                 if (!dispatch(input, out)) break
             } catch (e: Exception) {
-                out.println("! ${e.message ?: e.javaClass.simpleName}")
+                out.println(style.error("! ${e.message ?: e.javaClass.simpleName}"))
             }
             out.flush()
         }
@@ -137,7 +137,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             // beats handing the whole line to the FHIRPath parser.
             val firstWord = input.substringBefore(' ')
             if (":$firstWord" in commandNames) {
-                out.println("! not a FHIRPath expression — did you mean  :$input")
+                out.println(style.error("! not a FHIRPath expression — did you mean  :$input"))
                 return true
             }
             lastExpression = input
@@ -183,7 +183,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             return
         }
         when (val outcome = session.evaluator.evaluate(focus.resource, expression)) {
-            is Outcome.Failure -> out.println("! ${outcome.message}")
+            is Outcome.Failure -> out.println(style.error("! ${outcome.message}"))
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
                     out.println("{} empty — :why")
@@ -314,7 +314,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      */
     private fun reportSyntaxError(expression: String, out: PrintWriter): Boolean {
         val error = session.evaluator.validate(expression) ?: return false
-        out.println("! $error")
+        out.println(style.error("! $error"))
         // FHIRPath strings are single-quoted; " delimits an identifier, so a
         // double-quoted URL fails with a message that never mentions quoting.
         if (expression.contains('"')) {
@@ -327,7 +327,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
         val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
-            if (result.errors > 0) "; ${result.errors} error(s): ${result.firstError}" else ""
+            if (result.errors > 0) style.error("; ${result.errors} error(s): ${result.firstError}") else ""
         if (result.hits.isEmpty()) {
             out.println(header)
             if (result.errors == 0) {
@@ -399,7 +399,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             }
             val label = segments.getOrNull(idx)?.text?.let { if (idx == 0) it else ".$it" }
                 ?: step.expression
-            out.println("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} ${count.padEnd(5)}$marker")
+            // Colour after padding, so the escape codes do not count towards the width.
+            val cell = count.padEnd(5).let { if (step.error != null) style.error(it) else it }
+            out.println("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} $cell$marker")
         }
         if (diagnosis.firstEmpty == null) {
             out.println("  path resolves fully")
@@ -425,7 +427,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out.println(header)
             return
         }
-        emit(out, header, report.problems.map { "  ! $it" })
+        emit(out, header, report.problems.map { "  " + style.error("! $it") })
     }
 
     private fun poolSummary(out: PrintWriter) {
@@ -511,7 +513,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             session = Session(version)
             out.println("switched to FHIR ${version.id.uppercase()} — pool reset")
         } catch (e: FhirVersionUnavailable) {
-            out.println("! ${e.message}")
+            out.println(style.error("! ${e.message}"))
         }
     }
 
