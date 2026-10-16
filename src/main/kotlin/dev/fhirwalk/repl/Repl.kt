@@ -170,14 +170,20 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         }
         if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
         val diagnosis = session.prefixWalker.diagnose(focus.resource, expression)
+        // Each row shows only the step it adds, not the whole prefix: with long
+        // extension URLs in the path, repeating the prefix makes the table unreadable.
+        val segments = dev.fhirwalk.eval.FhirPathTokenizer.segments(expression)
+            .filter { it.text.isNotBlank() }
         for ((idx, step) in diagnosis.steps.withIndex()) {
-            val marker = if (idx == diagnosis.firstEmpty) " <-- empty here" else ""
+            val marker = if (idx == diagnosis.firstEmpty) "  <-- empty here" else ""
             val count = when {
                 !step.reached -> "—"
                 step.error != null -> "! ${step.error}"
                 else -> "${step.count}"
             }
-            out.println("  ${step.expression.padEnd(46)} ${count.padEnd(6)}$marker")
+            val label = segments.getOrNull(idx)?.text?.let { if (idx == 0) it else ".$it" }
+                ?: step.expression
+            out.println("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} ${count.padEnd(5)}$marker")
         }
         if (diagnosis.firstEmpty == null) {
             out.println("  path resolves fully")
@@ -185,7 +191,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         }
         diagnosis.poolCoverage?.let { coverage ->
             out.println(
-                "  ${coverage.expression} is populated in ${coverage.matching} of " +
+                "  ${abbreviate(coverage.expression, 60)} is populated in ${coverage.matching} of " +
                     "${coverage.considered} resource(s) of that type",
             )
             if (coverage.matching == 0) {
@@ -294,9 +300,18 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private fun expandHome(path: String): String =
         if (path.startsWith("~")) System.getProperty("user.home") + path.drop(1) else path
 
+    /** Elides the middle, since the informative parts of a URL are both ends. */
+    private fun abbreviate(text: String, width: Int): String {
+        if (text.length <= width) return text
+        val keepTail = (width - 1) / 2
+        val keepHead = width - 1 - keepTail
+        return text.take(keepHead) + "…" + text.takeLast(keepTail)
+    }
+
     private companion object {
         const val MAX_ROWS = 40
         const val MAX_POOL_ROWS = 12
         const val MAX_PROBLEMS = 8
+        const val STEP_WIDTH = 48
     }
 }

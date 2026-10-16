@@ -30,8 +30,8 @@ class CompleterTest {
 
     init {
         Importer(ctx, pool).apply {
-            load(Paths.get("samples/bundle.json"))
-            load(Paths.get("samples/tree"))
+            load(Paths.get("samples/basic/bundle.json"))
+            load(Paths.get("samples/basic/tree"))
         }
         val terminal = TerminalBuilder.builder().dumb(true).build()
         reader = LineReaderBuilder.builder().terminal(terminal).build()

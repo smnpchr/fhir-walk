@@ -7,13 +7,13 @@ Nothing leaves the machine. There is no engine endpoint, no package-server fetch
 no terminology lookup — the base StructureDefinitions ship as a JAR dependency.
 
 ```
-./gradlew run --args="samples"
+./gradlew run --args="samples/biobank"
 
-r4:pool(6)> Observation.subject.resolve().name.family
-3 of 6 resource(s) matched
-  Observation/obs1             Mustermann
-  Observation/obs2             Mustermann
-  Observation/obs3             Schmidt
+r4:pool(22)> :focus Specimen/al-pa-001-1
+focus Specimen/al-pa-001-1  (pathogen.ndjson:1)
+
+r4:Specimen/al-pa-001-1> Specimen.parent.resolve().parent.resolve().parent.resolve().parent.resolve().identifier.value
+  [0] string  ST-2026-0001
 ```
 
 ## What it does that other FHIRPath tools don't
@@ -34,27 +34,63 @@ Extension URLs can only come from the second, and scoping them to the element th
 were observed on is what keeps the list short:
 
 ```
-r4:pool(6)> Patient.name.extension('
-  observed on Patient.name
-  http://fhir.de/StructureDefinition/humanname-namenszusatz   1 ×  string
+r4:pool(22)> Specimen.container.extension('
+  observed on Specimen.container
+  https://biobank.example.org/StructureDefinition/container-lot-number   9 ×  string
 ```
 
-`Patient.extension('` offers a *different*, non-overlapping set. The census also
+`Specimen.extension('` offers a *different*, non-overlapping set (freezing time,
+time-to-freezing, storage, aliquot-group purpose). The census also
 backs `ofType()` after `resolve()` (types actually referenced), code systems, profiles
 and frequency ranking of elements — populated elements are grouped apart from merely
 legal ones, which matters in a schema as large as FHIR's.
 
 **`:why` tells you where an expression went empty**, and — because the pool is there —
-whether it is empty everywhere or only here:
+whether that is a gap in your data or the wrong level of the hierarchy:
 
 ```
-r4:Patient/pat1> :why Patient.contact.name.given
-  Patient                                        1
-  Patient.contact                                0      <-- empty here
-  Patient.contact.name                           —
-  Patient.contact.name.given                     —
-  Patient.contact is populated in 1 of 2 resource(s) of that type
+r4:Specimen/swab-002> :why Specimen.collection.collectedDateTime
+  Specimen                                         1
+  .collection                                      0      <-- empty here
+  .collectedDateTime                               —
+  Specimen.collection is populated in 1 of 20 resource(s) of that type
 ```
+
+One hit in twenty says "wrong level" — only the master sample carries `collection`.
+Twelve in twenty (as for the freezing-time extension) says the expression is right and
+the data is incomplete. That distinction is the whole value of having the pool.
+
+## Sample pools
+
+`samples/biobank` is a real-world biobanking hierarchy: a native stool sample
+aliquoted through **aliquot groups** into direct aliquots and swabs, each swab
+aliquoted again into pathogen- and genetics-analysis sets. Aliquots never reference
+their primary directly — the group sits in between, so walking the lineage means
+chaining `resolve()` (four hops from a terminal aliquot to the master sample).
+
+```
+spec-master-stool                       ST-2026-0001   (bundle)
+├── ag-stool-direct                     aliquot group  (one file per group)
+│   └── al-stool-001..003                              (NDJSON)
+└── ag-stool-swab                       aliquot group
+    └── swab-001, swab-002
+        ├── ag-sw00N-patho              aliquot group
+        │   └── al-pa-00N-1, al-pa-00N-2
+        └── ag-sw00N-gen                aliquot group
+            └── al-ge-00N-1, al-ge-00N-2
+```
+
+20 Specimens, a donor and one XML Observation, deliberately spread across all three
+import paths so one pool is assembled from a bundle, a directory tree and NDJSON. It
+carries custom extensions at four distinct paths — `specimen-freezing-time` and
+`specimen-time-to-freezing` on the Specimen root, `container-lot-number` on
+`Specimen.container`, `collection-ambient-temperature` on `Specimen.collection` — plus
+a nested `specimen-storage` extension with `temperature`/`freezer`/`position`
+sub-extensions. Coverage is deliberately partial: some specimens have no freezing time
+recorded, which is what makes `:why` and the census worth reading.
+
+`generate.py` regenerates it. `samples/basic` is the small fixture set the
+non-biobank tests use.
 
 ## Commands
 
@@ -143,7 +179,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test     # 31 tests
+./gradlew test     # 40 tests
 ./gradlew run --args="--fhir r4 samples"
 ./gradlew installDist
 ```

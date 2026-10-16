@@ -22,8 +22,8 @@ class PoolTest {
 
     init {
         val importer = Importer(ctx, pool)
-        importer.load(Paths.get("samples/bundle.json"))
-        importer.load(Paths.get("samples/tree"))
+        importer.load(Paths.get("samples/basic/bundle.json"))
+        importer.load(Paths.get("samples/basic/tree"))
     }
 
     @Test
