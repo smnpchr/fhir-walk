@@ -4,6 +4,7 @@ import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.FhirPathTokenizer.CursorKind
 import dev.fhirwalk.model.FhirPathFunctions
 import dev.fhirwalk.model.FhirVersion
+import dev.fhirwalk.eval.PromptLine
 import dev.fhirwalk.model.ModelNavigator
 import dev.fhirwalk.pool.Census
 import dev.fhirwalk.pool.ResourcePool
@@ -36,26 +37,34 @@ class FhirPathCompleter(
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
         val cursor = line.cursor()
-        if (text.trimStart().startsWith(":")) {
+        // `:all` and `:why` take an expression, so their argument completes exactly as
+        // a bare expression does; every other command argument is its own thing.
+        val slice = PromptLine.expressionSlice(text, cursor)
+        if (slice == null) {
             completeCommand(text, candidates)
             return
         }
-        completeExpression(text, cursor, candidates)
+        completeExpression(slice.text, slice.cursor, candidates)
     }
 
     // ------------------------------------------------------------------ commands
 
     private fun completeCommand(text: String, candidates: MutableList<Candidate>) {
-        val words = text.trim().split(Regex("\\s+"))
-        if (words.size <= 1) {
+        val trimmed = text.trimStart()
+        val command = trimmed.takeWhile { !it.isWhitespace() }
+        // Trailing whitespace is the signal that the name is finished and an argument
+        // is being typed, so it must not be trimmed away: ":fhir" offers command
+        // names, ":fhir " offers versions.
+        if (command.length == trimmed.length) {
             commands().forEach { candidates += commandCand(it.name, it.name, "commands", it.doc) }
             return
         }
-        when (words.first()) {
+        val lastToken = trimmed.substringAfterLast(' ', "")
+        when (command) {
             ":fhir" -> FhirVersion.entries.forEach {
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
-            ":load" -> completePath(words.last(), candidates)
+            ":load" -> completePath(lastToken, candidates)
             ":focus" -> pool().all().take(MAX_FOCUS_CANDIDATES).forEach {
                 candidates += commandCand(it.label, it.label, "pool", it.origin)
             }

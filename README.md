@@ -108,7 +108,12 @@ Type a FHIRPath expression, or:
 | `:fhir [version]` | switch FHIR version (resets the pool) |
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
-across the pool. TAB completes.
+across the pool.
+
+TAB completes, including inside the `:all` and `:why` arguments, which are
+expressions like any other. On an empty line it lists the pool's resource types;
+after a `.` the elements and functions available there, pool-populated ones first;
+inside `extension('…')` the URLs observed on that element.
 
 ## Import paths
 
@@ -143,6 +148,7 @@ pool/      ResourcePool, PooledResource     pool + resolve() indexes
 eval/      PoolEvaluationContext            pool-backed resolve()
            Evaluator                        single + pool-wide fan-out
            FhirPathTokenizer                prefix split, cursor context
+           PromptLine                       where the expression starts in a line
            PrefixWalker                     powers :why
 complete/  FhirPathCompleter                merges both axes into JLine candidates
 repl/      Repl, Session, FhirPathParser, Render
@@ -185,7 +191,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 43 tests
+./gradlew test                              # 52 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/biobank
 ```

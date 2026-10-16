@@ -57,7 +57,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         out.println("FHIR ${session.version.id.uppercase()}")
         initialPaths.forEach { load(it, out) }
-        if (initialPaths.isEmpty()) out.println("pool is empty — :load <path> to import")
+        if (initialPaths.isEmpty()) {
+            out.println("pool is empty — :load <path> to import")
+        } else {
+            out.println("TAB on an empty line lists the resource types in the pool")
+        }
         out.flush()
 
         while (true) {
@@ -342,7 +346,12 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         commands.forEach { out.println("  ${it.name} ${it.args}".padEnd(26) + it.doc) }
         out.println()
         out.println("With a focus set, an expression runs against that resource;")
-        out.println("with no focus it runs across the whole pool. TAB completes.")
+        out.println("with no focus it runs across the whole pool.")
+        out.println()
+        out.println("TAB completes, including after :all and :why. On an empty line it")
+        out.println("lists the pool's resource types; after a '.' the elements and")
+        out.println("functions available there, with the ones present in the pool first;")
+        out.println("inside extension('…') the URLs observed on that element.")
     }
 
     private fun expandHome(path: String): String =

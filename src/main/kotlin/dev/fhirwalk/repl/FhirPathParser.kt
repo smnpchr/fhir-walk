@@ -1,6 +1,7 @@
 package dev.fhirwalk.repl
 
 import dev.fhirwalk.eval.FhirPathTokenizer
+import dev.fhirwalk.eval.PromptLine
 import org.jline.reader.CompletingParsedLine
 import org.jline.reader.ParsedLine
 import org.jline.reader.Parser
@@ -16,15 +17,17 @@ import org.jline.reader.Parser
 class FhirPathParser : Parser {
 
     override fun parse(line: String, cursor: Int, context: Parser.ParseContext): ParsedLine {
-        if (line.trimStart().startsWith(":")) return parseCommand(line, cursor)
+        // `:all Patient.na` is an expression with a command in front of it, so the
+        // word boundaries inside the argument are FHIRPath's, not whitespace.
+        val slice = PromptLine.expressionSlice(line, cursor) ?: return parseCommand(line, cursor)
 
-        val ctx = FhirPathTokenizer.cursorContext(line, cursor)
+        val ctx = FhirPathTokenizer.cursorContext(slice.text, slice.cursor)
         val word = ctx.partial
         return Parsed(
             line = line,
             cursor = cursor,
             word = word,
-            wordCursor = (cursor - ctx.replaceFrom).coerceIn(0, word.length),
+            wordCursor = (cursor - slice.offset - ctx.replaceFrom).coerceIn(0, word.length),
             wordIndex = 0,
             words = mutableListOf(word),
         )

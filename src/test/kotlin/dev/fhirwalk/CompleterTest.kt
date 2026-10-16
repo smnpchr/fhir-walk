@@ -35,7 +35,7 @@ class CompleterTest {
         }
         val terminal = TerminalBuilder.builder().dumb(true).build()
         reader = LineReaderBuilder.builder().terminal(terminal).build()
-        completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { emptyList() })
+        completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
     }
 
     private fun candidates(expression: String): List<Candidate> {
@@ -105,9 +105,49 @@ class CompleterTest {
     }
 
     @Test
+    fun `the argument of an expression command completes like an expression`() {
+        // Completion that stops working the moment you prefix the line with :all is
+        // worse than none at all, since :all is how you search the pool.
+        assertTrue(values(":all Speci").contains("Specimen"), "root type not offered")
+        assertTrue(values(":all Patient.").contains("name"), "members not offered")
+        assertTrue(values(":why Patient.").contains("name"), "members not offered")
+        assertTrue(
+            values(":all Patient.name.extension('").any { it.endsWith("humanname-namenszusatz") },
+            "census urls not offered inside a command argument",
+        )
+    }
+
+    @Test
+    fun `commands and their non-expression arguments do not complete as expressions`() {
+        assertTrue(values(":").contains(":all"), "command names not offered")
+        assertTrue(values(":fhir ").contains("r5"), "versions not offered")
+        // :load takes a path, so resource types must not appear.
+        assertTrue(values(":load sam").none { it == "Specimen" || it == "Patient" })
+    }
+
+    @Test
+    fun `an empty prompt offers the resource types the pool actually holds`() {
+        val byName = candidates("").associateBy { it.value() }
+        assertEquals("in pool", byName.getValue("Patient").group())
+        assertEquals("in pool", byName.getValue("Observation").group())
+        // The full 146-type schema stays out of the way until a prefix is typed.
+        assertTrue(byName.keys.none { it == "Practitioner" }, "got ${byName.keys}")
+    }
+
+    @Test
     fun `choice elements complete by base name only`() {
         val values = values("Observation.")
         assertTrue(values.contains("value"), "got $values")
         assertTrue(values.none { it == "valueQuantity" }, "wire names must not be offered")
+    }
+
+    private companion object {
+        /** Stands in for the REPL's own command list. */
+        val COMMANDS = listOf(
+            FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the pool"),
+            FhirPathCompleter.CommandInfo(":why", "<expr>", "find the step that goes empty"),
+            FhirPathCompleter.CommandInfo(":load", "<path>", "import a path"),
+            FhirPathCompleter.CommandInfo(":fhir", "[version]", "switch FHIR version"),
+        )
     }
 }
