@@ -94,4 +94,24 @@ class FhirPathTokenizerTest {
         assertEquals(CursorKind.TYPE_ARG, context.kind)
         assertEquals("Observation.subject.resolve()", context.basePath)
     }
+
+    @Test
+    fun `a literal on the right of a comparison knows its left operand`() {
+        fun compared(expr: String) = FhirPathTokenizer.cursorContext(expr, expr.length).comparedPath
+
+        assertEquals("Patient.gender", compared("Patient.gender = '"))
+        assertEquals("Patient.gender", compared("Patient.gender != 'f"))
+        // Inside a call the operand is relative to the call's input; earlier terms do not count.
+        assertEquals("Observation.code.coding.code", compared("Observation.code.coding.where(code = '"))
+        assertEquals(
+            "Observation.code.coding.code",
+            compared("Observation.code.coding.where(system = 'http://loinc.org' and code = '"),
+        )
+        assertEquals("Patient.name.use", compared("Patient.name.where(\$this.use = 'x').exists() and Patient.name.use = '"))
+        assertEquals("Patient.gender", compared("Patient.where(\$this.gender = '"))
+        assertEquals("Patient.name.given", compared("Patient.name.given.where(\$this = '"))
+        // Not a comparison: no operand.
+        assertEquals(null, compared("Patient.name.extension('"))
+        assertEquals(null, compared("Patient.birthDate >= '"))
+    }
 }

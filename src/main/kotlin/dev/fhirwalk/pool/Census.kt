@@ -58,6 +58,31 @@ class Census {
     /** path -> Coding.system -> count. */
     val codeSystems: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
 
+    /**
+     * path -> observed value -> count, for coded primitives only.
+     *
+     * The first axis whose size follows the data's content rather than the schema's
+     * shape, hence two guards. Only `code` values are recorded: they are what a
+     * comparison wants suggested, and leaving out strings, dates and ids keeps names,
+     * birth dates and identifiers out of the completion menu altogether. And a path
+     * past [MAX_VALUES_PER_PATH] distinct values moves to [highCardinality] and stops
+     * being recorded -- no list that long helps anyone pick.
+     */
+    val values: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
+
+    /** Paths whose values were dropped for exceeding [MAX_VALUES_PER_PATH]. */
+    val highCardinality: MutableSet<String> = linkedSetOf()
+
+    fun recordValue(path: String, value: String) {
+        if (path in highCardinality) return
+        val seen = values.getOrPut(path) { linkedMapOf() }
+        seen.merge(value, 1, Int::plus)
+        if (seen.size > MAX_VALUES_PER_PATH) {
+            values.remove(path)
+            highCardinality += path
+        }
+    }
+
     /** resource type -> meta.profile -> count. */
     val profiles: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
 
@@ -98,6 +123,11 @@ class Census {
             .map { Suggestion(it.key, it.value, null) }
             .sortedByDescending { it.count }
 
+    fun valuesAt(path: String): List<Suggestion> =
+        values[path].orEmpty().entries
+            .map { Suggestion(it.key, it.value, null) }
+            .sortedByDescending { it.count }
+
     fun codeSystemsAt(path: String): List<Suggestion> =
         codeSystems[path].orEmpty().entries
             .map { Suggestion(it.key, it.value, null) }
@@ -117,11 +147,17 @@ class Census {
 
     fun isEmpty(): Boolean = pathCounts.isEmpty()
 
+    companion object {
+        const val MAX_VALUES_PER_PATH = 50
+    }
+
     fun clear() {
         extensions.clear()
         referenceTargets.clear()
         pendingReferences.clear()
         codeSystems.clear()
+        values.clear()
+        highCardinality.clear()
         profiles.clear()
         choiceTypes.clear()
         pathCounts.clear()
@@ -192,6 +228,9 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
                 !reference?.value.isNullOrBlank() -> census.pendingReferences += path to reference!!
             }
         }
+        if (element is IPrimitiveType<*> && typeName(element) in VALUE_TYPES) {
+            element.valueAsString?.takeIf { it.isNotBlank() }?.let { census.recordValue(path, it) }
+        }
         if (element is IBaseCoding) {
             val system = runCatching { element.system }.getOrNull()
             if (!system.isNullOrBlank()) {
@@ -229,5 +268,8 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
     private companion object {
         const val MAX_DEPTH = 15
         val EXTENSION_CHILDREN = setOf("extension", "modifierExtension")
+
+        /** Types whose values the census records; see [Census.values] for why so few. */
+        val VALUE_TYPES = setOf("code")
     }
 }

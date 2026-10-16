@@ -228,6 +228,34 @@ class CompleterTest {
         assertTrue(complete("Encounter.subject.resolve().").none { it.group().startsWith("ofType()") })
     }
 
+    @Test
+    fun `a comparison literal offers the values observed on its left operand`() {
+        val gender = candidates("Patient.gender = '")
+        assertEquals(setOf("female", "male"), gender.map { it.displ() }.toSet())
+        assertTrue(gender.all { it.group() == "observed values" })
+        // Like every string candidate, accepting one closes the literal.
+        assertTrue(gender.all { it.value().endsWith("'") && !it.value().endsWith("')") }, "got ${gender.map { it.value() }}")
+
+        // Inside where(), the closer also ends the call.
+        val codes = candidates("Observation.code.coding.where(code = '")
+        assertTrue(codes.any { it.value() == "8302-2')" }, "got ${codes.map { it.value() }}")
+        // Codes, not the code systems the old fallback offered for every literal.
+        assertTrue(codes.none { it.displ() == "http://loinc.org" }, "got ${codes.map { it.displ() }}")
+    }
+
+    @Test
+    fun `values reach through extension steps and filters`() {
+        val ext = "Patient.extension('http://hl7.org/fhir/StructureDefinition/patient-nationality')" +
+            ".extension('code').value.coding.code = '"
+        assertEquals(listOf("DE"), displays(ext))
+        assertTrue("final" in displays("Observation.where(subject.exists()).status = '"))
+    }
+
+    @Test
+    fun `free text is never suggested as a value`() {
+        assertTrue(displays("Patient.name.family = '").none { it == "Mustermann" })
+    }
+
     private companion object {
         /** Stands in for the REPL's own command list. */
         val COMMANDS = listOf(
