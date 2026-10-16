@@ -163,11 +163,11 @@ like any other. On an empty line it lists the pool's resource types; after a `.`
 elements and functions available there, pool-populated ones first; inside
 `extension('…')` the URLs observed on that element.
 
-Pressing TAB repeatedly walks the candidates: the first inserts the common prefix,
-the second lists them grouped, and each one after that cycles the next candidate into
-the line. That is how you pick a long extension URL without typing it. A candidate in
-a string position brings its own closing `')`, so Enter always submits something that
-parses.
+The first TAB opens the candidate menu: the grouped list appears and the first
+candidate goes into the line. **Up/Down** walk the candidates from there, as do further
+TABs, and Enter takes whichever is shown. That is how you pick a long extension URL
+without typing it. A candidate in a string position brings its own closing `')`, so
+Enter always submits something that parses.
 
 ## Import paths
 
@@ -221,6 +221,12 @@ per-version adapter for every feature.
   completer both use base names for this reason, and the census records the concrete
   types observed so `Observation.value` can still be typed — from the data — well
   enough to complete `.unit`.
+- **Arrow keys are bound in both encodings.** JLine asks the terminal for
+  application-cursor-keys mode (DECCKM) and then binds only the SS3 form (`ESC O A`)
+  that mode implies; a terminal or multiplexer that keeps sending the CSI form
+  (`ESC [ A`) was left typing a literal `[A` instead of moving. That is why arrow
+  navigation worked in some terminals and not others. Both forms are now bound
+  explicitly, in the line editor and in the completion menu.
 - **FHIRPath strings are single-quoted.** A double quote delimits an *identifier*, so
   `extension("url")` fails to parse with a message that never mentions quoting.
   Completion therefore opens the quote for you on every function whose first argument

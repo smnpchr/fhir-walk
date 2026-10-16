@@ -7,6 +7,7 @@ import dev.fhirwalk.model.FhirVersionUnavailable
 import org.jline.reader.EndOfFileException
 import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
+import org.jline.reader.Reference
 import org.jline.reader.UserInterruptException
 import org.hl7.fhir.instance.model.api.IBase
 import org.jline.terminal.Terminal
@@ -59,20 +60,19 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             .terminal(terminal)
             .parser(FhirPathParser())
             .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }))
-            // AUTO_LIST is what makes a single TAB show the grouped candidate list;
-            // without it an ambiguous TAB only inserts the common prefix and beeps.
-            .option(LineReader.Option.AUTO_LIST, true)
-            .option(LineReader.Option.LIST_AMBIGUOUS, true)
-            // AUTO_MENU turns that list into something you can walk through: further
-            // TABs cycle the candidates into the line. Without it the list is purely
-            // informational, arrow keys do history, and there is no way to pick a
-            // long extension URL other than typing it.
+            // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
+            // costs an extra TAB before anything is navigable -- press an arrow at a
+            // passive list and you get command history instead of the next candidate.
+            // The menu shows the same grouped list and does accept arrows, so skip
+            // the passive stage and let the first TAB open the menu.
+            .option(LineReader.Option.AUTO_LIST, false)
             .option(LineReader.Option.AUTO_MENU, true)
             .option(LineReader.Option.AUTO_GROUP, true)
             .option(LineReader.Option.GROUP_PERSIST, true)
             .option(LineReader.Option.CASE_INSENSITIVE, true)
             .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
             .build()
+        bindArrowKeys(reader)
 
         // Fill the window and keep the rest for :more, rather than a fixed guess.
         if (terminal.height > MIN_ROW_LIMIT + 8) rowLimit = terminal.height - 8
@@ -240,6 +240,34 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                     out.println("rows per listing: $rows")
                 }
             }
+        }
+    }
+
+    /**
+     * Binds both encodings of the arrow keys, in the line editor and in the
+     * completion menu.
+     *
+     * JLine asks the terminal for application-cursor-keys mode (DECCKM, the
+     * `ESC [ ? 1 h` it writes with every prompt) and then binds only the SS3 form
+     * (`ESC O A`) that the mode implies. Terminals and multiplexers that keep sending
+     * the CSI form (`ESC [ A`) are left with arrow keys that type a literal "[A" --
+     * which is why navigation worked in some terminals and not in others. Binding
+     * both forms makes it independent of whether the mode took effect.
+     *
+     * In the menu the same keys walk the candidates, so a long extension URL can be
+     * picked with Up/Down rather than by counting TAB presses.
+     */
+    private fun bindArrowKeys(reader: LineReader) {
+        val keyMaps = reader.keyMaps
+        keyMaps[LineReader.MAIN]?.apply {
+            bind(Reference(LineReader.UP_LINE_OR_SEARCH), ESC_CSI + "A", ESC_SS3 + "A")
+            bind(Reference(LineReader.DOWN_LINE_OR_SEARCH), ESC_CSI + "B", ESC_SS3 + "B")
+            bind(Reference(LineReader.FORWARD_CHAR), ESC_CSI + "C", ESC_SS3 + "C")
+            bind(Reference(LineReader.BACKWARD_CHAR), ESC_CSI + "D", ESC_SS3 + "D")
+        }
+        keyMaps[LineReader.MENU]?.apply {
+            bind(Reference(LineReader.MENU_COMPLETE), ESC_CSI + "B", ESC_SS3 + "B")
+            bind(Reference(LineReader.REVERSE_MENU_COMPLETE), ESC_CSI + "A", ESC_SS3 + "A")
         }
     }
 
@@ -473,6 +501,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println("lists the pool's resource types; after a '.' the elements and")
         out.println("functions available there, with the ones present in the pool first;")
         out.println("inside extension('…') the URLs observed on that element.")
+        out.println("Up/Down or further TABs walk the candidates; Enter takes the one shown.")
     }
 
     private fun expandHome(path: String): String =
@@ -496,5 +525,12 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         /** Used until the terminal reports its size; a dumb terminal never does. */
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100
+
+        /**
+         * The two encodings an arrow key arrives in, depending on whether
+         * application-cursor-keys mode took effect: CSI (ESC [ A) or SS3 (ESC O A).
+         */
+        const val ESC_CSI = "\u001b["
+        const val ESC_SS3 = "\u001bO"
     }
 }
