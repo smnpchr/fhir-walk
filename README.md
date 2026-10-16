@@ -116,16 +116,52 @@ Type a FHIRPath expression, or:
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
-| `:hits` | expand the last pool-wide result |
+| `:more` | reprint the last listing in full, nothing shortened |
+| `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
 | `:fhir [version]` | switch FHIR version (resets the pool) |
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
 across the pool.
 
-TAB completes, including inside the `:all` and `:why` arguments, which are
-expressions like any other. On an empty line it lists the pool's resource types;
-after a `.` the elements and functions available there, pool-populated ones first;
-inside `extension('…')` the URLs observed on that element.
+## Output
+
+A listing fills the window — rows beyond it, and values too wide for it, are kept
+rather than discarded. `:more` reprints the last listing whole, with every value
+pretty-printed and the origin of each hit:
+
+```
+r4:pool(22)> :all Specimen.extension('…/aliquot-group-purpose').value
+6 of 22 resource(s) matched
+  Specimen/ag-stool-direct     {"coding":[{"system":"https://biobank.example.org/CodeSys…
+  Specimen/ag-stool-swab       {"coding":[{"system":"https://biobank.example.org/CodeSys…
+  … 4 more of 6 — :more
+
+r4:pool(22)> :more
+6 of 22 resource(s) matched
+  Specimen/ag-stool-direct  (ag-stool-direct.json)
+      CodeableConcept
+        {
+          "coding": [
+            {
+              "system": "https://biobank.example.org/CodeSystem/aliquot-purpose",
+              "code": "storage",
+              "display": "Long-term storage"
+            }
+          ]
+        }
+  …
+```
+
+Row and width limits come from the terminal, so they track the window rather than a
+fixed guess. `:limit 50` sets the rows explicitly and `:limit off` prints everything
+up front, letting the terminal scroll instead.
+
+## Completion
+
+TAB completes, including inside the `:all` and `:why` arguments, which are expressions
+like any other. On an empty line it lists the pool's resource types; after a `.` the
+elements and functions available there, pool-populated ones first; inside
+`extension('…')` the URLs observed on that element.
 
 Pressing TAB repeatedly walks the candidates: the first inserts the common prefix,
 the second lists them grouped, and each one after that cycles the next candidate into
@@ -189,6 +225,9 @@ per-version adapter for every feature.
   `extension("url")` fails to parse with a message that never mentions quoting.
   Completion therefore opens the quote for you on every function whose first argument
   is a string, and a failed parse containing `"` gets an explicit hint.
+- **Nothing is truncated without a way back.** Earlier versions capped several
+  listings with no expansion path, which is worse than printing too much; every
+  shortened listing now names `:more`.
 - **Candidate lists are kept under 100 entries**, because past that JLine asks "do you
   wish to see all N possibilities?" instead of showing them. So a bare TAB offers the
   pool's resource types rather than all 146, and ten common functions rather than the
@@ -213,7 +252,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 54 tests
+./gradlew test                              # 59 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/biobank
 ```

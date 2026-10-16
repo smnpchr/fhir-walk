@@ -8,6 +8,7 @@ import org.jline.reader.EndOfFileException
 import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.UserInterruptException
+import org.hl7.fhir.instance.model.api.IBase
 import org.jline.terminal.Terminal
 import org.jline.terminal.TerminalBuilder
 import java.io.PrintWriter
@@ -24,7 +25,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "<expr>", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
-        FhirPathCompleter.CommandInfo(":hits", "", "expand the last pool-wide result"),
+        FhirPathCompleter.CommandInfo(":more", "", "reprint the last listing in full, nothing shortened"),
+        FhirPathCompleter.CommandInfo(":limit", "[rows|off]", "rows per listing before the rest waits for :more"),
         FhirPathCompleter.CommandInfo(":fhir", "[version]", "switch FHIR version (resets the pool)"),
         FhirPathCompleter.CommandInfo(":help", "", "this list"),
         FhirPathCompleter.CommandInfo(":quit", "", "exit"),
@@ -34,8 +36,21 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private val commandNames: Set<String> =
         commands.map { it.name }.toSet() + setOf(":exit", ":q", ":?")
 
-    private var lastResult: dev.fhirwalk.eval.Evaluator.PoolResult? = null
-    private var lastExpression: String? = null
+    /**
+     * A printed listing, kept so `:more` can show it in full.
+     *
+     * [preview] is trimmed to fit the screen, both in rows and in the width of each
+     * rendered value; [full] holds every row with nothing shortened. Truncating
+     * without a way back to the whole thing is worse than printing it all.
+     */
+    private class Listing(val header: String?, val preview: List<String>, val full: List<String>)
+
+    private var lastListing: Listing? = null
+
+    /** Rows printed per listing before the rest is held for `:more`; 0 = unlimited. */
+    private var rowLimit = DEFAULT_ROW_LIMIT
+
+    private var columns = DEFAULT_COLUMNS
 
     fun run() {
         val terminal: Terminal = TerminalBuilder.builder().dumb(true).build()
@@ -58,6 +73,10 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             .option(LineReader.Option.CASE_INSENSITIVE, true)
             .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
             .build()
+
+        // Fill the window and keep the rest for :more, rather than a fixed guess.
+        if (terminal.height > MIN_ROW_LIMIT + 8) rowLimit = terminal.height - 8
+        if (terminal.width > MIN_VALUE_WIDTH) columns = terminal.width
 
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         out.println("FHIR ${session.version.id.uppercase()}")
@@ -121,7 +140,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             ":all" -> if (argument.isBlank()) out.println("usage: :all <expr>") else evaluateAll(argument, out)
             ":why" -> if (argument.isBlank()) out.println("usage: :why <expr>") else why(argument, out)
             ":ext" -> extensions(argument, out)
-            ":hits" -> hits(out)
+            ":more" -> more(out)
+            ":limit" -> limit(argument, out)
             ":fhir" -> switchVersion(argument, out)
             else -> out.println("unknown command $command — :help for the list")
         }
@@ -149,14 +169,93 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                     out.println("{} empty — :why $expression")
                     return
                 }
-                outcome.values.take(MAX_ROWS).forEachIndexed { idx, value ->
-                    out.println("  [$idx] ${session.render.typeOf(value)}  ${session.render.value(value)}")
-                }
-                if (outcome.values.size > MAX_ROWS) {
-                    out.println("  … ${outcome.values.size - MAX_ROWS} more of ${outcome.values.size}")
+                emit(
+                    out,
+                    header = null,
+                    preview = outcome.values.mapIndexed { idx, value ->
+                        "  [$idx] ${session.render.typeOf(value)}  " +
+                            session.render.value(value, valueWidth(VALUE_INDENT))
+                    },
+                    full = outcome.values.flatMapIndexed { idx, value ->
+                        expanded("  [$idx] ", value)
+                    },
+                )
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------- listings
+
+    /**
+     * Prints a listing, holding back whatever does not fit for `:more`.
+     *
+     * @param full every row with nothing shortened; defaults to [preview] for
+     *   listings whose rows were never width-trimmed in the first place.
+     */
+    private fun emit(
+        out: PrintWriter,
+        header: String?,
+        preview: List<String>,
+        full: List<String> = preview,
+    ) {
+        lastListing = Listing(header, preview, full)
+        header?.let { out.println(it) }
+        val shown = if (rowLimit <= 0) preview.size else minOf(rowLimit, preview.size)
+        for (index in 0 until shown) out.println(preview[index])
+        val hidden = preview.size - shown
+        when {
+            hidden > 0 -> out.println("  … $hidden more of ${preview.size} — :more")
+            // Nothing was held back by row count, but a value may still have been
+            // shortened to fit the window; say so rather than leaving a dangling "…".
+            preview != full && preview.any { it.contains('…') } ->
+                out.println("  … shortened to fit — :more")
+        }
+    }
+
+    private fun more(out: PrintWriter) {
+        val listing = lastListing ?: run {
+            out.println("nothing listed yet")
+            return
+        }
+        listing.header?.let { out.println(it) }
+        listing.full.forEach { out.println(it) }
+    }
+
+    private fun limit(argument: String, out: PrintWriter) {
+        when {
+            argument.isBlank() ->
+                out.println(
+                    "rows per listing: " + if (rowLimit <= 0) "unlimited" else rowLimit.toString(),
+                )
+            argument.equals("off", ignoreCase = true) || argument == "0" -> {
+                rowLimit = UNLIMITED
+                out.println("row limit off — listings print in full and the terminal scrolls")
+            }
+            else -> {
+                val rows = argument.toIntOrNull()
+                if (rows == null || rows < 1) {
+                    out.println("usage: :limit <rows|off>")
+                } else {
+                    rowLimit = rows
+                    out.println("rows per listing: $rows")
                 }
             }
         }
+    }
+
+    /** Width left for a rendered value after its label, or unlimited if unknown. */
+    private fun valueWidth(indent: Int): Int = (columns - indent).coerceAtLeast(MIN_VALUE_WIDTH)
+
+    /**
+     * One value in full: a primitive stays on the label's line, while anything
+     * structured gets pretty-printed JSON underneath it.
+     */
+    private fun expanded(label: String, value: IBase): List<String> {
+        val type = session.render.typeOf(value)
+        val lines = session.render.pretty(value)
+        if (lines.size == 1) return listOf("$label$type  ${lines.first()}")
+        val indent = " ".repeat(label.length + 2)
+        return listOf("$label$type") + lines.map { indent + it }
     }
 
     /**
@@ -179,36 +278,35 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private fun evaluateAll(expression: String, out: PrintWriter) {
         if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
-        lastResult = result
-        lastExpression = expression
-        out.println(
-            "${result.hits.size} of ${result.considered} resource(s) matched" +
-                if (result.errors > 0) "; ${result.errors} error(s): ${result.firstError}" else "",
-        )
-        if (result.hits.isEmpty() && result.errors == 0) {
-            // Nothing matched anywhere, and it parsed: the question is which step
-            // goes empty, which is exactly what :why answers.
-            out.println("  nothing matched — :why $expression")
-        }
-        result.hits.take(MAX_POOL_ROWS).forEach { hit ->
-            val first = hit.values.firstOrNull()?.let { session.render.value(it, 60) } ?: ""
-            val extra = if (hit.values.size > 1) " (+${hit.values.size - 1})" else ""
-            out.println("  ${hit.resource.label.padEnd(28)} $first$extra")
-        }
-        if (result.hits.size > MAX_POOL_ROWS) {
-            out.println("  … ${result.hits.size - MAX_POOL_ROWS} more — :hits to expand")
-        }
-    }
-
-    private fun hits(out: PrintWriter) {
-        val result = lastResult ?: run { out.println("no pool-wide result yet"); return }
-        out.println("${lastExpression} — ${result.hits.size} hit(s)")
-        result.hits.forEach { hit ->
-            out.println("  ${hit.resource.label}  (${hit.resource.origin})")
-            hit.values.take(MAX_ROWS).forEach { value ->
-                out.println("      ${session.render.typeOf(value)}  ${session.render.value(value)}")
+        val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
+            if (result.errors > 0) "; ${result.errors} error(s): ${result.firstError}" else ""
+        if (result.hits.isEmpty()) {
+            out.println(header)
+            if (result.errors == 0) {
+                // Nothing matched anywhere, and it parsed: the question is which step
+                // goes empty, which is exactly what :why answers.
+                out.println("  nothing matched — :why $expression")
             }
+            lastListing = null
+            return
         }
+        emit(
+            out,
+            header,
+            preview = result.hits.map { hit ->
+                val first = hit.values.firstOrNull()
+                    ?.let { session.render.value(it, valueWidth(LABEL_WIDTH + VALUE_INDENT)) }
+                    ?: ""
+                val extra = if (hit.values.size > 1) " (+${hit.values.size - 1})" else ""
+                "  ${hit.resource.label.padEnd(LABEL_WIDTH)} $first$extra"
+            },
+            // The full form keeps every value whole and adds the origin, so one
+            // listing answers both "what matched" and "where did it come from".
+            full = result.hits.flatMap { hit ->
+                listOf("  ${hit.resource.label}  (${hit.resource.origin})") +
+                    hit.values.flatMap { expanded("      ", it) }
+            },
+        )
     }
 
     private fun why(expression: String, out: PrintWriter) {
@@ -266,11 +364,12 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
 
     private fun load(path: String, out: PrintWriter) {
         val report = session.importer.load(Paths.get(expandHome(path)))
-        out.println("loaded ${report.summary()}; pool now ${session.pool.size}")
-        report.problems.take(MAX_PROBLEMS).forEach { out.println("  ! $it") }
-        if (report.problems.size > MAX_PROBLEMS) {
-            out.println("  … ${report.problems.size - MAX_PROBLEMS} more problem(s)")
+        val header = "loaded ${report.summary()}; pool now ${session.pool.size}"
+        if (report.problems.isEmpty()) {
+            out.println(header)
+            return
         }
+        emit(out, header, report.problems.map { "  ! $it" })
     }
 
     private fun poolSummary(out: PrintWriter) {
@@ -278,12 +377,15 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out.println("pool is empty")
             return
         }
-        out.println("${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}")
-        session.pool.typeCounts().forEach { (type, count) -> out.println("  ${type.padEnd(28)} $count") }
         val census = session.pool.census
-        out.println(
-            "census: ${census.extensions.size} extension url/path pair(s), " +
-                "${census.pathCounts.size} populated path(s)",
+        emit(
+            out,
+            "${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}",
+            session.pool.typeCounts().map { (type, count) -> "  ${type.padEnd(LABEL_WIDTH)} $count" } +
+                listOf(
+                    "census: ${census.extensions.size} extension url/path pair(s), " +
+                        "${census.pathCounts.size} populated path(s)",
+                ),
         )
     }
 
@@ -324,10 +426,14 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out.println("no extensions observed at $argument")
             return
         }
-        rows.take(MAX_ROWS).forEach { (path, url, stat) ->
-            out.println("  ${path.padEnd(34)} ${stat.count.toString().padStart(5)} ×  $url  ${stat.valueTypes.joinToString("|")}")
-        }
-        if (rows.size > MAX_ROWS) out.println("  … ${rows.size - MAX_ROWS} more")
+        emit(
+            out,
+            header = null,
+            preview = rows.map { (path, url, stat) ->
+                "  ${path.padEnd(34)} ${stat.count.toString().padStart(5)} ×  " +
+                    "$url  ${stat.valueTypes.joinToString("|")}"
+            },
+        )
     }
 
     private fun switchVersion(argument: String, out: PrintWriter) {
@@ -358,6 +464,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println("With a focus set, an expression runs against that resource;")
         out.println("with no focus it runs across the whole pool.")
         out.println()
+        out.println()
+        out.println("A listing fills the window and keeps the rest for :more, which")
+        out.println("reprints it whole with no value shortened. :limit off prints")
+        out.println("everything up front and lets the terminal scroll.")
+        out.println()
         out.println("TAB completes, including after :all and :why. On an empty line it")
         out.println("lists the pool's resource types; after a '.' the elements and")
         out.println("functions available there, with the ones present in the pool first;")
@@ -376,9 +487,14 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     }
 
     private companion object {
-        const val MAX_ROWS = 40
-        const val MAX_POOL_ROWS = 12
-        const val MAX_PROBLEMS = 8
+        const val UNLIMITED = 0
         const val STEP_WIDTH = 48
+        const val LABEL_WIDTH = 28
+        const val VALUE_INDENT = 14
+        const val MIN_VALUE_WIDTH = 40
+        const val MIN_ROW_LIMIT = 8
+        /** Used until the terminal reports its size; a dumb terminal never does. */
+        const val DEFAULT_ROW_LIMIT = 20
+        const val DEFAULT_COLUMNS = 100
     }
 }
