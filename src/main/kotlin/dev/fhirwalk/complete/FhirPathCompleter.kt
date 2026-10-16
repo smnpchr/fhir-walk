@@ -244,7 +244,9 @@ class FhirPathCompleter(
         // unless the user had already typed the closer.
         val closer = when {
             tail.startsWith("'") -> ""
-            tail.isBlank() -> "')"
+            // Only a literal inside a call has a paren to close: `Patient.gender = '`
+            // completed to `'female')` would not parse.
+            tail.isBlank() && context.enclosingCall != null -> "')"
             else -> "'"
         }
         fun stringCand(value: String, group: String, descr: String?) =
@@ -266,6 +268,16 @@ class FhirPathCompleter(
             "conformsTo" -> pool().types().flatMap { census.profilesFor(it) }
                 .forEach { candidates += stringCand(it.value, "profiles in pool", "${it.count} ×") }
             else -> {
+                // The right of a comparison: the coded values observed on the left
+                // operand. Those are the answer whenever there are any; code systems
+                // are only the answer for a `system` operand, which records none.
+                val values = context.comparedPath?.let { census.valuesAt(nav.censusPath(it)) }.orEmpty()
+                if (values.isNotEmpty()) {
+                    values.take(MAX_ROWS).forEach {
+                        candidates += stringCand(it.value, "observed values", "${it.count} ×")
+                    }
+                    return
+                }
                 // A quoted literal being compared against a Coding: offer the systems
                 // observed at the sibling path.
                 val systems = census.codeSystemsAt(censusPath)

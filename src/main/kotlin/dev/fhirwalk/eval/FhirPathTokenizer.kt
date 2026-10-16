@@ -120,6 +120,10 @@ object FhirPathTokenizer {
      * @param partial the text typed so far for the token under the cursor.
      * @param replaceFrom offset in the original expression where [partial] begins.
      * @param enclosingCall the function whose argument list we are inside, if any.
+     * @param comparedPath for a [CursorKind.STRING_ARG] on the right of `=`, `!=`, `~`
+     *   or `!~`: the absolute path of the left operand, e.g. `Patient.gender` for
+     *   `Patient.gender = '…` or `Observation.code.coding.code` for
+     *   `Observation.code.coding.where(code = '…`.
      */
     data class CursorContext(
         val kind: CursorKind,
@@ -127,6 +131,7 @@ object FhirPathTokenizer {
         val partial: String,
         val replaceFrom: Int,
         val enclosingCall: String? = null,
+        val comparedPath: String? = null,
     )
 
     private val IDENT = Regex("[A-Za-z0-9_]")
@@ -166,12 +171,20 @@ object FhirPathTokenizer {
         // Inside a string literal: the only sensible completions are data-derived
         // (extension URLs, systems, profiles), which is exactly the corpus axis.
         if (quote != null && quoteStart >= 0) {
+            val operand = comparedOperand(head.substring((innermostOpen?.plus(1)) ?: 0, quoteStart))
+            val compared = when {
+                operand == null -> null
+                innermostOpen == null -> operand
+                operand == "\$this" -> callInputPath
+                else -> listOfNotNull(callInputPath?.takeIf { it.isNotBlank() }, operand).joinToString(".")
+            }
             return CursorContext(
                 kind = CursorKind.STRING_ARG,
                 basePath = callInputPath ?: "",
                 partial = head.substring(quoteStart + 1),
                 replaceFrom = quoteStart + 1,
                 enclosingCall = callName,
+                comparedPath = compared,
             )
         }
 
@@ -203,6 +216,21 @@ object FhirPathTokenizer {
     }
 
     private val TYPE_ARG_FUNCTIONS = setOf("ofType", "as", "is")
+
+    private val COMPARISON = Regex("""(?<![<>])(!=|!~|=|~)\s*$""")
+
+    /**
+     * The left operand of a comparison that [text] ends with, or null when it does not
+     * end with one. Only the last argument and the last space-separated term count, so
+     * `system = 'x' and code = ` yields `code`; spaces inside calls do not split.
+     */
+    private fun comparedOperand(text: String): String? {
+        val lastArg = splitTopLevel(text, ',').last()
+        val match = COMPARISON.find(lastArg) ?: return null
+        val left = lastArg.substring(0, match.range.first).trimEnd()
+        val operand = splitTopLevel(left, ' ').last().trim()
+        return if (operand == "\$this") operand else operand.removePrefix("\$this.").takeIf { it.isNotEmpty() }
+    }
 
     /** The identifier immediately preceding [offset], e.g. the name of a call. */
     private fun identifierEndingAt(text: String, offset: Int): String {

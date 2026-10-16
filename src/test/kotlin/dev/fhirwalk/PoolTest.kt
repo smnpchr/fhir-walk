@@ -178,6 +178,30 @@ class PoolTest {
         assertEquals("Patient.select(name).given", navigator.censusPath("Patient.select(name).given"))
     }
 
+    @Test
+    fun `census records coded values and nothing identifying`() {
+        val census = pool.census
+        assertEquals(setOf("female", "male"), census.valuesAt("Patient.gender").map { it.value }.toSet())
+        assertEquals("final", census.valuesAt("Observation.status").first().value)
+        assertTrue(census.valuesAt("Observation.code.coding.code").any { it.value == "8302-2" })
+        // Strings, dates and ids are never recorded, so they can never reach the menu.
+        for (path in listOf("Patient.name.family", "Patient.birthDate", "Patient.id", "Patient.identifier.value")) {
+            assertTrue(census.valuesAt(path).isEmpty(), "recorded values at $path")
+        }
+    }
+
+    @Test
+    fun `a path with too many distinct values stops being recorded`() {
+        val census = dev.fhirwalk.pool.Census()
+        repeat(dev.fhirwalk.pool.Census.MAX_VALUES_PER_PATH) { census.recordValue("X.code", "c$it") }
+        assertEquals(dev.fhirwalk.pool.Census.MAX_VALUES_PER_PATH, census.valuesAt("X.code").size)
+
+        census.recordValue("X.code", "one-too-many")
+        census.recordValue("X.code", "c0")
+        assertTrue(census.valuesAt("X.code").isEmpty())
+        assertTrue("X.code" in census.highCardinality)
+    }
+
     private fun assertIsValues(outcome: Outcome): List<org.hl7.fhir.instance.model.api.IBase> =
         when (outcome) {
             is Outcome.Values -> outcome.values
