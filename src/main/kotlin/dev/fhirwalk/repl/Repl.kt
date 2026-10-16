@@ -1,0 +1,302 @@
+package dev.fhirwalk.repl
+
+import dev.fhirwalk.complete.FhirPathCompleter
+import dev.fhirwalk.eval.Outcome
+import dev.fhirwalk.model.FhirVersion
+import dev.fhirwalk.model.FhirVersionUnavailable
+import org.jline.reader.EndOfFileException
+import org.jline.reader.LineReader
+import org.jline.reader.LineReaderBuilder
+import org.jline.reader.UserInterruptException
+import org.jline.terminal.Terminal
+import org.jline.terminal.TerminalBuilder
+import java.io.PrintWriter
+import java.nio.file.Paths
+
+class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
+
+    private var session = Session(startVersion)
+
+    private val commands = listOf(
+        FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
+        FhirPathCompleter.CommandInfo(":pool", "", "what is in the pool"),
+        FhirPathCompleter.CommandInfo(":focus", "[label|#index]", "evaluate against one resource (blank to clear)"),
+        FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
+        FhirPathCompleter.CommandInfo(":why", "<expr>", "find the step where the expression goes empty"),
+        FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
+        FhirPathCompleter.CommandInfo(":hits", "", "expand the last pool-wide result"),
+        FhirPathCompleter.CommandInfo(":fhir", "[version]", "switch FHIR version (resets the pool)"),
+        FhirPathCompleter.CommandInfo(":help", "", "this list"),
+        FhirPathCompleter.CommandInfo(":quit", "", "exit"),
+    )
+
+    private var lastResult: dev.fhirwalk.eval.Evaluator.PoolResult? = null
+    private var lastExpression: String? = null
+
+    fun run() {
+        val terminal: Terminal = TerminalBuilder.builder().dumb(true).build()
+        val out = terminal.writer()
+        val reader = LineReaderBuilder.builder()
+            .terminal(terminal)
+            .parser(FhirPathParser())
+            .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }))
+            .option(LineReader.Option.AUTO_GROUP, true)
+            .option(LineReader.Option.GROUP_PERSIST, true)
+            .option(LineReader.Option.CASE_INSENSITIVE, true)
+            .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
+            .build()
+
+        out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
+        out.println("FHIR ${session.version.id.uppercase()}")
+        initialPaths.forEach { load(it, out) }
+        if (initialPaths.isEmpty()) out.println("pool is empty — :load <path> to import")
+        out.flush()
+
+        while (true) {
+            val line = try {
+                reader.readLine(prompt())
+            } catch (e: UserInterruptException) {
+                continue
+            } catch (e: EndOfFileException) {
+                break
+            }
+            val input = line?.trim().orEmpty()
+            if (input.isEmpty()) continue
+            try {
+                if (!dispatch(input, out)) break
+            } catch (e: Exception) {
+                out.println("! ${e.message ?: e.javaClass.simpleName}")
+            }
+            out.flush()
+        }
+        out.println("bye")
+        out.flush()
+        terminal.close()
+    }
+
+    private fun prompt(): String {
+        val focus = session.focus
+        val scope = focus?.label ?: "pool(${session.pool.size})"
+        return "${session.version.id}:$scope> "
+    }
+
+    /** @return false to exit. */
+    private fun dispatch(input: String, out: PrintWriter): Boolean {
+        if (!input.startsWith(":")) {
+            evaluate(input, out)
+            return true
+        }
+        val command = input.substringBefore(' ')
+        val argument = input.substringAfter(' ', "").trim()
+        when (command) {
+            ":quit", ":exit", ":q" -> return false
+            ":help", ":?" -> help(out)
+            ":load" -> if (argument.isBlank()) out.println("usage: :load <path>") else load(argument, out)
+            ":pool" -> poolSummary(out)
+            ":focus" -> focus(argument, out)
+            ":all" -> if (argument.isBlank()) out.println("usage: :all <expr>") else evaluateAll(argument, out)
+            ":why" -> if (argument.isBlank()) out.println("usage: :why <expr>") else why(argument, out)
+            ":ext" -> extensions(argument, out)
+            ":hits" -> hits(out)
+            ":fhir" -> switchVersion(argument, out)
+            else -> out.println("unknown command $command — :help for the list")
+        }
+        return true
+    }
+
+    // ------------------------------------------------------------------ evaluate
+
+    private fun evaluate(expression: String, out: PrintWriter) {
+        val focus = session.focus
+        if (focus == null) {
+            if (session.pool.size == 0) {
+                out.println("pool is empty — :load <path> first")
+                return
+            }
+            // No focus: the pool is the subject. This is the default on purpose.
+            evaluateAll(expression, out)
+            return
+        }
+        when (val outcome = session.evaluator.evaluate(focus.resource, expression)) {
+            is Outcome.Failure -> out.println("! ${outcome.message}")
+            is Outcome.Values -> {
+                if (outcome.values.isEmpty()) {
+                    out.println("{} empty — :why $expression")
+                    return
+                }
+                outcome.values.take(MAX_ROWS).forEachIndexed { idx, value ->
+                    out.println("  [$idx] ${session.render.typeOf(value)}  ${session.render.value(value)}")
+                }
+                if (outcome.values.size > MAX_ROWS) {
+                    out.println("  … ${outcome.values.size - MAX_ROWS} more of ${outcome.values.size}")
+                }
+            }
+        }
+    }
+
+    private fun evaluateAll(expression: String, out: PrintWriter) {
+        val result = session.evaluator.evaluateAll(expression)
+        lastResult = result
+        lastExpression = expression
+        out.println(
+            "${result.hits.size} of ${result.considered} resource(s) matched" +
+                if (result.errors > 0) "; ${result.errors} error(s): ${result.firstError}" else "",
+        )
+        result.hits.take(MAX_POOL_ROWS).forEach { hit ->
+            val first = hit.values.firstOrNull()?.let { session.render.value(it, 60) } ?: ""
+            val extra = if (hit.values.size > 1) " (+${hit.values.size - 1})" else ""
+            out.println("  ${hit.resource.label.padEnd(28)} $first$extra")
+        }
+        if (result.hits.size > MAX_POOL_ROWS) {
+            out.println("  … ${result.hits.size - MAX_POOL_ROWS} more — :hits to expand")
+        }
+    }
+
+    private fun hits(out: PrintWriter) {
+        val result = lastResult ?: run { out.println("no pool-wide result yet"); return }
+        out.println("${lastExpression} — ${result.hits.size} hit(s)")
+        result.hits.forEach { hit ->
+            out.println("  ${hit.resource.label}  (${hit.resource.origin})")
+            hit.values.take(MAX_ROWS).forEach { value ->
+                out.println("      ${session.render.typeOf(value)}  ${session.render.value(value)}")
+            }
+        }
+    }
+
+    private fun why(expression: String, out: PrintWriter) {
+        val focus = session.focus ?: session.pool.all().firstOrNull() ?: run {
+            out.println("pool is empty")
+            return
+        }
+        if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
+        val diagnosis = session.prefixWalker.diagnose(focus.resource, expression)
+        for ((idx, step) in diagnosis.steps.withIndex()) {
+            val marker = if (idx == diagnosis.firstEmpty) " <-- empty here" else ""
+            val count = when {
+                !step.reached -> "—"
+                step.error != null -> "! ${step.error}"
+                else -> "${step.count}"
+            }
+            out.println("  ${step.expression.padEnd(46)} ${count.padEnd(6)}$marker")
+        }
+        if (diagnosis.firstEmpty == null) {
+            out.println("  path resolves fully")
+            return
+        }
+        diagnosis.poolCoverage?.let { coverage ->
+            out.println(
+                "  ${coverage.expression} is populated in ${coverage.matching} of " +
+                    "${coverage.considered} resource(s) of that type",
+            )
+            if (coverage.matching == 0) {
+                out.println("  nothing in the pool populates it — check the element name or the data")
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------- pool
+
+    private fun load(path: String, out: PrintWriter) {
+        val report = session.importer.load(Paths.get(expandHome(path)))
+        out.println("loaded ${report.summary()}; pool now ${session.pool.size}")
+        report.problems.take(MAX_PROBLEMS).forEach { out.println("  ! $it") }
+        if (report.problems.size > MAX_PROBLEMS) {
+            out.println("  … ${report.problems.size - MAX_PROBLEMS} more problem(s)")
+        }
+    }
+
+    private fun poolSummary(out: PrintWriter) {
+        if (session.pool.size == 0) {
+            out.println("pool is empty")
+            return
+        }
+        out.println("${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}")
+        session.pool.typeCounts().forEach { (type, count) -> out.println("  ${type.padEnd(28)} $count") }
+        val census = session.pool.census
+        out.println(
+            "census: ${census.extensions.size} extension url/path pair(s), " +
+                "${census.pathCounts.size} populated path(s)",
+        )
+    }
+
+    private fun focus(argument: String, out: PrintWriter) {
+        if (argument.isBlank()) {
+            session.focus = null
+            out.println("focus cleared — expressions now run across the pool")
+            return
+        }
+        val target = if (argument.startsWith("#")) {
+            session.pool.byIndex(argument.drop(1).toIntOrNull() ?: -1)
+        } else {
+            session.pool.find(argument) ?: session.pool.all().firstOrNull { it.label == argument }
+        }
+        if (target == null) {
+            out.println("not in pool: $argument")
+            return
+        }
+        session.focus = target
+        out.println("focus ${target.label}  (${target.origin})")
+    }
+
+    private fun extensions(argument: String, out: PrintWriter) {
+        val census = session.pool.census
+        if (census.extensions.isEmpty()) {
+            out.println("no extensions observed in the pool")
+            return
+        }
+        val rows = if (argument.isBlank()) {
+            census.extensions.entries.sortedByDescending { it.value.count }
+                .map { Triple(it.key.path, it.key.url, it.value) }
+        } else {
+            census.extensions.entries.filter { it.key.path.startsWith(argument) }
+                .sortedByDescending { it.value.count }
+                .map { Triple(it.key.path, it.key.url, it.value) }
+        }
+        if (rows.isEmpty()) {
+            out.println("no extensions observed at $argument")
+            return
+        }
+        rows.take(MAX_ROWS).forEach { (path, url, stat) ->
+            out.println("  ${path.padEnd(34)} ${stat.count.toString().padStart(5)} ×  $url  ${stat.valueTypes.joinToString("|")}")
+        }
+        if (rows.size > MAX_ROWS) out.println("  … ${rows.size - MAX_ROWS} more")
+    }
+
+    private fun switchVersion(argument: String, out: PrintWriter) {
+        if (argument.isBlank()) {
+            out.println("FHIR ${session.version.id} — available: ${FhirVersion.ids()}")
+            return
+        }
+        val version = FhirVersion.parse(argument) ?: run {
+            out.println("unknown version $argument — available: ${FhirVersion.ids()}")
+            return
+        }
+        if (version == session.version) {
+            out.println("already on ${version.id}")
+            return
+        }
+        try {
+            session = Session(version)
+            out.println("switched to FHIR ${version.id.uppercase()} — pool reset")
+        } catch (e: FhirVersionUnavailable) {
+            out.println("! ${e.message}")
+        }
+    }
+
+    private fun help(out: PrintWriter) {
+        out.println("Type a FHIRPath expression, or:")
+        commands.forEach { out.println("  ${it.name} ${it.args}".padEnd(26) + it.doc) }
+        out.println()
+        out.println("With a focus set, an expression runs against that resource;")
+        out.println("with no focus it runs across the whole pool. TAB completes.")
+    }
+
+    private fun expandHome(path: String): String =
+        if (path.startsWith("~")) System.getProperty("user.home") + path.drop(1) else path
+
+    private companion object {
+        const val MAX_ROWS = 40
+        const val MAX_POOL_ROWS = 12
+        const val MAX_PROBLEMS = 8
+    }
+}
