@@ -63,6 +63,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
 
     private var columns = DEFAULT_COLUMNS
 
+    /** Plain until [run] has a terminal to ask; see [Style.detect]. */
+    private var style = Style.PLAIN
+
     fun run() {
         val terminal: Terminal = TerminalBuilder.builder().dumb(true).build()
         val out = terminal.writer()
@@ -83,6 +86,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
             .build()
         bindArrowKeys(reader)
+        style = Style.detect(terminal)
 
         // Fill the window and keep the rest for :more, rather than a fixed guess.
         if (terminal.height > MIN_ROW_LIMIT + 8) rowLimit = terminal.height - 8
@@ -189,8 +193,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                     out,
                     header = null,
                     preview = outcome.values.mapIndexed { idx, value ->
-                        "  [$idx] ${session.render.typeOf(value)}  " +
-                            session.render.value(value, valueWidth(VALUE_INDENT))
+                        "  ${style.index("[$idx]")} ${style.type(session.render.typeOf(value))}  " +
+                            style.value(session.render.value(value, valueWidth(VALUE_INDENT)), keysOnly = true)
                     },
                     full = outcome.values.flatMapIndexed { idx, value ->
                         expanded("  [$idx] ", value)
@@ -220,11 +224,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         for (index in 0 until shown) out.println(preview[index])
         val hidden = preview.size - shown
         when {
-            hidden > 0 -> out.println("  … $hidden more of ${preview.size} — :more")
+            hidden > 0 -> out.println(style.hint("  … $hidden more of ${preview.size} — :more"))
             // Nothing was held back by row count, but a value may still have been
             // shortened to fit the window; say so rather than leaving a dangling "…".
             preview != full && preview.any { it.contains('…') } ->
-                out.println("  … shortened to fit — :more")
+                out.println(style.hint("  … shortened to fit — :more"))
         }
     }
 
@@ -295,11 +299,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      * structured gets pretty-printed JSON underneath it.
      */
     private fun expanded(label: String, value: IBase): List<String> {
-        val type = session.render.typeOf(value)
+        val head = style.index(label) + style.type(session.render.typeOf(value))
         val lines = session.render.pretty(value)
-        if (lines.size == 1) return listOf("$label$type  ${lines.first()}")
+        if (lines.size == 1) return listOf("$head  ${style.value(lines.first())}")
         val indent = " ".repeat(label.length + 2)
-        return listOf("$label$type") + lines.map { indent + it }
+        return listOf(head) + lines.map { indent + style.json(it) }
     }
 
     /**
@@ -340,14 +344,15 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             preview = result.hits.map { hit ->
                 val first = hit.values.firstOrNull()
                     ?.let { session.render.value(it, valueWidth(LABEL_WIDTH + VALUE_INDENT)) }
+                    ?.let { style.value(it, keysOnly = true) }
                     ?: ""
-                val extra = if (hit.values.size > 1) " (+${hit.values.size - 1})" else ""
-                "  ${hit.resource.label.padEnd(LABEL_WIDTH)} $first$extra"
+                val extra = if (hit.values.size > 1) style.hint(" (+${hit.values.size - 1})") else ""
+                "  ${style.label(hit.resource.label.padEnd(LABEL_WIDTH))} $first$extra"
             },
             // The full form keeps every value whole and adds the origin, so one
             // listing answers both "what matched" and "where did it come from".
             full = result.hits.flatMap { hit ->
-                listOf("  ${hit.resource.label}  (${hit.resource.origin})") +
+                listOf("  ${style.label(hit.resource.label)}  ${style.hint("(${hit.resource.origin})")}") +
                     hit.values.flatMap { expanded("      ", it) }
             },
         )
@@ -432,7 +437,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         emit(
             out,
             "${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}",
-            session.pool.typeCounts().map { (type, count) -> "  ${type.padEnd(LABEL_WIDTH)} $count" } +
+            session.pool.typeCounts().map { (type, count) ->
+                "  ${style.type(type.padEnd(LABEL_WIDTH))} ${style.count(count.toString())}"
+            } +
                 listOf(
                     "census: ${census.extensions.size} extension url/path pair(s), " +
                         "${census.pathCounts.size} populated path(s)",
@@ -481,8 +488,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out,
             header = null,
             preview = rows.map { (path, url, stat) ->
-                "  ${path.padEnd(34)} ${stat.count.toString().padStart(5)} ×  " +
-                    "$url  ${stat.valueTypes.joinToString("|")}"
+                "  ${path.padEnd(34)} ${style.count(stat.count.toString().padStart(5))} ×  " +
+                    "${style.url(url)}  ${style.type(stat.valueTypes.joinToString("|"))}"
             },
         )
     }
