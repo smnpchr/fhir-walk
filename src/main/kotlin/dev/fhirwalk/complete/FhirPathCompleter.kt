@@ -48,19 +48,19 @@ class FhirPathCompleter(
     private fun completeCommand(text: String, candidates: MutableList<Candidate>) {
         val words = text.trim().split(Regex("\\s+"))
         if (words.size <= 1) {
-            commands().forEach { candidates += cand(it.name, it.name, "commands", it.doc) }
+            commands().forEach { candidates += commandCand(it.name, it.name, "commands", it.doc) }
             return
         }
         when (words.first()) {
             ":fhir" -> FhirVersion.entries.forEach {
-                candidates += cand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
+                candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
             ":load" -> completePath(words.last(), candidates)
             ":focus" -> pool().all().take(MAX_FOCUS_CANDIDATES).forEach {
-                candidates += cand(it.label, it.label, "pool", it.origin)
+                candidates += commandCand(it.label, it.label, "pool", it.origin)
             }
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
-                candidates += cand(it, it, "paths with extensions", null)
+                candidates += commandCand(it, it, "paths with extensions", null)
             }
         }
     }
@@ -87,7 +87,10 @@ class FhirPathCompleter(
         val census = pool().census
 
         when (context.kind) {
-            CursorKind.ROOT -> resourceTypes(nav, candidates)
+            // With nothing typed yet, only the types the pool actually holds are
+            // useful -- evaluating Practitioner.name against a pool with no
+            // Practitioner tells you nothing. One keystroke opens up the full schema.
+            CursorKind.ROOT -> resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
 
             CursorKind.TYPE_ARG -> {
                 // After resolve(), the plausible types are the ones actually referenced.
@@ -95,27 +98,35 @@ class FhirPathCompleter(
                 // trailing resolve() step comes off before the lookup.
                 val observed = census.referenceTargetsAt(withoutTrailingResolve(context.basePath))
                 observed.forEach { candidates += cand(it.value, it.value, "observed", "${it.count} ×") }
-                resourceTypes(nav, candidates)
+                // When the corpus has an answer, trust it rather than dumping 146
+                // resource types the user would have to page through.
+                resourceTypes(nav, candidates, all = observed.isEmpty() && context.partial.isNotEmpty())
             }
 
             CursorKind.STRING_ARG -> stringArgument(context, census, candidates)
 
             CursorKind.MEMBER -> {
                 if (context.basePath.isBlank()) {
-                    resourceTypes(nav, candidates)
+                    resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
                     return
                 }
                 members(context.basePath, nav, census, candidates)
-                functions(candidates)
+                functions(candidates, context.partial)
             }
         }
     }
 
-    private fun resourceTypes(nav: ModelNavigator, candidates: MutableList<Candidate>) {
+    /**
+     * @param all whether to include every resource type in the schema on top of the
+     *   ones present in the pool. JLine asks for confirmation past 100 candidates, so
+     *   the broad list is withheld until the user has narrowed it with a prefix.
+     */
+    private fun resourceTypes(nav: ModelNavigator, candidates: MutableList<Candidate>, all: Boolean) {
         val counts = pool().typeCounts()
         counts.forEach { (type, count) ->
             candidates += cand(type, type, "in pool", "$count resource(s)")
         }
+        if (!all) return
         nav.resourceTypes()
             .filter { it !in counts }
             .forEach { candidates += cand(it, it, "all resource types", null) }
@@ -143,8 +154,19 @@ class FhirPathCompleter(
         }
     }
 
-    private fun functions(candidates: MutableList<Candidate>) {
-        for (fn in FhirPathFunctions.all()) {
+    /**
+     * A bare TAB after a dot shows elements plus only the handful of functions you
+     * reach for while composing a path; the full ~90-entry table appears once the
+     * user starts typing a name. Otherwise every TAB would exceed JLine's
+     * 100-candidate threshold and prompt "see all possibilities?" instead of helping.
+     */
+    private fun functions(candidates: MutableList<Candidate>, partial: String) {
+        val offered = if (partial.isBlank()) {
+            FhirPathFunctions.all().filter { it.name in FhirPathFunctions.commonFirst }
+        } else {
+            FhirPathFunctions.all()
+        }
+        for (fn in offered) {
             val group = if (fn.name in FhirPathFunctions.commonFirst) "functions" else "functions (more)"
             candidates += Candidate(fn.insertText, fn.signature, group, fn.doc, null, null, false)
         }
@@ -190,7 +212,16 @@ class FhirPathCompleter(
     private fun detail(suggestion: Census.Suggestion): String =
         listOfNotNull("${suggestion.count} ×", suggestion.detail).joinToString("  ")
 
+    /**
+     * Expression candidates are never "complete": JLine appends a space after a
+     * complete candidate, which is wrong mid-path -- you almost always want to type
+     * `.` or `'` next, not a space.
+     */
     private fun cand(value: String, display: String, group: String, descr: String?) =
+        Candidate(value, display, group, descr, null, null, false)
+
+    /** Commands and their arguments are words, so a trailing space is right here. */
+    private fun commandCand(value: String, display: String, group: String, descr: String?) =
         Candidate(value, display, group, descr, null, null, true)
 
     private companion object {

@@ -180,6 +180,26 @@ class BiobankPoolTest {
     }
 
     @Test
+    fun `references are not mistaken for choice elements`() {
+        // HAPI gives a reference child two valid names (parent / parentResource), so
+        // counting names would label it a choice and send completion down the
+        // corpus-narrowing path instead of simply typing it as a Reference.
+        val navigator = ModelNavigator(ctx, pool.census)
+        val children = navigator.childrenAt("Specimen").associateBy { it.name }
+        assertEquals("Reference", children.getValue("parent").typeName)
+        assertEquals("Reference", children.getValue("subject").typeName)
+        assertTrue(children.getValue("parent").isCollection)
+        assertTrue(children.keys.none { it == "parentResource" }, "synthetic name leaked")
+
+        assertEquals("Reference", navigator.resolveType("Specimen.parent")?.name)
+        assertTrue(pool.census.choiceTypesAt("Specimen.parent").isEmpty())
+
+        // A genuine choice is still labelled as one.
+        val processing = navigator.childrenAt("Specimen.processing").associateBy { it.name }
+        assertTrue(processing.getValue("time").typeName.startsWith("choice:"), "got $processing")
+    }
+
+    @Test
     fun `completion offers the biobank extension urls scoped to their element`() {
         val terminal = TerminalBuilder.builder().dumb(true).build()
         val reader = LineReaderBuilder.builder().terminal(terminal).build()

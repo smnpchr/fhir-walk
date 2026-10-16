@@ -2,6 +2,7 @@ package dev.fhirwalk.pool
 
 import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition
 import ca.uhn.fhir.context.FhirContext
+import ca.uhn.fhir.context.RuntimeChildChoiceDefinition
 import org.hl7.fhir.instance.model.api.IBase
 import org.hl7.fhir.instance.model.api.IBaseCoding
 import org.hl7.fhir.instance.model.api.IBaseExtension
@@ -151,7 +152,9 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
         for (child in def.children) {
             if (child.elementName in EXTENSION_CHILDREN) continue
             val values = runCatching { child.accessor.getValues(element) }.getOrNull() ?: continue
-            val isChoice = child.validChildNames.size > 1
+            // Only a real [x] choice, not a reference (which carries a second
+            // synthetic valid name without being a choice).
+            val isChoice = child is RuntimeChildChoiceDefinition
             for (value in values) {
                 if (value == null) continue
                 // Paths use the element's base name, because that is what FHIRPath

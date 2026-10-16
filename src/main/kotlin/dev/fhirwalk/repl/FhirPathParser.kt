@@ -1,6 +1,7 @@
 package dev.fhirwalk.repl
 
 import dev.fhirwalk.eval.FhirPathTokenizer
+import org.jline.reader.CompletingParsedLine
 import org.jline.reader.ParsedLine
 import org.jline.reader.Parser
 
@@ -57,6 +58,11 @@ class FhirPathParser : Parser {
         return Parsed(line, cursor, word, (cursor - starts[index]).coerceIn(0, word.length), index, words)
     }
 
+    /**
+     * Implements [CompletingParsedLine] so completion works inside quoted strings.
+     * Without it JLine warns and mis-handles the replacement — which would break the
+     * most valuable case, completing an extension URL inside `extension('…')`.
+     */
     private class Parsed(
         private val line: String,
         private val cursor: Int,
@@ -64,12 +70,23 @@ class FhirPathParser : Parser {
         private val wordCursor: Int,
         private val wordIndex: Int,
         private val words: MutableList<String>,
-    ) : ParsedLine {
+    ) : CompletingParsedLine {
         override fun word(): String = word
         override fun wordCursor(): Int = wordCursor
         override fun wordIndex(): Int = wordIndex
         override fun words(): MutableList<String> = words
         override fun line(): String = line
         override fun cursor(): Int = cursor
+
+        /**
+         * Candidates are inserted verbatim. The cursor is already inside the quotes
+         * when completing a URL, so letting JLine add its own quoting would corrupt
+         * the expression.
+         */
+        override fun escape(candidate: CharSequence, complete: Boolean): CharSequence = candidate
+
+        override fun rawWordCursor(): Int = wordCursor
+
+        override fun rawWordLength(): Int = word.length
     }
 }

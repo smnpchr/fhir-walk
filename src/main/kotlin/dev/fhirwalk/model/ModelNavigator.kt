@@ -5,6 +5,8 @@ import ca.uhn.fhir.context.BaseRuntimeDeclaredChildDefinition
 import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition
 import ca.uhn.fhir.context.BaseRuntimeElementDefinition
 import ca.uhn.fhir.context.FhirContext
+import ca.uhn.fhir.context.RuntimeChildChoiceDefinition
+import ca.uhn.fhir.context.RuntimeChildResourceDefinition
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.pool.Census
 
@@ -63,19 +65,22 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
         for (child in composite.children) {
             val doc = (child as? BaseRuntimeDeclaredChildDefinition)?.shortDefinition?.takeIf { it.isNotBlank() }
             val collection = child.max != 1
-            val names = child.validChildNames
-            if (names.size > 1) {
-                // A choice element. FHIRPath addresses it by its base name and narrows
-                // with ofType(), so offering the wire names (valueQuantity, …) would
+            // Only RuntimeChildChoiceDefinition marks a real choice element. Counting
+            // valid child names would misclassify references, which carry a second
+            // synthetic name (parent / parentResource) without being a choice.
+            val types = if (child.isChoice()) child.distinctTypeNames() else emptyList()
+            val typeName = when {
+                // FHIRPath addresses a real choice by its base name and narrows with
+                // ofType(), so offering the wire names (valueQuantity, …) would
                 // suggest expressions HAPI refuses to evaluate.
-                val types = names.mapNotNull { runCatching { child.getChildByName(it)?.name }.getOrNull() }
-                val summary = types.take(4).joinToString("|") + if (types.size > 4) "|…" else ""
-                out += Child(child.elementName, "choice: $summary", collection, doc)
-            } else {
-                val only = names.firstOrNull() ?: child.elementName
-                val typeName = runCatching { child.getChildByName(only)?.name }.getOrNull() ?: "?"
-                out += Child(child.elementName, typeName, collection, doc)
+                types.size > 1 ->
+                    "choice: " + types.take(4).joinToString("|") + if (types.size > 4) "|…" else ""
+                // Extension is modelled as a choice with a single type; calling that
+                // a choice would be noise.
+                types.size == 1 -> types.first()
+                else -> child.soleTypeName()
             }
+            out += Child(child.elementName, typeName, collection, doc)
         }
         return out.distinctBy { it.name }.sortedBy { it.name }
     }
@@ -95,17 +100,38 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
             ?: composite.children.firstOrNull { name in it.validChildNames }
             ?: return null
 
-        val names = child.validChildNames
-        if (names.size == 1) {
-            return runCatching { child.getChildByName(names.first()) }.getOrNull()
+        if (!child.isChoice()) {
+            // References and single-typed elements: resolve by whichever of the
+            // child's own names matches, which for a reference yields Reference.
+            val lookup = if (name in child.validChildNames) {
+                name
+            } else {
+                child.validChildNames.firstOrNull() ?: name
+            }
+            return runCatching { child.getChildByName(lookup) }.getOrNull()
         }
         // An explicitly spelled wire name still types correctly.
-        if (name in names) return runCatching { child.getChildByName(name) }.getOrNull()
+        if (name in child.validChildNames) return runCatching { child.getChildByName(name) }.getOrNull()
 
-        // Base name on a choice: statically ambiguous, so fall back to the corpus and
-        // only commit when every observed value at this path agrees.
+        // Single-typed "choice" (Extension): no ambiguity to resolve.
+        child.distinctTypeNames().singleOrNull()?.let { return resourceOrElement(it) }
+
+        // Base name on a real choice: statically ambiguous, so fall back to the corpus
+        // and only commit when every observed value at this path agrees.
         val observed = census?.choiceTypesAt(pathSoFar).orEmpty()
         return observed.singleOrNull()?.let { resourceOrElement(it.value) }
+    }
+
+    /** The distinct element types this child can hold, in declaration order. */
+    private fun BaseRuntimeChildDefinition.distinctTypeNames(): List<String> =
+        validChildNames
+            .mapNotNull { runCatching { getChildByName(it)?.name }.getOrNull() }
+            .distinct()
+
+    private fun BaseRuntimeChildDefinition.soleTypeName(): String {
+        if (this is RuntimeChildResourceDefinition) return "Reference"
+        val only = validChildNames.firstOrNull() ?: elementName
+        return runCatching { getChildByName(only)?.name }.getOrNull() ?: "?"
     }
 
     /** Tracks the type across a function call using the static effect table. */
@@ -129,6 +155,12 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
             else -> null
         }
     }
+
+    /**
+     * A genuine `[x]` choice element. `RuntimeChildAny` (Extension.value) extends
+     * the choice definition, so both are covered.
+     */
+    private fun BaseRuntimeChildDefinition.isChoice(): Boolean = this is RuntimeChildChoiceDefinition
 
     private fun resourceOrElement(name: String): BaseRuntimeElementDefinition<*>? {
         if (name.isBlank()) return null

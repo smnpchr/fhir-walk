@@ -161,6 +161,12 @@ per-version adapter for every feature.
   completer both use base names for this reason, and the census records the concrete
   types observed so `Observation.value` can still be typed — from the data — well
   enough to complete `.unit`.
+- **Candidate lists are kept under 100 entries**, because past that JLine asks "do you
+  wish to see all N possibilities?" instead of showing them. So a bare TAB offers the
+  pool's resource types rather than all 146, and ten common functions rather than the
+  whole table; typing one character opens up the full lists. In a type-argument
+  position the census answer wins outright — if every reference at that path points at
+  a Patient, you get `Patient`, not the schema.
 - **Completion order within a group** is JLine's, not frequency. Counts are shown in
   each candidate's description; making frequency drive the order needs a custom
   menu renderer.
@@ -179,9 +185,14 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test     # 40 tests
-./gradlew run --args="--fhir r4 samples"
-./gradlew installDist
+./gradlew test                              # 41 tests
+./gradlew installDist                       # then run the start script:
+build/install/fhir-walk/bin/fhir-walk samples/biobank
 ```
 
 Requires JDK 21.
+
+**Use the start script, not `./gradlew run`.** Gradle does not hand the process a
+TTY, so JLine falls back to a dumb terminal and TAB completion is silently disabled
+(it warns about this on startup). `gradle run` is still useful for piping a script of
+commands in; interactive work wants `installDist`.

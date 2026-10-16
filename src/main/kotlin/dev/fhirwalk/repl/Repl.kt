@@ -40,6 +40,10 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             .terminal(terminal)
             .parser(FhirPathParser())
             .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }))
+            // AUTO_LIST is what makes a single TAB show the grouped candidate list;
+            // without it an ambiguous TAB only inserts the common prefix and beeps.
+            .option(LineReader.Option.AUTO_LIST, true)
+            .option(LineReader.Option.LIST_AMBIGUOUS, true)
             .option(LineReader.Option.AUTO_GROUP, true)
             .option(LineReader.Option.GROUP_PERSIST, true)
             .option(LineReader.Option.CASE_INSENSITIVE, true)
