@@ -115,6 +115,13 @@ produces confusing results that look like product bugs.
   skip rather than fail when it is absent; keep that guard on anything new that uses
   it. Tests that must run everywhere belong in `PoolTest` or `CompleterTest` against
   `samples/basic`.
+- **`samples/` is not a declared input of the `test` task**, so editing, adding or
+  removing sample data does not invalidate it. Gradle reports `BUILD SUCCESSFUL` in
+  well under a second and the result XML is left over from the previous run — which
+  looks exactly like a passing test of the change you just made. Use
+  `./gradlew test --rerun-tasks` whenever an outcome depends on sample data (new
+  fixtures, or checking the `assumeTrue` skip guard by hiding one). A real run of this
+  suite takes about ten seconds; a sub-second success means nothing executed.
 - Listings go through `Repl.emit`, which keeps whatever does not fit for `:more`.
   Never truncate output without an expansion path.
 - Candidate `value` is what gets inserted (including any closing `')`); `displ` is what
