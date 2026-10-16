@@ -38,40 +38,72 @@ class CompleterTest {
         completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
     }
 
-    private fun candidates(expression: String): List<Candidate> {
-        val line = parser.parse(expression, expression.length, Parser.ParseContext.COMPLETE)
+    private fun candidates(expression: String, cursor: Int = expression.length): List<Candidate> {
+        val line = parser.parse(expression, cursor, Parser.ParseContext.COMPLETE)
         val out = mutableListOf<Candidate>()
         completer.complete(reader, line, out)
         return out
     }
 
+    /** What gets inserted, which for a string argument includes the closer. */
     private fun values(expression: String) = candidates(expression).map { it.value() }
+
+    /** What the menu shows, which stays the bare value. */
+    private fun displays(expression: String) = candidates(expression).map { it.displ() }
 
     @Test
     fun `extension urls are scoped to the element they were observed on`() {
-        val onName = values("Patient.name.extension('")
+        val onName = displays("Patient.name.extension('")
         assertTrue(onName.any { it.endsWith("humanname-namenszusatz") }, "got $onName")
         // The birthPlace extension sits on Patient, not on Patient.name -- offering it
         // here is exactly the noise a schema-only completer cannot avoid.
         assertTrue(onName.none { it.endsWith("patient-birthPlace") }, "got $onName")
 
-        val onPatient = values("Patient.extension('")
+        val onPatient = displays("Patient.extension('")
         assertTrue(onPatient.any { it.endsWith("patient-birthPlace") }, "got $onPatient")
         assertTrue(onPatient.none { it.endsWith("humanname-namenszusatz") }, "got $onPatient")
     }
 
     @Test
     fun `nested extension urls complete under the outer extension`() {
-        val nested = values("Patient.extension('http://hl7.org/fhir/StructureDefinition/patient-nationality').extension('")
+        val nested = displays("Patient.extension('http://hl7.org/fhir/StructureDefinition/patient-nationality').extension('")
         assertEquals(listOf("code"), nested)
     }
 
     @Test
     fun `extension candidates carry occurrence counts`() {
         val candidate = candidates("Patient.extension('")
-            .first { it.value().endsWith("patient-birthPlace") }
+            .first { it.displ().endsWith("patient-birthPlace") }
         assertTrue(candidate.descr().contains("1 ×"), "got ${candidate.descr()}")
         assertTrue(candidate.descr().contains("Address"), "got ${candidate.descr()}")
+    }
+
+    @Test
+    fun `accepting a string candidate closes the literal and the call`() {
+        // Inserting only the URL left the line holding an unterminated string, so
+        // Enter submitted something that could not parse.
+        val open = candidates("Patient.extension('").first { it.displ().endsWith("patient-birthPlace") }
+        assertEquals(
+            "http://hl7.org/fhir/StructureDefinition/patient-birthPlace')",
+            open.value(),
+        )
+
+        // When the closer is already on the line, adding another would corrupt it.
+        val line = "Patient.extension('')"
+        val closed = candidates(line, line.indexOf("''") + 1)
+            .first { it.displ().endsWith("patient-birthPlace") }
+        assertEquals("http://hl7.org/fhir/StructureDefinition/patient-birthPlace", closed.value())
+    }
+
+    @Test
+    fun `a function taking a string literal opens the quote`() {
+        // Otherwise the URL suggestions stay out of reach until you type the quote
+        // yourself -- and typing a double quote silently produces an expression
+        // FHIRPath cannot parse.
+        assertTrue(values("Patient.ext").contains("extension('"), "got ${values("Patient.ext")}")
+        assertTrue(values("Patient.name.given.matc").contains("matches('"))
+        // Functions whose first argument is not a string stop at the paren.
+        assertTrue(values("Patient.name.whe").contains("where("))
     }
 
     @Test
@@ -112,7 +144,7 @@ class CompleterTest {
         assertTrue(values(":all Patient.").contains("name"), "members not offered")
         assertTrue(values(":why Patient.").contains("name"), "members not offered")
         assertTrue(
-            values(":all Patient.name.extension('").any { it.endsWith("humanname-namenszusatz") },
+            displays(":all Patient.name.extension('").any { it.endsWith("humanname-namenszusatz") },
             "census urls not offered inside a command argument",
         )
     }

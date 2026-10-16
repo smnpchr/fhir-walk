@@ -236,22 +236,33 @@ class BiobankPoolTest {
         val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { emptyList() })
         val parser = FhirPathParser()
 
-        fun values(expression: String): List<String> {
+        fun offered(expression: String): List<Candidate> {
             val line = parser.parse(expression, expression.length, Parser.ParseContext.COMPLETE)
             val out = mutableListOf<Candidate>()
             completer.complete(reader, line, out)
-            return out.map { it.value() }
+            return out
         }
 
-        val onContainer = values("Specimen.container.extension('")
+        fun displays(expression: String) = offered(expression).map { it.displ() }
+
+        val onContainer = displays("Specimen.container.extension('")
         assertEquals(listOf("$ext/container-lot-number"), onContainer)
 
-        val onRoot = values("Specimen.extension('")
+        val onRoot = displays("Specimen.extension('")
         assertTrue(onRoot.any { it.endsWith("specimen-freezing-time") }, "got $onRoot")
         assertTrue(onRoot.none { it.endsWith("container-lot-number") }, "got $onRoot")
 
         // Inside the nested storage extension, only its three sub-urls.
-        val nested = values("Specimen.extension('$ext/specimen-storage').extension('")
+        val nested = displays("Specimen.extension('$ext/specimen-storage').extension('")
         assertEquals(setOf("temperature", "freezer", "position"), nested.toSet())
+
+        // At a member position the whole extension() step is offered, parens and
+        // quotes included, so picking one needs no further typing.
+        val steps = offered("Specimen.").map { it.value() }
+        assertTrue(steps.contains("extension('$ext/specimen-freezing-time')"), "got $steps")
+        assertTrue(
+            offered("Specimen.container.").map { it.value() }
+                .contains("extension('$ext/container-lot-number')"),
+        )
     }
 }

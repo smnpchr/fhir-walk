@@ -39,6 +39,18 @@ r4:pool(22)> Specimen.container.extension('
   https://biobank.example.org/StructureDefinition/container-lot-number   9 ×  string
 ```
 
+You do not have to get that far by hand: at a member position the whole call is
+offered, parens and quotes included, so one TAB lands a valid expression.
+
+```
+r4:pool(22)> Specimen.ext⇥
+  extension() — observed here
+  extension('…/aliquot-group-purpose')       6 ×  CodeableConcept
+  extension('…/specimen-freezing-time')     12 ×  dateTime
+  extension('…/specimen-storage')           13 ×
+  extension('…/specimen-time-to-freezing')   9 ×  Duration
+```
+
 `Specimen.extension('` offers a *different*, non-overlapping set (freezing time,
 time-to-freezing, storage, aliquot-group purpose). The census also
 backs `ofType()` after `resolve()` (types actually referenced), code systems, profiles
@@ -115,6 +127,12 @@ expressions like any other. On an empty line it lists the pool's resource types;
 after a `.` the elements and functions available there, pool-populated ones first;
 inside `extension('…')` the URLs observed on that element.
 
+Pressing TAB repeatedly walks the candidates: the first inserts the common prefix,
+the second lists them grouped, and each one after that cycles the next candidate into
+the line. That is how you pick a long extension URL without typing it. A candidate in
+a string position brings its own closing `')`, so Enter always submits something that
+parses.
+
 ## Import paths
 
 Three loaders, one extension point (`Importer`):
@@ -167,6 +185,10 @@ per-version adapter for every feature.
   completer both use base names for this reason, and the census records the concrete
   types observed so `Observation.value` can still be typed — from the data — well
   enough to complete `.unit`.
+- **FHIRPath strings are single-quoted.** A double quote delimits an *identifier*, so
+  `extension("url")` fails to parse with a message that never mentions quoting.
+  Completion therefore opens the quote for you on every function whose first argument
+  is a string, and a failed parse containing `"` gets an explicit hint.
 - **Candidate lists are kept under 100 entries**, because past that JLine asks "do you
   wish to see all N possibilities?" instead of showing them. So a bare TAB offers the
   pool's resource types rather than all 146, and ten common functions rather than the
@@ -191,7 +213,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 52 tests
+./gradlew test                              # 54 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/biobank
 ```

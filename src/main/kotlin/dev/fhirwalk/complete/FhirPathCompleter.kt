@@ -90,8 +90,8 @@ class FhirPathCompleter(
 
     // ---------------------------------------------------------------- expressions
 
-    private fun completeExpression(text: String, cursor: Int, candidates: MutableList<Candidate>) {
-        val context = FhirPathTokenizer.cursorContext(text, cursor)
+    private fun completeExpression(slice: String, cursor: Int, candidates: MutableList<Candidate>) {
+        val context = FhirPathTokenizer.cursorContext(slice, cursor)
         val nav = navigator()
         val census = pool().census
 
@@ -112,7 +112,10 @@ class FhirPathCompleter(
                 resourceTypes(nav, candidates, all = observed.isEmpty() && context.partial.isNotEmpty())
             }
 
-            CursorKind.STRING_ARG -> stringArgument(context, census, candidates)
+            // What follows the cursor decides whether the candidate has to close the
+            // string literal itself.
+            CursorKind.STRING_ARG ->
+                stringArgument(context, census, candidates, slice.substring(cursor.coerceAtMost(slice.length)))
 
             CursorKind.MEMBER -> {
                 if (context.basePath.isBlank()) {
@@ -161,6 +164,26 @@ class FhirPathCompleter(
             val group = if (observed > 0) "elements (in pool)" else "elements"
             candidates += cand(child.name, child.name, group, detail)
         }
+        extensionSteps(basePath, census, candidates)
+    }
+
+    /**
+     * Whole `extension('url')` steps for the URLs observed at this path -- call,
+     * quotes and closing paren included.
+     *
+     * Completing to a bare `extension('` left the line holding an unterminated
+     * string, so pressing Enter on it failed to parse. Offering the finished step
+     * means one TAB gets you a valid expression you can keep typing after.
+     */
+    private fun extensionSteps(
+        basePath: String,
+        census: Census,
+        candidates: MutableList<Candidate>,
+    ) {
+        for (ext in census.extensionsAt(basePath).take(MAX_EXTENSION_STEPS)) {
+            val step = "extension('${ext.value}')"
+            candidates += cand(step, step, "extension() — observed here", detail(ext))
+        }
     }
 
     /**
@@ -185,28 +208,40 @@ class FhirPathCompleter(
         context: FhirPathTokenizer.CursorContext,
         census: Census,
         candidates: MutableList<Candidate>,
+        tail: String,
     ) {
+        // Accepting a candidate must leave a valid expression. Inserting only the URL
+        // left the string unterminated, so Enter submitted something unparseable --
+        // unless the user had already typed the closer.
+        val closer = when {
+            tail.startsWith("'") -> ""
+            tail.isBlank() -> "')"
+            else -> "'"
+        }
+        fun stringCand(value: String, group: String, descr: String?) =
+            cand(value + closer, value, group, descr)
+
         when (context.enclosingCall) {
             "extension" -> {
                 val scoped = census.extensionsAt(context.basePath)
                 scoped.forEach {
-                    candidates += cand(it.value, it.value, "observed on ${context.basePath}", detail(it))
+                    candidates += stringCand(it.value, "observed on ${context.basePath}", detail(it))
                 }
                 if (scoped.isEmpty()) {
                     census.allExtensions().take(MAX_ROWS).forEach {
-                        candidates += cand(it.value, it.value, "observed elsewhere in pool", detail(it))
+                        candidates += stringCand(it.value, "observed elsewhere in pool", detail(it))
                     }
                 }
             }
             "conformsTo" -> pool().types().flatMap { census.profilesFor(it) }
-                .forEach { candidates += cand(it.value, it.value, "profiles in pool", "${it.count} ×") }
+                .forEach { candidates += stringCand(it.value, "profiles in pool", "${it.count} ×") }
             else -> {
                 // A quoted literal being compared against a Coding: offer the systems
                 // observed at the sibling path.
                 val systems = census.codeSystemsAt(context.basePath)
                     .ifEmpty { census.codeSystemsAt(context.basePath.substringBeforeLast('.')) }
                 systems.take(MAX_ROWS).forEach {
-                    candidates += cand(it.value, it.value, "systems in pool", "${it.count} ×")
+                    candidates += stringCand(it.value, "systems in pool", "${it.count} ×")
                 }
             }
         }
@@ -236,5 +271,6 @@ class FhirPathCompleter(
     private companion object {
         const val MAX_ROWS = 60
         const val MAX_FOCUS_CANDIDATES = 200
+        const val MAX_EXTENSION_STEPS = 24
     }
 }

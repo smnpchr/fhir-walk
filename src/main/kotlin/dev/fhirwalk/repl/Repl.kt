@@ -48,6 +48,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             // without it an ambiguous TAB only inserts the common prefix and beeps.
             .option(LineReader.Option.AUTO_LIST, true)
             .option(LineReader.Option.LIST_AMBIGUOUS, true)
+            // AUTO_MENU turns that list into something you can walk through: further
+            // TABs cycle the candidates into the line. Without it the list is purely
+            // informational, arrow keys do history, and there is no way to pick a
+            // long extension URL other than typing it.
+            .option(LineReader.Option.AUTO_MENU, true)
             .option(LineReader.Option.AUTO_GROUP, true)
             .option(LineReader.Option.GROUP_PERSIST, true)
             .option(LineReader.Option.CASE_INSENSITIVE, true)
@@ -163,6 +168,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private fun reportSyntaxError(expression: String, out: PrintWriter): Boolean {
         val error = session.evaluator.validate(expression) ?: return false
         out.println("! $error")
+        // FHIRPath strings are single-quoted; " delimits an identifier, so a
+        // double-quoted URL fails with a message that never mentions quoting.
+        if (expression.contains('"')) {
+            out.println("  FHIRPath string literals use single quotes — try '…' rather than \"…\"")
+        }
         return true
     }
 

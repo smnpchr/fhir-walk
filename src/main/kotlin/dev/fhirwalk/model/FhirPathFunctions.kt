@@ -12,6 +12,13 @@ data class FhirPathFunction(
     val signature: String,
     val doc: String,
     val typeEffect: TypeEffect = TypeEffect.UNKNOWN,
+    /**
+     * Whether the first argument is a string literal. If so completion opens the
+     * quote too, so the next TAB can offer values from the census -- and so the
+     * quote is the single one FHIRPath requires, never a double quote (which
+     * delimits an identifier and fails to parse).
+     */
+    val quotedFirstArg: Boolean = false,
 ) {
     /** What the call does to the type of its input collection. */
     enum class TypeEffect {
@@ -33,7 +40,11 @@ data class FhirPathFunction(
         UNKNOWN,
     }
 
-    val insertText: String get() = if (signature.endsWith("()")) "$name()" else "$name("
+    val insertText: String get() = when {
+        signature.endsWith("()") -> "$name()"
+        quotedFirstArg -> "$name('"
+        else -> "$name("
+    }
 }
 
 object FhirPathFunctions {
@@ -73,23 +84,23 @@ object FhirPathFunctions {
         f("combine", "combine(other)", "members of either, keeping duplicates", TypeEffect.PRESERVES),
 
         // Strings
-        f("contains", "contains(substring)", "true if the string contains substring", TypeEffect.PRIMITIVE),
-        f("startsWith", "startsWith(prefix)", "true if the string starts with prefix", TypeEffect.PRIMITIVE),
-        f("endsWith", "endsWith(suffix)", "true if the string ends with suffix", TypeEffect.PRIMITIVE),
-        f("matches", "matches(regex)", "true if the string matches the regex", TypeEffect.PRIMITIVE),
-        f("replaceMatches", "replaceMatches(regex, substitution)", "regex replace", TypeEffect.PRIMITIVE),
-        f("replace", "replace(pattern, substitution)", "literal replace", TypeEffect.PRIMITIVE),
+        f("contains", "contains(substring)", "true if the string contains substring", TypeEffect.PRIMITIVE, quoted = true),
+        f("startsWith", "startsWith(prefix)", "true if the string starts with prefix", TypeEffect.PRIMITIVE, quoted = true),
+        f("endsWith", "endsWith(suffix)", "true if the string ends with suffix", TypeEffect.PRIMITIVE, quoted = true),
+        f("matches", "matches(regex)", "true if the string matches the regex", TypeEffect.PRIMITIVE, quoted = true),
+        f("replaceMatches", "replaceMatches(regex, substitution)", "regex replace", TypeEffect.PRIMITIVE, quoted = true),
+        f("replace", "replace(pattern, substitution)", "literal replace", TypeEffect.PRIMITIVE, quoted = true),
         f("substring", "substring(start [, length])", "substring by offset", TypeEffect.PRIMITIVE),
         f("indexOf", "indexOf(substring)", "0-based offset of substring, or -1", TypeEffect.PRIMITIVE),
         f("length", "length()", "string length", TypeEffect.PRIMITIVE),
         f("upper", "upper()", "uppercased", TypeEffect.PRIMITIVE),
         f("lower", "lower()", "lowercased", TypeEffect.PRIMITIVE),
         f("trim", "trim()", "whitespace trimmed", TypeEffect.PRIMITIVE),
-        f("split", "split(separator)", "split into a collection of strings", TypeEffect.PRIMITIVE),
-        f("join", "join([separator])", "concatenate members into one string", TypeEffect.PRIMITIVE),
+        f("split", "split(separator)", "split into a collection of strings", TypeEffect.PRIMITIVE, quoted = true),
+        f("join", "join([separator])", "concatenate members into one string", TypeEffect.PRIMITIVE, quoted = true),
         f("toChars", "toChars()", "the string as a collection of characters", TypeEffect.PRIMITIVE),
-        f("encode", "encode(format)", "encode as base64/hex/urlbase64", TypeEffect.PRIMITIVE),
-        f("decode", "decode(format)", "decode from base64/hex/urlbase64", TypeEffect.PRIMITIVE),
+        f("encode", "encode(format)", "encode as base64/hex/urlbase64", TypeEffect.PRIMITIVE, quoted = true),
+        f("decode", "decode(format)", "decode from base64/hex/urlbase64", TypeEffect.PRIMITIVE, quoted = true),
 
         // Conversion
         f("toString", "toString()", "convert to string", TypeEffect.PRIMITIVE),
@@ -106,15 +117,15 @@ object FhirPathFunctions {
         f("convertsToDateTime", "convertsToDateTime()", "true if convertible to dateTime", TypeEffect.PRIMITIVE),
 
         // FHIR-specific
-        f("extension", "extension(url)", "extensions with the given url", TypeEffect.EXTENSION),
+        f("extension", "extension(url)", "extensions with the given url", TypeEffect.EXTENSION, quoted = true),
         f("hasValue", "hasValue()", "true if the primitive has a value", TypeEffect.PRIMITIVE),
         f("getValue", "getValue()", "the primitive value", TypeEffect.PRIMITIVE),
         f("resolve", "resolve()", "follow a reference (pool-backed here)", TypeEffect.RESOLVE),
-        f("memberOf", "memberOf(valueset)", "true if the code is in the value set", TypeEffect.PRIMITIVE),
+        f("memberOf", "memberOf(valueset)", "true if the code is in the value set", TypeEffect.PRIMITIVE, quoted = true),
         f("subsumes", "subsumes(code)", "true if this code subsumes the argument", TypeEffect.PRIMITIVE),
         f("subsumedBy", "subsumedBy(code)", "true if this code is subsumed by the argument", TypeEffect.PRIMITIVE),
         f("htmlChecks", "htmlChecks()", "true if the narrative xhtml is valid", TypeEffect.PRIMITIVE),
-        f("conformsTo", "conformsTo(profile)", "true if the resource conforms to the profile", TypeEffect.PRIMITIVE),
+        f("conformsTo", "conformsTo(profile)", "true if the resource conforms to the profile", TypeEffect.PRIMITIVE, quoted = true),
         f("elementDefinition", "elementDefinition()", "the ElementDefinition for this element", TypeEffect.UNKNOWN),
         f("slice", "slice(structure, name)", "members matching the named slice", TypeEffect.PRESERVES),
         f("checkModifiers", "checkModifiers()", "verify modifier extensions are understood", TypeEffect.PRIMITIVE),
@@ -122,7 +133,7 @@ object FhirPathFunctions {
         // Tree / utility
         f("children", "children()", "immediate child nodes", TypeEffect.UNKNOWN),
         f("descendants", "descendants()", "all descendant nodes", TypeEffect.UNKNOWN),
-        f("trace", "trace(name [, selector])", "log the collection and pass it through", TypeEffect.PRESERVES),
+        f("trace", "trace(name [, selector])", "log the collection and pass it through", TypeEffect.PRESERVES, quoted = true),
         f("iif", "iif(criterion, true-result [, otherwise])", "inline conditional", TypeEffect.UNKNOWN),
         f("not", "not()", "boolean negation", TypeEffect.PRIMITIVE),
         f("abs", "abs()", "absolute value", TypeEffect.PRIMITIVE),
@@ -157,6 +168,7 @@ private fun f(
     signature: String,
     doc: String,
     effect: FhirPathFunction.TypeEffect,
-) = FhirPathFunction(name, signature, doc, effect)
+    quoted: Boolean = false,
+) = FhirPathFunction(name, signature, doc, effect, quoted)
 
 private typealias TypeEffect = FhirPathFunction.TypeEffect
