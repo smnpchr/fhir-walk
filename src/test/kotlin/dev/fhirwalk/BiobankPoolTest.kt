@@ -180,6 +180,36 @@ class BiobankPoolTest {
     }
 
     @Test
+    fun `a syntax error is reported once, in readable form`() {
+        // HAPI wraps lexer failures as
+        //   HAPI-2409: org.hl7...FHIRLexer$FHIRLexerException: Error @1, 14: …
+        // and only the tail concerns the user's expression.
+        val error = assertNotNull(evaluator.validate("Specimen.subject.foo..bar"))
+        assertTrue(error.startsWith("Error @"), "got: $error")
+        assertTrue(!error.contains("HAPI-"), "HAPI code leaked: $error")
+        assertTrue(!error.contains("Exception"), "exception class leaked: $error")
+
+        // A valid expression validates cleanly even though it matches nothing.
+        assertEquals(null, evaluator.validate("Specimen.subject.id"))
+    }
+
+    @Test
+    fun `diagnosis picks a resource of the expression's own root type`() {
+        // The pool's first resource is the donor Patient; diagnosing a Specimen
+        // expression against it would report "empty at step one" and teach nothing.
+        assertEquals("Patient", pool.all().first().type)
+
+        val target = assertNotNull(PrefixWalker(evaluator, pool).diagnosisTarget("Specimen.subject.id"))
+        assertEquals("Specimen", target.type)
+
+        // ... so the diagnosis reaches the step that actually fails: Reference.id is
+        // the element id, not the reference string.
+        val diagnosis = PrefixWalker(evaluator, pool).diagnose(target.resource, "Specimen.subject.id")
+        assertEquals(2, diagnosis.firstEmpty)
+        assertEquals(0, assertNotNull(diagnosis.poolCoverage).matching)
+    }
+
+    @Test
     fun `references are not mistaken for choice elements`() {
         // HAPI gives a reference child two valid names (parent / parentResource), so
         // counting names would label it a choice and send completion down the

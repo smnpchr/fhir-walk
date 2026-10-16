@@ -71,11 +71,21 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
         return Diagnosis(steps, firstEmpty, coverage)
     }
 
+    /**
+     * The resource to diagnose against when nothing is in focus.
+     *
+     * It must be of the expression's own root type: diagnosing a Specimen expression
+     * against a Patient reports "empty at step one" and teaches nothing.
+     */
+    fun diagnosisTarget(expression: String): PooledResource? =
+        rootTypeOf(expression)?.let { pool.ofType(it).firstOrNull() } ?: pool.all().firstOrNull()
+
     /** Only resources of the expression's root type can meaningfully be compared. */
-    private fun candidatesFor(expression: String): List<PooledResource> {
-        val root = FhirPathTokenizer.segments(expression).firstOrNull()?.name ?: return emptyList()
-        return pool.ofType(root)
-    }
+    private fun candidatesFor(expression: String): List<PooledResource> =
+        rootTypeOf(expression)?.let { pool.ofType(it) } ?: emptyList()
+
+    private fun rootTypeOf(expression: String): String? =
+        FhirPathTokenizer.segments(expression).firstOrNull()?.name?.takeIf { it.isNotBlank() }
 
     private fun isTrue(value: org.hl7.fhir.instance.model.api.IBase): Boolean =
         (value as? org.hl7.fhir.instance.model.api.IPrimitiveType<*>)?.valueAsString == "true"

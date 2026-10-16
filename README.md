@@ -7,7 +7,7 @@ Nothing leaves the machine. There is no engine endpoint, no package-server fetch
 no terminology lookup — the base StructureDefinitions ship as a JAR dependency.
 
 ```
-./gradlew run --args="samples/biobank"
+./gradlew installDist && build/install/fhir-walk/bin/fhir-walk samples/biobank
 
 r4:pool(22)> :focus Specimen/al-pa-001-1
 focus Specimen/al-pa-001-1  (pathogen.ndjson:1)
@@ -185,7 +185,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 41 tests
+./gradlew test                              # 43 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/biobank
 ```

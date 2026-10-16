@@ -40,17 +40,40 @@ class Evaluator(private val ctx: FhirContext, private val pool: ResourcePool) {
         try {
             Outcome.Values(fhirPath.evaluate(resource, expression, IBase::class.java))
         } catch (e: Exception) {
-            Outcome.Failure(e.message?.lineSequence()?.first()?.trim() ?: e.javaClass.simpleName)
+            Outcome.Failure(readable(e))
         }
 
-    /** Checks an expression parses, without needing a resource to run it against. */
+    /**
+     * Checks an expression parses, without needing a resource to run it against.
+     *
+     * Callers evaluate this first: a syntax error is a property of the expression,
+     * not of any resource, so reporting it once beats reporting it per resource.
+     */
     fun validate(expression: String): String? =
         try {
             fhirPath.parse(expression)
             null
         } catch (e: Exception) {
-            e.message?.lineSequence()?.first()?.trim() ?: e.javaClass.simpleName
+            readable(e)
         }
+
+    /**
+     * HAPI wraps lexer failures so the message arrives as
+     * `HAPI-2409: org.hl7.fhir.r4.fhirpath.FHIRLexer$FHIRLexerException: Error @1, 14: …`.
+     * Only the tail is about the user's expression; the rest is plumbing.
+     */
+    private fun readable(e: Exception): String {
+        var message = e.message?.lineSequence()?.firstOrNull()?.trim()
+            ?: return e.javaClass.simpleName
+        repeat(3) {
+            val stripped = message
+                .replace(HAPI_CODE, "")
+                .replace(NESTED_EXCEPTION, "")
+            if (stripped == message) return@repeat
+            message = stripped
+        }
+        return message.ifBlank { e.javaClass.simpleName }
+    }
 
     /**
      * The pool-wide fan-out: one expression, every resource. Only non-empty answers
@@ -81,4 +104,9 @@ class Evaluator(private val ctx: FhirContext, private val pool: ResourcePool) {
         val firstError: String?,
         val considered: Int,
     )
+
+    private companion object {
+        val HAPI_CODE = Regex("^HAPI-\\d+:\\s*")
+        val NESTED_EXCEPTION = Regex("^(?:[a-z][\\w]*\\.)+[\\w$]*(?:Exception|Error):\\s*")
+    }
 }

@@ -30,6 +30,10 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         FhirPathCompleter.CommandInfo(":quit", "", "exit"),
     )
 
+    /** Command names including the undocumented aliases, for the dropped-colon hint. */
+    private val commandNames: Set<String> =
+        commands.map { it.name }.toSet() + setOf(":exit", ":q", ":?")
+
     private var lastResult: dev.fhirwalk.eval.Evaluator.PoolResult? = null
     private var lastExpression: String? = null
 
@@ -87,6 +91,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     /** @return false to exit. */
     private fun dispatch(input: String, out: PrintWriter): Boolean {
         if (!input.startsWith(":")) {
+            // `all Specimen.subject` is a dropped colon, not an expression. Saying so
+            // beats handing the whole line to the FHIRPath parser.
+            val firstWord = input.substringBefore(' ')
+            if (":$firstWord" in commandNames) {
+                out.println("! not a FHIRPath expression — did you mean  :$input")
+                return true
+            }
             evaluate(input, out)
             return true
         }
@@ -111,6 +122,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     // ------------------------------------------------------------------ evaluate
 
     private fun evaluate(expression: String, out: PrintWriter) {
+        if (reportSyntaxError(expression, out)) return
         val focus = session.focus
         if (focus == null) {
             if (session.pool.size == 0) {
@@ -138,7 +150,20 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         }
     }
 
+    /**
+     * A syntax error belongs to the expression, not to the data: report it once,
+     * rather than once per resource in the pool.
+     *
+     * @return true when the expression could not be parsed and nothing should run.
+     */
+    private fun reportSyntaxError(expression: String, out: PrintWriter): Boolean {
+        val error = session.evaluator.validate(expression) ?: return false
+        out.println("! $error")
+        return true
+    }
+
     private fun evaluateAll(expression: String, out: PrintWriter) {
+        if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
         lastResult = result
         lastExpression = expression
@@ -146,6 +171,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             "${result.hits.size} of ${result.considered} resource(s) matched" +
                 if (result.errors > 0) "; ${result.errors} error(s): ${result.firstError}" else "",
         )
+        if (result.hits.isEmpty() && result.errors == 0) {
+            // Nothing matched anywhere, and it parsed: the question is which step
+            // goes empty, which is exactly what :why answers.
+            out.println("  nothing matched — :why $expression")
+        }
         result.hits.take(MAX_POOL_ROWS).forEach { hit ->
             val first = hit.values.firstOrNull()?.let { session.render.value(it, 60) } ?: ""
             val extra = if (hit.values.size > 1) " (+${hit.values.size - 1})" else ""
@@ -168,10 +198,24 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     }
 
     private fun why(expression: String, out: PrintWriter) {
-        val focus = session.focus ?: session.pool.all().firstOrNull() ?: run {
+        if (reportSyntaxError(expression, out)) return
+        if (session.pool.size == 0) {
             out.println("pool is empty")
             return
         }
+        val root = dev.fhirwalk.eval.FhirPathTokenizer.segments(expression)
+            .firstOrNull()?.name?.takeIf { it.isNotBlank() }
+        // Diagnosing a Specimen expression against a Patient reports "empty at step
+        // one" and teaches nothing, so the subject must match the expression's root.
+        if (root != null && session.navigator.resourceTypes().contains(root) &&
+            session.pool.ofType(root).isEmpty()
+        ) {
+            out.println("no $root in the pool — it holds ${session.pool.types().joinToString(", ")}")
+            return
+        }
+        val focus = session.focus
+            ?: session.prefixWalker.diagnosisTarget(expression)
+            ?: session.pool.all().first()
         if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
         val diagnosis = session.prefixWalker.diagnose(focus.resource, expression)
         // Each row shows only the step it adds, not the whole prefix: with long
