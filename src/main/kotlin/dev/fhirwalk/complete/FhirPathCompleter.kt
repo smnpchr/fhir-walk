@@ -65,9 +65,11 @@ class FhirPathCompleter(
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
             ":load" -> completePath(lastToken, candidates)
-            ":focus" -> pool().all().take(MAX_FOCUS_CANDIDATES).forEach {
-                candidates += commandCand(it.label, it.label, "pool", it.origin)
-            }
+            // Narrowed by what is typed before the cap, or a large pool would leave
+            // everything past the first MAX_ROWS uncompletable.
+            ":focus" -> pool().all().filter { it.label.startsWith(lastToken, ignoreCase = true) }
+                .take(MAX_ROWS)
+                .forEach { candidates += commandCand(it.label, it.label, "pool", it.origin) }
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
@@ -270,7 +272,6 @@ class FhirPathCompleter(
 
     private companion object {
         const val MAX_ROWS = 60
-        const val MAX_FOCUS_CANDIDATES = 200
         const val MAX_EXTENSION_STEPS = 24
     }
 }

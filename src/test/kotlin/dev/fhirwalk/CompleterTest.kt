@@ -173,6 +173,22 @@ class CompleterTest {
         assertTrue(values.none { it == "valueQuantity" }, "wire names must not be offered")
     }
 
+    @Test
+    fun `focus candidates stay under the menu threshold and narrow by what is typed`() {
+        val pool = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        repeat(150) { pool.add(json.parseResource("""{"resourceType":"Patient","id":"p$it"}"""), null, "test") }
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        fun complete(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+
+        // Past 100 JLine asks "see all N possibilities?" instead of showing a menu.
+        assertTrue(complete(":focus ").size < 100)
+        // A resource past the cap is still reachable once its prefix is typed.
+        assertEquals(listOf("Patient/p149"), complete(":focus Patient/p149").map { it.value() })
+    }
+
     private companion object {
         /** Stands in for the REPL's own command list. */
         val COMMANDS = listOf(
