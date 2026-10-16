@@ -14,7 +14,10 @@ import org.jline.reader.Candidate
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
 import org.jline.terminal.TerminalBuilder
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeEach
 import java.nio.file.Paths
+import kotlin.io.path.isDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -46,7 +49,24 @@ class BiobankPoolTest {
     private val ext = "https://biobank.example.org/StructureDefinition"
 
     init {
-        Importer(ctx, pool).load(Paths.get("samples/biobank"))
+        Importer(ctx, pool).load(FIXTURE)
+    }
+
+    /**
+     * The fixture is deliberately not published, so these tests skip rather than fail
+     * on a clone that does not have it. A missing optional fixture should not read as
+     * a broken build.
+     */
+    @BeforeEach
+    fun requireFixture() {
+        assumeTrue(
+            FIXTURE.isDirectory(),
+            "$FIXTURE is a local-only fixture and is not published; see CLAUDE.md",
+        )
+    }
+
+    private companion object {
+        val FIXTURE = Paths.get("samples/biobank")
     }
 
     private fun strings(id: String, expression: String): List<String> {

@@ -2,3 +2,7 @@
 build/
 *.log
 .idea/
+
+# Local-only fixture: a domain-specific sample hierarchy that is deliberately
+# not published. The tests that use it skip when it is absent.
+samples/biobank/

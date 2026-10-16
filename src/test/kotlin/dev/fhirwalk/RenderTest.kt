@@ -7,7 +7,10 @@ import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.ResourcePool
 import dev.fhirwalk.repl.Render
 import org.hl7.fhir.instance.model.api.IBase
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeEach
 import java.nio.file.Paths
+import kotlin.io.path.isDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -20,7 +23,20 @@ class RenderTest {
     private val render = Render(ctx)
 
     init {
-        Importer(ctx, pool).load(Paths.get("samples/biobank"))
+        Importer(ctx, pool).load(FIXTURE)
+    }
+
+    /** Skips rather than fails when the local-only fixture is absent. */
+    @BeforeEach
+    fun requireFixture() {
+        assumeTrue(
+            FIXTURE.isDirectory(),
+            "$FIXTURE is a local-only fixture and is not published; see CLAUDE.md",
+        )
+    }
+
+    private companion object {
+        val FIXTURE = Paths.get("samples/biobank")
     }
 
     private fun one(id: String, expression: String): IBase {

@@ -7,14 +7,17 @@ Nothing leaves the machine. There is no engine endpoint, no package-server fetch
 no terminology lookup — the base StructureDefinitions ship as a JAR dependency.
 
 ```
-./gradlew installDist && build/install/fhir-walk/bin/fhir-walk samples/biobank
+./gradlew installDist && build/install/fhir-walk/bin/fhir-walk samples/basic
 
-r4:pool(22)> :focus Specimen/al-pa-001-1
-focus Specimen/al-pa-001-1  (pathogen.ndjson:1)
+r4:pool(6)> :focus Observation/obs2
+focus Observation/obs2  (observations.ndjson:1)
 
-r4:Specimen/al-pa-001-1> Specimen.parent.resolve().parent.resolve().parent.resolve().parent.resolve().identifier.value
-  [0] string  ST-2026-0001
+r4:Observation/obs2> Observation.subject.resolve().name.family
+  [0] string  Mustermann
 ```
+
+That `resolve()` crossed files: `obs2` came from an NDJSON file, the Patient it
+references from a bundle.
 
 ## What it does that other FHIRPath tools don't
 
@@ -34,75 +37,65 @@ Extension URLs can only come from the second, and scoping them to the element th
 were observed on is what keeps the list short:
 
 ```
-r4:pool(22)> Specimen.container.extension('
-  observed on Specimen.container
-  https://biobank.example.org/StructureDefinition/container-lot-number   9 ×  string
+r4:pool(6)> Patient.name.extension('
+  observed on Patient.name
+  http://fhir.de/StructureDefinition/humanname-namenszusatz   1 ×  string
 ```
+
+`Patient.extension('` offers a *different*, non-overlapping set — `patient-birthPlace`
+and `patient-nationality`, which sit on the resource root rather than on the name.
 
 You do not have to get that far by hand: at a member position the whole call is
 offered, parens and quotes included, so one TAB lands a valid expression.
 
 ```
-r4:pool(22)> Specimen.ext⇥
+r4:pool(6)> Patient.ext⇥
   extension() — observed here
-  extension('…/aliquot-group-purpose')       6 ×  CodeableConcept
-  extension('…/specimen-freezing-time')     12 ×  dateTime
-  extension('…/specimen-storage')           13 ×
-  extension('…/specimen-time-to-freezing')   9 ×  Duration
+  extension('http://hl7.org/fhir/StructureDefinition/patient-birthPlace')    1 ×  Address
+  extension('http://hl7.org/fhir/StructureDefinition/patient-nationality')   1 ×
 ```
 
-`Specimen.extension('` offers a *different*, non-overlapping set (freezing time,
-time-to-freezing, storage, aliquot-group purpose). The census also
-backs `ofType()` after `resolve()` (types actually referenced), code systems, profiles
-and frequency ranking of elements — populated elements are grouped apart from merely
-legal ones, which matters in a schema as large as FHIR's.
+The census also backs `ofType()` after `resolve()` (types actually referenced), code
+systems, profiles and frequency ranking of elements — populated elements are grouped
+apart from merely legal ones, which matters in a schema as large as FHIR's.
 
 **`:why` tells you where an expression went empty**, and — because the pool is there —
 whether that is a gap in your data or the wrong level of the hierarchy:
 
 ```
-r4:Specimen/swab-002> :why Specimen.collection.collectedDateTime
-  Specimen                                         1
-  .collection                                      0      <-- empty here
-  .collectedDateTime                               —
-  Specimen.collection is populated in 1 of 20 resource(s) of that type
+r4:Patient/pat1> :why Patient.contact.name.given
+  Patient                                          1
+  .contact                                         0      <-- empty here
+  .name                                            —
+  .given                                           —
+  Patient.contact is populated in 1 of 2 resource(s) of that type
 ```
 
-One hit in twenty says "wrong level" — only the master sample carries `collection`.
-Twelve in twenty (as for the freezing-time extension) says the expression is right and
-the data is incomplete. That distinction is the whole value of having the pool.
+That last line is the point. One hit in two says the element is real and this resource
+simply lacks it; zero in two would say the expression is aimed at the wrong level, or
+the element name is wrong. Only the pool can tell those apart.
 
-## Sample pools
+## Sample pool
 
-`samples/biobank` is a real-world biobanking hierarchy: a native stool sample
-aliquoted through **aliquot groups** into direct aliquots and swabs, each swab
-aliquoted again into pathogen- and genetics-analysis sets. Aliquots never reference
-their primary directly — the group sits in between, so walking the lineage means
-chaining `resolve()` (four hops from a terminal aliquot to the master sample).
+`samples/basic` is a small fixture: two Patients, three Observations and an Encounter,
+spread deliberately across all three import paths so one pool is assembled from a
+bundle (with `fullUrl`s), a directory tree and an NDJSON file. It carries extensions at
+three distinct element paths plus one nested extension, and its coverage is uneven on
+purpose — one Patient has `contact`, the other does not — which is what makes `:why`
+and the census worth reading.
 
 ```
-spec-master-stool                       ST-2026-0001   (bundle)
-├── ag-stool-direct                     aliquot group  (one file per group)
-│   └── al-stool-001..003                              (NDJSON)
-└── ag-stool-swab                       aliquot group
-    └── swab-001, swab-002
-        ├── ag-sw00N-patho              aliquot group
-        │   └── al-pa-00N-1, al-pa-00N-2
-        └── ag-sw00N-gen                aliquot group
-            └── al-ge-00N-1, al-ge-00N-2
+r4:pool(6)> :ext
+  Patient            1 ×  http://hl7.org/fhir/StructureDefinition/patient-birthPlace    Address
+  Patient            1 ×  http://hl7.org/fhir/StructureDefinition/patient-nationality
+  Patient.extension('…/patient-nationality')
+                     1 ×  code                                                 CodeableConcept
+  Patient.name       1 ×  http://fhir.de/StructureDefinition/humanname-namenszusatz      string
+  Encounter          1 ×  http://example.org/StructureDefinition/encounter-ward          string
 ```
 
-20 Specimens, a donor and one XML Observation, deliberately spread across all three
-import paths so one pool is assembled from a bundle, a directory tree and NDJSON. It
-carries custom extensions at four distinct paths — `specimen-freezing-time` and
-`specimen-time-to-freezing` on the Specimen root, `container-lot-number` on
-`Specimen.container`, `collection-ambient-temperature` on `Specimen.collection` — plus
-a nested `specimen-storage` extension with `temperature`/`freezer`/`position`
-sub-extensions. Coverage is deliberately partial: some specimens have no freezing time
-recorded, which is what makes `:why` and the census worth reading.
-
-`generate.py` regenerates it. `samples/basic` is the small fixture set the
-non-biobank tests use.
+Point `:load` at your own data for anything beyond that. Some tests additionally use a
+deeper, domain-specific fixture that is not published; they skip when it is absent.
 
 ## Commands
 
@@ -130,24 +123,27 @@ rather than discarded. `:more` reprints the last listing whole, with every value
 pretty-printed and the origin of each hit:
 
 ```
-r4:pool(22)> :all Specimen.extension('…/aliquot-group-purpose').value
-6 of 22 resource(s) matched
-  Specimen/ag-stool-direct     {"coding":[{"system":"https://biobank.example.org/CodeSys…
-  Specimen/ag-stool-swab       {"coding":[{"system":"https://biobank.example.org/CodeSys…
-  … 4 more of 6 — :more
+r4:pool(6)> :all Observation.code.coding
+3 of 6 resource(s) matched
+  Observation/obs1             {"system":"http://loinc.org","code":"29463-7","display":"…
+  Observation/obs2             {"system":"http://loinc.org","code":"8302-2","display":"B…
+  … 1 more of 3 — :more
 
-r4:pool(22)> :more
-6 of 22 resource(s) matched
-  Specimen/ag-stool-direct  (ag-stool-direct.json)
-      CodeableConcept
+r4:pool(6)> :more
+3 of 6 resource(s) matched
+  Observation/obs1  (bundle.json#entry[2])
+      Coding
         {
-          "coding": [
-            {
-              "system": "https://biobank.example.org/CodeSystem/aliquot-purpose",
-              "code": "storage",
-              "display": "Long-term storage"
-            }
-          ]
+          "system": "http://loinc.org",
+          "code": "29463-7",
+          "display": "Body weight"
+        }
+  Observation/obs2  (observations.ndjson:1)
+      Coding
+        {
+          "system": "http://loinc.org",
+          "code": "8302-2",
+          "display": "Body height"
         }
   …
 ```
@@ -260,7 +256,7 @@ transitively via okhttp.
 ```
 ./gradlew test                              # 59 tests
 ./gradlew installDist                       # then run the start script:
-build/install/fhir-walk/bin/fhir-walk samples/biobank
+build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
 
 Requires JDK 21.

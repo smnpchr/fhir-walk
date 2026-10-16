@@ -86,13 +86,13 @@ terminal, which means completion and key bindings are *disabled* — four real b
 behind this. Use it only for piping a script of commands:
 
 ```
-printf ':pool\n:quit\n' | ./gradlew run -q --console=plain --args="samples/biobank"
+printf ':pool\n:quit\n' | ./gradlew run -q --console=plain --args="samples/basic"
 ```
 
 For anything involving TAB, arrow keys or the menu, build and run the start script:
 
 ```
-./gradlew installDist && build/install/fhir-walk/bin/fhir-walk samples/biobank
+./gradlew installDist && build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
 
 To verify keystrokes automatically, drive that binary through a pty. Two traps:
@@ -108,9 +108,13 @@ produces confusing results that look like product bugs.
 
 ## Conventions
 
-- Tests: `samples/basic` is the small fixture set; `samples/biobank` is the real-world
-  hierarchy (regenerate with `samples/biobank/generate.py`). Prefer adding to
-  `BiobankPoolTest` when the behaviour involves nesting, lineage or scoped extensions.
+- Tests: `samples/basic` is the published fixture and backs most tests.
+  `BiobankPoolTest` and `RenderTest` use a deeper, domain-specific fixture under
+  `samples/biobank/` that is **gitignored and deliberately not published** — it is not
+  reproducible from a clone. Those tests call `assumeTrue` on its presence, so they
+  skip rather than fail when it is absent; keep that guard on anything new that uses
+  it. Tests that must run everywhere belong in `PoolTest` or `CompleterTest` against
+  `samples/basic`.
 - Listings go through `Repl.emit`, which keeps whatever does not fit for `:more`.
   Never truncate output without an expansion path.
 - Candidate `value` is what gets inserted (including any closing `')`); `displ` is what
