@@ -6,6 +6,7 @@ import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.FocusResolver
 import dev.fhirwalk.eval.FocusResolver.Resolution
 import dev.fhirwalk.eval.Outcome
+import dev.fhirwalk.eval.ViewBuilder
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
 import org.jline.reader.EndOfFileException
@@ -19,7 +20,14 @@ import org.jline.terminal.TerminalBuilder
 import java.io.PrintWriter
 import java.nio.file.Paths
 
-class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
+/**
+ * @param log where pool-wide expressions are recorded for `:history` and `:view`.
+ */
+class Repl(
+    startVersion: FhirVersion,
+    private val initialPaths: List<String>,
+    private val log: ExpressionLog = ExpressionLog.default(),
+) {
 
     private var session = Session(startVersion)
 
@@ -30,6 +38,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
+        FhirPathCompleter.CommandInfo(":history", "[filter]", "recorded pool-wide expressions, newest first"),
+        FhirPathCompleter.CommandInfo(":view", "#n [#n …]", "a table: one row per resource, a column per recorded expression"),
         FhirPathCompleter.CommandInfo(":more", "", "reprint the last listing in full, nothing shortened"),
         FhirPathCompleter.CommandInfo(":limit", "[rows|off]", "rows per listing before the rest waits for :more"),
         FhirPathCompleter.CommandInfo(":fhir", "[version]", "switch FHIR version (resets the pool)"),
@@ -47,8 +57,14 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      * [preview] is trimmed to fit the screen, both in rows and in the width of each
      * rendered value; [full] holds every row with nothing shortened. Truncating
      * without a way back to the whole thing is worse than printing it all.
+     * [fullHeader] goes with [full], for a header whose layout follows the rows.
      */
-    private class Listing(val header: String?, val preview: List<String>, val full: List<String>)
+    private class Listing(
+        val header: String?,
+        val preview: List<String>,
+        val full: List<String>,
+        val fullHeader: String? = header,
+    )
 
     private var lastListing: Listing? = null
 
@@ -87,7 +103,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         val reader = LineReaderBuilder.builder()
             .terminal(terminal)
             .parser(FhirPathParser())
-            .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }, { session.focus }))
+            .completer(
+                FhirPathCompleter({ session.navigator }, { session.pool }, { commands }, { session.focus }, log::entries),
+            )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
             // passive list and you get command history instead of the next candidate.
@@ -109,6 +127,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
 
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         out.println("FHIR ${session.version.id.uppercase()}")
+        log.entries()
+        reportLogProblem(out)
         initialPaths.forEach { load(it, out) }
         if (initialPaths.isEmpty()) {
             out.println("pool is empty — :load <path> to import")
@@ -179,6 +199,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             }
             ":why" -> why(argument, out)
             ":ext" -> extensions(argument, out)
+            ":history" -> history(argument, out)
+            ":view" -> view(argument, out)
             ":more" -> more(out)
             ":limit" -> limit(argument, out)
             ":fhir" -> switchVersion(argument, out)
@@ -229,14 +251,17 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      *
      * @param full every row with nothing shortened; defaults to [preview] for
      *   listings whose rows were never width-trimmed in the first place.
+     * @param fullHeader what `:more` prints above [full]; a table's column titles
+     *   are as wide as its columns, which differ between the two.
      */
     private fun emit(
         out: PrintWriter,
         header: String?,
         preview: List<String>,
         full: List<String> = preview,
+        fullHeader: String? = header,
     ) {
-        lastListing = Listing(header, preview, full)
+        lastListing = Listing(header, preview, full, fullHeader)
         header?.let { out.println(it) }
         val shown = if (rowLimit <= 0) preview.size else minOf(rowLimit, preview.size)
         for (index in 0 until shown) out.println(preview[index])
@@ -255,7 +280,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out.println("nothing listed yet")
             return
         }
-        listing.header?.let { out.println(it) }
+        listing.fullHeader?.let { out.println(it) }
         listing.full.forEach { out.println(it) }
     }
 
@@ -361,6 +386,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         val result = session.evaluator.evaluateAll(expression)
         val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
             if (result.errors > 0) style.error("; ${result.errors} error(s): ${result.firstError}") else ""
+        // Matching something is the bar: a misspelt element parses fine and only
+        // ever comes back empty, and would otherwise clutter the log.
+        if (result.hits.isNotEmpty()) record(expression, out)
         if (result.hits.isEmpty()) {
             out.println(header)
             if (result.errors == 0) {
@@ -454,6 +482,105 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 out.println("  nothing in the pool populates it — check the element name or the data")
             }
         }
+    }
+
+    // -------------------------------------------------------------- recorded
+
+    private var logProblemReported = false
+
+    /** Once, wherever the log is touched first: at startup, or when it fails later. */
+    private fun reportLogProblem(out: PrintWriter) {
+        val problem = log.problem ?: return
+        if (logProblemReported) return
+        logProblemReported = true
+        out.println(style.error("! $problem — expressions are kept for this session only"))
+    }
+
+    private fun record(expression: String, out: PrintWriter) {
+        log.record(expression)
+        reportLogProblem(out)
+    }
+
+    private fun history(argument: String, out: PrintWriter) {
+        val entries = log.entries()
+        reportLogProblem(out)
+        val numbered = entries.mapIndexed { idx, expression -> idx + 1 to expression }
+            .filter { (_, expression) -> expression.contains(argument, ignoreCase = true) }
+            .asReversed()
+        if (numbered.isEmpty()) {
+            out.println(
+                if (argument.isBlank()) {
+                    "nothing recorded yet — pool-wide expressions that match something are kept here"
+                } else {
+                    "no recorded expression contains $argument"
+                },
+            )
+            return
+        }
+        val width = "#${numbered.first().first}".length
+        emit(
+            out,
+            header = null,
+            preview = numbered.map { (number, expression) ->
+                "  ${style.index("#$number".padEnd(width))}  " + abbreviate(expression, valueWidth(width + 4))
+            },
+            full = numbered.map { (number, expression) -> "  ${style.index("#$number".padEnd(width))}  $expression" },
+        )
+    }
+
+    /** @param argument recorded expressions by number, `#3 #5` or `3, 5`. */
+    private fun view(argument: String, out: PrintWriter) {
+        val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
+        if (refs.isEmpty()) {
+            out.println("usage: :view #n [#n …]  —  numbers from :history, one column each")
+            return
+        }
+        log.entries()
+        reportLogProblem(out)
+        val picked = refs.map { ref ->
+            val number = ref.removePrefix("#").toIntOrNull()
+            val expression = number?.let { log.get(it) } ?: run {
+                out.println(
+                    if (number == null) "not a :history number: $ref" else "nothing recorded as #$number — see :history",
+                )
+                return
+            }
+            ViewBuilder.Column(number, expression)
+        }
+        val table = when (val result = session.viewBuilder.build(picked)) {
+            is ViewBuilder.Result.Refused -> {
+                out.println(style.error("! ${result.message}"))
+                return
+            }
+            is ViewBuilder.Result.Table -> result
+        }
+        val titles = table.columns.map { "#${it.number} ${it.title(table.type)}" }
+        val labelWidth = table.rows.maxOf { it.resource.label.length }
+        // In full each column is as wide as its widest cell; the preview shares out
+        // what the window leaves after the labels.
+        val natural = titles.indices.map { idx -> maxOf(titles[idx].length, table.rows.maxOf { it.cells[idx].length }) }
+        val share = ((columns - 2 - labelWidth) / titles.size - COLUMN_GAP).coerceAtLeast(MIN_CELL_WIDTH)
+        fun line(label: String, cells: List<String>, widths: List<Int>, styled: Boolean): String {
+            val body = cells.zip(widths).joinToString(" ".repeat(COLUMN_GAP)) { (cell, width) ->
+                // Pad after shortening and before colouring, so escape codes do not count.
+                val text = abbreviate(cell, width).padEnd(width)
+                if (styled && cell == ViewBuilder.ERROR_CELL) style.error(text) else text
+            }
+            val owner = label.padEnd(labelWidth).let { if (styled) style.label(it) else it }
+            return "  $owner" + " ".repeat(COLUMN_GAP) + body.trimEnd()
+        }
+        fun rows(widths: List<Int>) = table.rows.map { line(it.resource.label, it.cells, widths, styled = true) }
+        val previewWidths = natural.map { minOf(it, share) }
+        val summary = "${table.rows.size} ${table.type} row(s)" +
+            if (table.errors > 0) style.error("; ${table.errors} error(s): ${table.firstError}") else ""
+        fun header(widths: List<Int>) = summary + "\n" + style.hint(line("", titles, widths, styled = false))
+        emit(
+            out,
+            header(previewWidths),
+            preview = rows(previewWidths),
+            full = rows(natural),
+            fullHeader = header(natural),
+        )
     }
 
     // ---------------------------------------------------------------------- pool
@@ -639,6 +766,11 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println(":why with no expression re-diagnoses the last one you ran, so the")
         out.println("hint printed after an empty result can be followed by just :why.")
         out.println()
+        out.println("A pool-wide expression that matches something is recorded, once, in")
+        out.println("~/.fhir-walk/expressions; :history lists them by number. :view #3 #5")
+        out.println("tabulates them: one row per resource of the type they start from,")
+        out.println("one column each. Columns must yield primitives, e.g. name.family")
+        out.println("rather than name; several values in one cell are joined with \", \".")
         out.println()
         out.println("A listing fills the window and keeps the rest for :more, which")
         out.println("reprints it whole with no value shortened. :limit off prints")
@@ -670,6 +802,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         const val VALUE_INDENT = 14
         const val MIN_VALUE_WIDTH = 40
         const val MIN_ROW_LIMIT = 8
+        const val COLUMN_GAP = 2
+        const val MIN_CELL_WIDTH = 12
         /** Used until the terminal reports its size; a dumb terminal never does. */
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100

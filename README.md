@@ -111,6 +111,8 @@ Type a FHIRPath expression, or:
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
+| `:history [filter]` | recorded pool-wide expressions, newest first |
+| `:view #n [#n …]` | a table: one row per resource, a column per recorded expression |
 | `:more` | reprint the last listing in full, nothing shortened |
 | `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
 | `:fhir [version]` | switch FHIR version (resets the pool) |
@@ -173,6 +175,44 @@ ordinary resource focus. Labels are matched before expressions: `Observation/obs
 label, even though it also parses as a division.
 
 With an element in focus HAPI has no root resource, so `%resource` is unavailable.
+
+### Recorded expressions and `:view`
+
+A pool-wide expression — a bare one with no focus, or any `:all` — is recorded when
+it parses and matches at least one resource. The log is `~/.fhir-walk/expressions`,
+one expression per line, append-only and without duplicates, so a number from
+`:history` keeps meaning the same expression across sessions. Expressions typed under
+a focus are not recorded: `coding.code` means nothing once the focus is gone. A
+misspelt element parses fine and only ever comes back empty, which is why a match is
+the bar.
+
+The file is yours to edit. Blank and repeated lines are skipped, so `#n` is the n-th
+distinct expression: appending a line or editing one in place keeps the numbers, while
+deleting a line renumbers everything after it. Sessions running side by side share the
+file and agree on the numbers. If the file cannot be read or written, that is reported
+once and the session keeps its expressions in memory, leaving the file untouched.
+
+`:view` turns recorded expressions into columns:
+
+```
+r4:pool(6)> :history
+  #3  Patient.name.given
+  #2  Patient.birthDate
+  #1  Patient.name.family
+
+r4:pool(6)> :view #1 #2 #3
+2 Patient row(s)
+                #1 name.family  #2 birthDate  #3 name.given
+  Patient/pat1  Mustermann      1964-08-12    Erika, Maria, Rika
+  Patient/pat2  Schmidt         1979-02-28    Hans
+```
+
+Every column must start from the same resource type, which decides the rows: every
+resource of that type, including those where every cell is empty. Columns must yield
+primitives — `Patient.name.family`, not `Patient.name` — and several values in one cell
+are joined with `, `. Anything else is refused before a row is printed. `resolve()` and
+`extension('…')` work in a column as anywhere else. TAB after `:view` offers the
+recorded expressions by number.
 
 ## Output
 
@@ -258,8 +298,9 @@ eval/      PoolEvaluationContext            pool-backed resolve()
            FhirPathTokenizer                prefix split, cursor context
            PromptLine                       where the expression starts in a line
            PrefixWalker                     powers :why
+           ViewBuilder                      powers :view
 complete/  FhirPathCompleter                merges both axes into JLine candidates
-repl/      Repl, Session, FhirPathParser, Render
+repl/      Repl, Session, FhirPathParser, Render, ExpressionLog
 ```
 
 Everything outside `model/` takes a `FhirContext` and is version-agnostic by
