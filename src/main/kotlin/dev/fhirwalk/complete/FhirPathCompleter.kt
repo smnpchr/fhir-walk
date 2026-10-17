@@ -1,6 +1,7 @@
 package dev.fhirwalk.complete
 
 import dev.fhirwalk.eval.FhirPathTokenizer
+import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.FhirPathTokenizer.CursorKind
 import dev.fhirwalk.model.FhirPathFunctions
 import dev.fhirwalk.model.FhirVersion
@@ -30,6 +31,7 @@ class FhirPathCompleter(
     private val navigator: () -> ModelNavigator,
     private val pool: () -> ResourcePool,
     private val commands: () -> List<CommandInfo>,
+    private val focus: () -> Focus? = { null },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -37,14 +39,18 @@ class FhirPathCompleter(
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
         val cursor = line.cursor()
-        // `:all` and `:why` take an expression, so their argument completes exactly as
-        // a bare expression does; every other command argument is its own thing.
+        // `:all`, `:why` and `:focus` take an expression, so their argument completes
+        // exactly as a bare expression does; every other command argument is its own thing.
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {
             completeCommand(text, candidates)
             return
         }
-        completeExpression(slice.text, slice.cursor, candidates)
+        val command = text.trimStart().takeIf { it.startsWith(":") }?.substringBefore(' ')
+        // `:all` runs across the pool whatever is in focus, so it completes unrebased.
+        val relativeTo = focus().takeIf { command != ":all" }
+        if (command == ":focus") focusLabels(slice, relativeTo, candidates)
+        completeExpression(slice.text, slice.cursor, relativeTo, candidates)
     }
 
     // ------------------------------------------------------------------ commands
@@ -65,11 +71,6 @@ class FhirPathCompleter(
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
             ":load" -> completePath(lastToken, candidates)
-            // Narrowed by what is typed before the cap, or a large pool would leave
-            // everything past the first MAX_ROWS uncompletable.
-            ":focus" -> pool().all().filter { it.label.startsWith(lastToken, ignoreCase = true) }
-                .take(MAX_ROWS)
-                .forEach { candidates += commandCand(it.label, it.label, "pool", it.origin) }
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
@@ -90,24 +91,60 @@ class FhirPathCompleter(
         }
     }
 
+    /**
+     * Pool labels for `:focus`, which takes a label as well as an expression.
+     *
+     * The parser splits the argument as FHIRPath, so `Observation/ob` has the word
+     * `ob`; each label is inserted minus what precedes that word, or accepting it
+     * would repeat `Observation/`. Narrowed by what is typed before the cap, or a
+     * large pool would leave everything past the first MAX_ROWS uncompletable.
+     */
+    private fun focusLabels(slice: PromptLine.Slice, focus: Focus?, candidates: MutableList<Candidate>) {
+        val typed = slice.text.take(slice.cursor)
+        // Drilling into an element, the element's members are what you want on a
+        // bare TAB; sixty labels on top would push the menu past JLine's threshold.
+        if (typed.isBlank() && focus != null && !focus.isResource) return
+        val beforeWord = typed.take(FhirPathTokenizer.cursorContext(slice.text, slice.cursor).replaceFrom)
+        pool().all().filter { it.label.startsWith(typed, ignoreCase = true) }
+            .take(MAX_ROWS)
+            .forEach { candidates += commandCand(it.label.drop(beforeWord.length), it.label, "pool", it.origin) }
+    }
+
     // ---------------------------------------------------------------- expressions
 
-    private fun completeExpression(slice: String, cursor: Int, candidates: MutableList<Candidate>) {
+    /**
+     * @param focus what the expression runs against. Paths typed against an element
+     *   are relative to it, so they are rebased onto [Focus.path] before the
+     *   navigator or census sees them.
+     */
+    private fun completeExpression(slice: String, cursor: Int, focus: Focus?, candidates: MutableList<Candidate>) {
         val context = FhirPathTokenizer.cursorContext(slice, cursor)
         val nav = navigator()
         val census = pool().census
+        fun rebase(path: String) = focus?.absolute(path) ?: path
 
         when (context.kind) {
-            // With nothing typed yet, only the types the pool actually holds are
-            // useful -- evaluating Practitioner.name against a pool with no
-            // Practitioner tells you nothing. One keystroke opens up the full schema.
-            CursorKind.ROOT -> resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
+            // An element has no resource types worth offering: what is legal at the
+            // start of the line is whatever is legal on the element.
+            CursorKind.ROOT -> if (focus != null && !focus.isResource) {
+                members(focus.path, nav, census, candidates)
+                functions(candidates, context.partial)
+            } else {
+                // A resource in focus also takes a relative path, `code` for
+                // `Observation.code`, which is how `:focus` drills into it.
+                focus?.let { members(it.path, nav, census, candidates) }
+                // With nothing typed yet, only the types the pool actually holds are
+                // useful -- evaluating Practitioner.name against a pool with no
+                // Practitioner tells you nothing. One keystroke opens up the full schema.
+                resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
+            }
 
             CursorKind.TYPE_ARG -> {
                 // After resolve(), the plausible types are the ones actually referenced.
                 // Targets are censused on the Reference element itself, so the
                 // trailing resolve() step comes off before the lookup.
-                val observed = census.referenceTargetsAt(nav.censusPath(withoutTrailingResolve(context.basePath)))
+                val basePath = rebase(context.basePath)
+                val observed = census.referenceTargetsAt(nav.censusPath(withoutTrailingResolve(basePath)))
                 observed.forEach { candidates += cand(it.value, it.value, "observed", "${it.count} ×") }
                 // When the corpus has an answer, trust it rather than dumping 146
                 // resource types the user would have to page through.
@@ -116,15 +153,23 @@ class FhirPathCompleter(
 
             // What follows the cursor decides whether the candidate has to close the
             // string literal itself.
-            CursorKind.STRING_ARG ->
-                stringArgument(context, nav, census, candidates, slice.substring(cursor.coerceAtMost(slice.length)))
+            CursorKind.STRING_ARG -> stringArgument(
+                context.copy(
+                    basePath = rebase(context.basePath),
+                    comparedPath = context.comparedPath?.let(::rebase),
+                ),
+                nav,
+                census,
+                candidates,
+                slice.substring(cursor.coerceAtMost(slice.length)),
+            )
 
             CursorKind.MEMBER -> {
                 if (context.basePath.isBlank()) {
                     resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
                     return
                 }
-                members(context.basePath, nav, census, candidates)
+                members(rebase(context.basePath), nav, census, candidates)
                 functions(candidates, context.partial)
             }
         }

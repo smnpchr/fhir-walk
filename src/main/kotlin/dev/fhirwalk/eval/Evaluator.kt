@@ -6,7 +6,6 @@ import ca.uhn.fhir.fhirpath.IFhirPathEvaluationContext
 import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.pool.ResourcePool
 import org.hl7.fhir.instance.model.api.IBase
-import org.hl7.fhir.instance.model.api.IBaseResource
 import org.hl7.fhir.instance.model.api.IIdType
 
 /**
@@ -36,9 +35,13 @@ class Evaluator(private val ctx: FhirContext, private val pool: ResourcePool) {
         setEvaluationContext(PoolEvaluationContext(pool))
     }
 
-    fun evaluate(resource: IBaseResource, expression: String): Outcome =
+    /**
+     * @param input a resource, or any element inside one. HAPI takes either; with an
+     *   element there is no focus resource, so `%resource` fails.
+     */
+    fun evaluate(input: IBase, expression: String): Outcome =
         try {
-            Outcome.Values(fhirPath.evaluate(resource, expression, IBase::class.java))
+            Outcome.Values(fhirPath.evaluate(input, expression, IBase::class.java))
         } catch (e: Exception) {
             Outcome.Failure(readable(e))
         }

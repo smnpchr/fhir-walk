@@ -3,17 +3,18 @@ package dev.fhirwalk.eval
 /**
  * Where, in a line typed at the prompt, the FHIRPath expression begins.
  *
- * A bare line is all expression. `:all` and `:why` take an expression as their
- * argument, so everything after the command name completes exactly as a bare
+ * A bare line is all expression. `:all`, `:why` and `:focus` take an expression as
+ * their argument, so everything after the command name completes exactly as a bare
  * expression would -- the alternative is completion that works until you prefix the
- * line with a command, which is worse than no completion at all.
+ * line with a command, which is worse than no completion at all. (`:focus` also
+ * takes a label; the completer offers those alongside.)
  *
  * Lives below both the parser and the completer, which must agree on the answer.
  */
 object PromptLine {
 
     /** Commands whose argument is a FHIRPath expression. */
-    val EXPRESSION_COMMANDS = setOf(":all", ":why")
+    val EXPRESSION_COMMANDS = setOf(":all", ":why", ":focus")
 
     /**
      * @param text the expression alone.

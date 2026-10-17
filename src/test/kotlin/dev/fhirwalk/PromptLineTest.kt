@@ -32,7 +32,11 @@ class PromptLineTest {
     fun `commands whose argument is not an expression are excluded`() {
         assertNull(PromptLine.expressionSlice(":load samples/", 14))
         assertNull(PromptLine.expressionSlice(":fhir r5", 8))
-        assertNull(PromptLine.expressionSlice(":focus Specimen/x", 17))
+    }
+
+    @Test
+    fun `focus takes an expression as well as a label`() {
+        assertEquals(PromptLine.Slice("code.cod", 8, 7), PromptLine.expressionSlice(":focus code.cod", 15))
     }
 
     @Test
