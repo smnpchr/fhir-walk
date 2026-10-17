@@ -107,7 +107,7 @@ Type a FHIRPath expression, or:
 |---|---|
 | `:load <path>` | import a file, bundle, NDJSON, or directory tree |
 | `:pool` | what is in the pool |
-| `:focus [label\|#index\|expr\|..]` | evaluate against one resource or element (blank clears) |
+| `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
@@ -143,10 +143,34 @@ focused value whole — the quickest way to see what a long path landed on. Late
 `$this` shows it again.
 
 A focus needs exactly one value. When the expression yields several, they are listed
-and you narrow with an indexer (`:focus name[0]`) or `where()`. A result that is a
-resource in the pool, such as `:focus subject.resolve()`, becomes an ordinary resource
-focus. Labels are matched before expressions: `Observation/obs2` is a label, even
-though it also parses as a division.
+with numbers, and `:focus [n]` picks one:
+
+```
+r4:pool(6)> :focus Observation.code.coding
+3 values from 3 resources; focus needs one — pick it with  :focus [n]
+  [0] Observation/obs1             Coding  {"system":"http://loinc.org","code":"29463-7","display":"…
+  [1] Observation/obs2             Coding  {"system":"http://loinc.org","code":"8302-2","display":"B…
+  [2] Observation/obs3             Coding  {"system":"http://loinc.org","code":"8480-6","display":"S…
+  … shortened to fit — :more
+
+r4:pool(6)> :focus [1]
+focus Observation/obs2.code.coding  (Coding in observations.ndjson:1)
+  Coding  {"system":"http://loinc.org","code":"8302-2","display":"Body height"}
+```
+
+An indexer inside the expression would not do this across the pool: it applies within
+each resource, and every Observation here has exactly one coding. `[n]` picks a row of
+the last result: this listing, or an expression evaluated under a focus. Any other
+result (`:all`, an empty one, a `:focus` that did not pick) leaves nothing to pick,
+so `[n]` never reaches past what is on screen; command output such as `:pool` or
+`:more` leaves the rows alone. Picking keeps them, so `:focus [0]`, `:focus ..`,
+`:focus [1]` tries one row after another. When the row is one of several from its resource, the label spells
+it as the indexer that selects it (`Patient/pat1.name[1]`), so it still names exactly
+one element.
+
+A result that is a resource in the pool, such as `:focus subject.resolve()`, becomes an
+ordinary resource focus. Labels are matched before expressions: `Observation/obs2` is a
+label, even though it also parses as a division.
 
 With an element in focus HAPI has no root resource, so `%resource` is unavailable.
 
