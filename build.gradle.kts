@@ -41,6 +41,11 @@ dependencies {
     implementation("org.fhir:ucum:1.0.10")
     implementation("ca.uhn.hapi.fhir:hapi-fhir-caching-caffeine:$hapiVersion")
 
+    // PackageDefinitions reads an NPM package's .index.json with it. Already brought
+    // in by hapi-fhir-base; declared because we now use it directly. No version: the
+    // one HAPI's constraints resolve to.
+    implementation("com.fasterxml.jackson.core:jackson-databind")
+
     implementation("org.jline:jline:3.30.17")
     implementation("org.slf4j:slf4j-simple:2.0.16")
 
