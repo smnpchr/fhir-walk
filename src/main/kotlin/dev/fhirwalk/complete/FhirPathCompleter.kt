@@ -91,16 +91,22 @@ class FhirPathCompleter(
                 }.toSet()
                 // `@` asks for a saved view, so nothing else matches it.
                 if (lastToken.startsWith("@")) {
-                    views(lastToken.drop(1), "@", candidates)
+                    views(lastToken.drop(1), "@", MAX_ROWS, candidates)
                     return
                 }
-                // On an empty word the views are offered too; once a letter is typed,
-                // `@family` could never match it.
-                val shown = (if (lastToken.isEmpty()) views("", "@", candidates) else 0) +
-                    names(lastToken, taken, MAX_ROWS, candidates)
-                recordedColumns(lastToken, taken, minOf(MAX_ROWS, MAX_MENU - shown), candidates)
+                // One budget for all three, so together they stay under JLine's
+                // threshold. On an empty word the views are offered too; once a
+                // letter is typed, `@family` could never match it.
+                var room = MAX_MENU
+                if (lastToken.isEmpty()) room -= views("", "@", minOf(MAX_ROWS, room), candidates)
+                room -= names(lastToken, taken, minOf(MAX_ROWS, room), candidates)
+                recordedColumns(lastToken, taken, minOf(MAX_ROWS, room), candidates)
             }
-            ":save", ":unsave" -> if (arguments.size == 1) views(lastToken.removePrefix("@"), "", candidates)
+            // Either spelling, `people` or `@people`; the candidate keeps the one typed.
+            ":save", ":unsave" -> if (arguments.size == 1) {
+                val prefix = if (lastToken.startsWith("@")) "@" else ""
+                views(lastToken.removePrefix("@"), prefix, MAX_ROWS, candidates)
+            }
             ":workspace" -> if (arguments.size == 1) {
                 workspaces().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "workspaces", null)
@@ -158,8 +164,8 @@ class FhirPathCompleter(
      *   `:view`, nothing after `:save`.
      * @return how many were offered.
      */
-    private fun views(partial: String, prefix: String, candidates: MutableList<Candidate>): Int {
-        val matching = savedViews().filter { it.startsWith(partial) }.take(MAX_ROWS)
+    private fun views(partial: String, prefix: String, limit: Int, candidates: MutableList<Candidate>): Int {
+        val matching = savedViews().filter { it.startsWith(partial) }.take(limit)
         matching.forEach { candidates += commandCand("$prefix$it", "@$it", "saved views", null) }
         return matching.size
     }

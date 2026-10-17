@@ -2,6 +2,7 @@ package dev.fhirwalk
 
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
+import dev.fhirwalk.repl.KeyedStore
 import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Workspaces
 import kotlin.system.exitProcess
@@ -38,7 +39,7 @@ fun main(args: Array<String>) {
             }
             "--workspace", "-w" -> {
                 val value = args.getOrNull(++i) ?: fail("--workspace needs a name")
-                if (!Workspaces.valid(value)) fail("not a valid workspace name '$value' — a letter, then letters, digits, - or _")
+                if (!Workspaces.valid(value)) fail("not a valid workspace name '$value' — ${KeyedStore.RULE}")
                 workspace = value
             }
             "--fresh" -> fresh = true

@@ -320,6 +320,21 @@ class CompleterTest {
         assertEquals(listOf("#2", "#1"), values(":name born "))
     }
 
+    @Test
+    fun `view completion stays under the menu threshold with many views and names`() {
+        val recorded = (1..30).map { "Patient.id.where(\$this != 'x$it')" }
+        val named = (1..50).associate { "n$it" to "Patient.id" }
+        val views = (1..60).map { "v$it" }.toSet()
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null }, { recorded }, { named }, { views },
+        )
+        val line = ":view "
+        val found = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        assertTrue(found.size < 100, "got ${found.size}")
+    }
+
     /** A completer whose focus is the result of [expression] on [label]. */
     private fun focusedOn(label: String, expression: String? = null): FhirPathCompleter {
         val nav = ModelNavigator(ctx, pool.census)

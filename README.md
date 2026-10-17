@@ -253,12 +253,15 @@ case-sensitive. Typing a command without its colon (`view #1`, `name family #1`)
 gets a hint, unless the word is an element where the expression would run *and* the
 line parses as FHIRPath: a bare `name` is `Patient.name`, not `:name`.
 
-A view can be saved and rerun. `:save people` saves the last `:view`, `:view @people`
-runs it again, and further columns can follow (`:view @people #4`); `:save` alone lists
-the saved views and `:unsave people` forgets one. Like a name, a saved view holds its
-columns' expressions rather than their numbers. Its titles are renumbered against the
-log as it stands, and a column whose expression has left the log keeps its place with
-no number.
+A view can be saved and rerun. `:save people` (or `:save @people`) saves the last
+`:view`, `:view @people` runs it again, and further columns can follow
+(`:view @people #4`); `:save` alone lists the saved views and `:unsave people` forgets
+one. A saved view holds its columns' expressions rather than their numbers, and its
+titles are renumbered against the log as it stands: a column whose expression has
+left the log keeps its place with no number, and gets one back when it returns. A
+column asked for by name follows the name, so rebinding `family` changes what the
+view computes along with its title; once the name is forgotten, the column keeps the
+expression it was saved with.
 
 ### Workspaces
 
@@ -295,7 +298,10 @@ it, so `:focus ..` still steps back up; one that no longer resolves ends the foc
 far as it got. `:fhir` resets the pool and forgets its paths.
 
 On the command line, `--fhir` wins over the version the workspace was left on, and
-paths load on top of the restored ones. `--fresh` starts with an empty pool and no
+paths load on top of the restored ones. A pool is one version, so a session on another
+version than the workspace's restores neither its paths nor its focus, and says so;
+they stay saved until something changes, just as `:fhir` would reset them. A
+workspace left on a version this build cannot open starts on the default instead. `--fresh` starts with an empty pool and no
 focus, and leaves the saved state as it is until something changes: the first
 `:load`, `:focus`, `:limit` or `:fhir` replaces it.
 

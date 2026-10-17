@@ -26,22 +26,32 @@ class ViewBuilder(
 ) {
 
     /**
-     * @param ref how the column was asked for: `#3`, a number in the expression log;
-     *   a name; or empty, for a saved view's column whose expression is no longer in
-     *   the log under any number.
+     * One column, and how it was asked for -- which is what titles it.
+     *
+     * @param number its number in the expression log, if it was asked for by one or
+     *   has one now; null for a saved view's column whose expression is no longer in
+     *   the log.
+     * @param name the name it was asked for by, which then is its title.
      */
-    data class Column(val ref: String, val expression: String) {
-        private val named: Boolean get() = ref.isNotEmpty() && !ref.startsWith("#")
+    data class Column(val expression: String, val number: Int? = null, val name: String? = null) {
+        /** How a message refers to it: the name, else the number, else the expression. */
+        val ref: String get() = name ?: number?.let { "#$it" } ?: expression
 
         /**
-         * A name is its own title. A number is followed by the expression without its
-         * resource-type root, which every column shares.
+         * A name is its own title. Otherwise the number, if any, and the expression
+         * without its resource-type root, which every column shares.
          */
         fun title(type: String): String =
-            if (named) ref else listOf(ref, expression.removePrefix("$type.").ifBlank { expression }).joinToString(" ").trim()
+            name ?: listOfNotNull(number?.let { "#$it" }, expression.removePrefix("$type.").ifBlank { expression })
+                .joinToString(" ")
 
         /** For messages: the reference with the expression it stands for. */
-        val described: String get() = if (named) "$ref ($expression)" else "$ref $expression".trim()
+        val described: String
+            get() = when {
+                name != null -> "$name ($expression)"
+                number != null -> "#$number $expression"
+                else -> expression
+            }
     }
 
     data class Row(val resource: PooledResource, val cells: List<String>)
@@ -73,7 +83,7 @@ class ViewBuilder(
         }
         val types = roots.mapNotNull { it.second }.distinct()
         if (types.size > 1) {
-            val spread = roots.joinToString(", ") { (column, type) -> "${column.ref.ifEmpty { column.expression }} $type" }
+            val spread = roots.joinToString(", ") { (column, type) -> "${column.ref} $type" }
             return Result.Refused("columns start from different types ($spread) — a view has one row per resource of one type")
         }
         val type = types.single()

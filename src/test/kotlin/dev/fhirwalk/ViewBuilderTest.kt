@@ -32,7 +32,7 @@ class ViewBuilderTest {
     @Test
     fun `a cell stays on one line whatever the value holds`() {
         val table = assertIs<ViewBuilder.Result.Table>(
-            builder.build(listOf(Column("#1", "Patient.name.family"), Column("#2", "Patient.name.given"))),
+            builder.build(listOf(Column("Patient.name.family", 1), Column("Patient.name.given", 2))),
         )
         assertEquals(listOf("Muster mann", "A, B"), table.rows.single().cells)
     }
@@ -40,16 +40,17 @@ class ViewBuilderTest {
     @Test
     fun `a structured column is refused`() {
         val refused = assertIs<ViewBuilder.Result.Refused>(
-            builder.build(listOf(Column("#1", "Patient.name.family"), Column("#2", "Patient.name"))),
+            builder.build(listOf(Column("Patient.name.family", 1), Column("Patient.name", 2))),
         )
         assertEquals(true, refused.message.startsWith("#2 Patient.name yields HumanName"), refused.message)
     }
 
     @Test
     fun `a named column is titled by its name, a numbered one by its path`() {
-        assertEquals("family", Column("family", "Patient.name.family").title("Patient"))
-        assertEquals("#2 name.family", Column("#2", "Patient.name.family").title("Patient"))
-        val refused = assertIs<ViewBuilder.Result.Refused>(builder.build(listOf(Column("who", "Patient.name"))))
+        assertEquals("family", Column("Patient.name.family", 1, "family").title("Patient"))
+        assertEquals("#2 name.family", Column("Patient.name.family", 2).title("Patient"))
+        assertEquals("name.family", Column("Patient.name.family").title("Patient"))
+        val refused = assertIs<ViewBuilder.Result.Refused>(builder.build(listOf(Column("Patient.name", name = "who"))))
         assertEquals(true, refused.message.startsWith("who (Patient.name) yields HumanName"), refused.message)
     }
 }

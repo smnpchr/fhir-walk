@@ -46,7 +46,10 @@ class Repl(
     /** Said once [open] has somewhere to say it. */
     private val startupNotes = mutableListOf<String>()
 
-    private var session = startSession(explicitVersion ?: restoring.fhir?.let(FhirVersion::parse))
+    private var session = startSession(
+        explicitVersion ?: restoring.fhir?.let(FhirVersion::parse),
+        explicit = explicitVersion != null,
+    ) { startupNotes += it }
 
     private val log: ExpressionLog get() = workspace.log
     private val names: NameStore get() = workspace.names
@@ -69,6 +72,13 @@ class Repl(
 
     /** Null until [run] has built it; the tests drive [dispatch] without one. */
     private var reader: LineReader? = null
+
+    /**
+     * Set while the workspace has no directory yet, so its up-arrow history is kept
+     * in memory; [attachPendingHistory] moves it to the file once something saved
+     * has created the directory.
+     */
+    private var historyPending = false
 
     private val commands = listOf(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
@@ -210,6 +220,7 @@ class Repl(
             } catch (e: Exception) {
                 out.println(style.error("! ${e.message ?: e.javaClass.simpleName}"))
             }
+            attachPendingHistory(reader, out)
             out.flush()
         }
         out.println("bye")
@@ -261,6 +272,17 @@ class Repl(
         }
         val command = input.substringBefore(' ')
         val argument = input.substringAfter(' ', "").trim()
+        // Saved even when the command throws part-way: a path already in the pool
+        // must not be missing from the workspace. Expressions change nothing saved.
+        try {
+            return command(command, argument, out)
+        } finally {
+            saveState(out)
+        }
+    }
+
+    /** @return false to exit. */
+    private fun command(command: String, argument: String, out: PrintWriter): Boolean {
         when (command) {
             ":quit", ":exit", ":q" -> return false
             ":help", ":?" -> help(out)
@@ -287,8 +309,6 @@ class Repl(
             ":fhir" -> switchVersion(argument, out)
             else -> out.println("unknown command $command — :help for the list")
         }
-        // Expressions change nothing that is saved; commands may.
-        saveState(out)
         return true
     }
 
@@ -668,7 +688,7 @@ class Repl(
             1, 2 -> {
                 val name = parts[0]
                 if (!NameStore.valid(name)) {
-                    out.println("not a valid name: $name — a letter, then letters, digits, - or _")
+                    out.println("not a valid name: $name — ${KeyedStore.RULE}")
                     return
                 }
                 val expression = if (parts.size == 1) {
@@ -717,7 +737,7 @@ class Repl(
     private fun view(argument: String, out: PrintWriter) {
         val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
         if (refs.isEmpty()) {
-            out.println("usage: :view #n|name …  —  numbers from :history or names from :name, one column each")
+            out.println("usage: :view #n|name|@view …  —  numbers from :history, names from :name, views from :save")
             return
         }
         reportStorageProblems(out)
@@ -734,13 +754,13 @@ class Repl(
                     out.println("nothing recorded as #$number — see :history")
                     return
                 }
-                listOf(ViewBuilder.Column("#$number", expression))
+                listOf(ViewBuilder.Column(expression, number = number))
             } else {
                 val expression = names.get(ref) ?: run {
                     out.println("no :history number or name $ref — see :history and :name")
                     return
                 }
-                listOf(ViewBuilder.Column(ref, expression))
+                listOf(ViewBuilder.Column(expression, name = ref))
             }
         }
         val table = when (val result = session.viewBuilder.build(picked)) {
@@ -781,17 +801,20 @@ class Repl(
     }
 
     /**
-     * A saved view's columns, renumbered against the log as it is now: a column
-     * keeps its expression, and `#3` in the title must be its number today. One no
-     * longer in the log keeps no number at all rather than a wrong one.
+     * A saved view's columns as they stand now. A named column follows its name while
+     * the name exists, so its title and what it computes cannot disagree; once the
+     * name is gone it keeps the expression it was saved with. Every other column is
+     * renumbered against the log: `#3` in a title must be its number today, and one
+     * no longer in the log has no number rather than a wrong one.
      */
-    private fun savedColumns(name: String): List<ViewBuilder.Column>? {
-        val saved = views.get(name) ?: return null
+    private fun savedColumns(view: String): List<ViewBuilder.Column>? {
+        val saved = views.get(view) ?: return null
         val entries = log.entries()
+        val named = names.all()
         return saved.map { column ->
-            if (!column.ref.startsWith("#")) return@map column
+            column.name?.let { name -> named[name]?.let { return@map ViewBuilder.Column(it, name = name) } }
             val number = entries.indexOf(column.expression) + 1
-            column.copy(ref = if (number > 0) "#$number" else "")
+            ViewBuilder.Column(column.expression, number = number.takeIf { it > 0 })
         }
     }
 
@@ -810,7 +833,7 @@ class Repl(
                 header = null,
                 preview = all.map { (name, columns) ->
                     "  ${style.label("@$name".padEnd(width))}  " +
-                        abbreviate(columns.joinToString("  ") { it.ref.ifEmpty { it.expression } }, valueWidth(width + 4))
+                        abbreviate(columns.joinToString("  ") { it.ref }, valueWidth(width + 4))
                 },
                 full = all.flatMap { (name, columns) ->
                     listOf("  ${style.label("@$name")}") + columns.map { "      ${it.described}" }
@@ -818,18 +841,20 @@ class Repl(
             )
             return
         }
-        if (!KeyedStore.valid(argument)) {
-            out.println("not a valid view name: $argument — a letter, then letters, digits, - or _")
+        // `@people` is how a view is written everywhere else, so it is taken here too.
+        val name = argument.removePrefix("@")
+        if (!KeyedStore.valid(name)) {
+            out.println("not a valid view name: $name — ${KeyedStore.RULE}")
             return
         }
         val columns = lastView ?: run {
             out.println("nothing to save — run a :view first")
             return
         }
-        val before = views.set(argument, columns)
+        val before = views.set(name, columns)
         reportStorageProblems(out)
         val replaced = if (before != null && before != columns) "  (replaced ${before.size} column(s))" else ""
-        out.println("saved @$argument: ${columns.size} column(s) — :view @$argument reruns it$replaced")
+        out.println("saved @$name: ${columns.size} column(s) — :view @$name reruns it$replaced")
     }
 
     private fun unsaveView(argument: String, out: PrintWriter) {
@@ -850,12 +875,12 @@ class Repl(
      * a version this build cannot open. A version asked for on the command line is
      * not second-guessed: that failure is the caller's to report.
      */
-    private fun startSession(version: FhirVersion?): Session {
-        if (version == null || version == explicitVersion) return Session(version ?: FhirVersion.DEFAULT)
+    private fun startSession(version: FhirVersion?, explicit: Boolean, note: (String) -> Unit): Session {
+        if (version == null || explicit) return Session(version ?: FhirVersion.DEFAULT)
         return try {
             Session(version)
         } catch (e: FhirVersionUnavailable) {
-            startupNotes += "${e.message} — starting on ${FhirVersion.DEFAULT.id} instead"
+            note("${e.message} — starting on ${FhirVersion.DEFAULT.id} instead")
             Session(FhirVersion.DEFAULT)
         }
     }
@@ -864,8 +889,25 @@ class Repl(
      * Brings back what [state] describes, each part on its own: a path that has gone
      * is reported and kept, so it loads again once it is back; a focus step that no
      * longer resolves ends the focus where it got to.
+     *
+     * A session on another version than the one the workspace was left on gets
+     * neither its paths nor its focus: a pool is one version, so they belong to the
+     * other one, just as `:fhir` resets the pool. They stay saved until something
+     * changes.
      */
-    private fun restore(state: SavedState, out: PrintWriter) {
+    private fun restore(saved: SavedState, out: PrintWriter) {
+        val leftOn = saved.fhir?.takeIf { it != session.version.id }
+        val state = if (leftOn != null && (saved.loads.isNotEmpty() || saved.focus.isNotEmpty())) {
+            out.println(
+                style.error(
+                    "! the workspace was left on ${leftOn.uppercase()}, so its ${saved.loads.size} path(s) and focus " +
+                        "are not restored in ${session.version.id.uppercase()} — saved until something changes",
+                ),
+            )
+            saved.copy(loads = emptyList(), focus = emptyList())
+        } else {
+            saved
+        }
         state.limit?.let {
             limitSet = it
             rowLimit = it
@@ -913,10 +955,18 @@ class Repl(
             val parent = step.parent
             when {
                 step.isResource -> listOf(step.resource.label)
-                parent == null -> listOf(step.resource.label, step.label.removePrefix(step.resource.label + "."))
-                else -> listOf(step.label.removePrefix(parent.label + "."))
+                parent == null -> listOf(step.resource.label, stepAfter(step.resource.label, step.label))
+                else -> listOf(stepAfter(parent.label, step.label))
             }
         }
+
+    /**
+     * What [label] adds to [base]. A step that adds nothing, such as `:focus $this`,
+     * leaves the label as it was; saving the label itself would replay as an
+     * expression, so the step is saved as the one that changes nothing.
+     */
+    private fun stepAfter(base: String, label: String): String =
+        if (label.startsWith("$base.")) label.removePrefix("$base.") else "\$this"
 
     private fun stateNow(): SavedState =
         SavedState(session.version.id, loadedPaths.toList(), limitSet, focusSteps(session.focus))
@@ -940,10 +990,20 @@ class Repl(
      */
     private fun useLineHistory(reader: LineReader, out: PrintWriter) {
         val file = workspace.lineHistory ?: return
+        if (file.parent?.let(Files::isDirectory) != true) {
+            // Switching to a workspace does not create it, or a typo would stay as
+            // one. Until something saved creates it, its lines are kept in memory;
+            // purge() clears the old workspace's from memory, and with no file set
+            // touches none on disk.
+            reader.variables.remove(LineReader.HISTORY_FILE)
+            reader.history.purge()
+            historyPending = true
+            return
+        }
+        historyPending = false
         reader.setVariable(LineReader.HISTORY_FILE, file)
         try {
             if (!Files.exists(file)) {
-                file.parent?.let { Files.createDirectories(it) }
                 if (file.fileSystem.supportedFileAttributeViews().contains("posix")) {
                     Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
                 } else {
@@ -954,6 +1014,17 @@ class Repl(
         } catch (e: java.io.IOException) {
             out.println(style.error("! cannot use $file for line history: ${e.message}"))
         }
+    }
+
+    /**
+     * Once the workspace's directory exists, moves the lines typed so far into its
+     * history file: they were typed in this workspace, so they belong to it.
+     */
+    private fun attachPendingHistory(reader: LineReader, out: PrintWriter) {
+        if (!historyPending || workspace.lineHistory?.parent?.let(Files::isDirectory) != true) return
+        val typed = reader.history.map { it.line() }
+        useLineHistory(reader, out)
+        typed.forEach { reader.history.add(it) }
     }
 
     /** `:workspace` shows the current one and lists the rest; `:workspace biobank` switches. */
@@ -967,7 +1038,7 @@ class Repl(
             return
         }
         if (!Workspaces.valid(argument)) {
-            out.println("not a valid workspace name: $argument — a letter, then letters, digits, - or _")
+            out.println("not a valid workspace name: $argument — ${KeyedStore.RULE}")
             return
         }
         if (argument == workspace.name) {
@@ -975,14 +1046,12 @@ class Repl(
             return
         }
         val next = workspaces.open(argument)
+        // Before anything can create it.
+        val isNew = argument !in workspaces.available()
         val saved = next.state.read()
-        val version = saved.fhir?.let(FhirVersion::parse) ?: FhirVersion.DEFAULT
-        val nextSession = try {
-            Session(version)
-        } catch (e: FhirVersionUnavailable) {
-            out.println(style.error("! ${e.message} — staying in workspace ${workspace.name}"))
-            return
-        }
+        // As at startup: a version this build cannot open falls back to the default.
+        val notes = mutableListOf<String>()
+        val nextSession = startSession(saved.fhir?.let(FhirVersion::parse), explicit = false) { notes += it }
         // The old workspace's state was saved after the last command that changed it.
         reader?.history?.save()
         workspace = next
@@ -996,8 +1065,11 @@ class Repl(
         limitSet = null
         rowLimit = windowRowLimit
         reader?.let { useLineHistory(it, out) }
-        val isNew = argument !in workspaces.available()
-        out.println("workspace $argument, FHIR ${version.id.uppercase()}" + if (isNew) " — new, created once something is saved" else "")
+        out.println(
+            "workspace $argument, FHIR ${session.version.id.uppercase()}" +
+                if (isNew) " — new, created once something is saved" else "",
+        )
+        notes.forEach { out.println(style.error("! $it")) }
         reportStorageProblems(out)
         restore(saved, out)
     }

@@ -180,4 +180,78 @@ class WorkspaceTest {
         assertContains(again.run(":unsave people"), "forgot @people")
         assertContains(again.run(":view @people"), "no saved view people")
     }
+
+    @Test
+    fun `switching to a workspace that does not exist does not create it`() {
+        val session = Session()
+        assertContains(session.run(":workspace typo"), "— new, created once something is saved")
+        session.run(":workspace w1")
+        assertFalse(Files.exists(home.resolve("workspaces/typo")))
+        assertFalse("typo" in workspaces.available())
+    }
+
+    @Test
+    fun `a session on another version restores neither paths nor focus, and keeps them saved`() {
+        Files.createDirectories(stateFile().parent)
+        Files.writeString(stateFile(), "fhir\tr5\nload\t$basic\nfocus\tPatient/pat1\n")
+        val session = Session(version = FhirVersion.R4)
+        assertContains(session.out, "the workspace was left on R5, so its 1 path(s) and focus are not restored in R4")
+        assertFalse(session.out.contains("loaded"), session.out)
+        assertEquals(listOf("fhir\tr5", "load\t$basic", "focus\tPatient/pat1"), Files.readAllLines(stateFile()))
+        // A change replaces it, as :fhir would have.
+        session.run(":limit 9")
+        assertEquals(listOf("fhir\tr4", "limit\t9"), Files.readAllLines(stateFile()))
+    }
+
+    @Test
+    fun `a focus step that changes nothing restores`() {
+        Session().apply {
+            run(":load samples/basic")
+            run(":focus Patient/pat1")
+            run(":focus name[0]")
+            run(":focus \$this")
+        }
+        assertEquals(
+            listOf("focus\tPatient/pat1", "focus\tname[0]", "focus\t\$this"),
+            Files.readAllLines(stateFile()).filter { it.startsWith("focus") },
+        )
+        val next = Session()
+        assertFalse(next.out.contains("restored only"), next.out)
+        assertContains(next.out, "focus Patient/pat1.name[0]")
+    }
+
+    @Test
+    fun `a saved view is saved and run with or without its at sign`() {
+        val session = Session()
+        session.run(":load samples/basic")
+        session.run("Patient.name.family")
+        session.run(":view #1")
+        assertContains(session.run(":save @people"), "saved @people: 1 column(s)")
+        assertContains(session.run(":view @people"), "Mustermann")
+        assertContains(session.run(":unsave @people"), "forgot @people")
+    }
+
+    @Test
+    fun `a saved view follows a rebound name and regains a lost number`() {
+        val session = Session()
+        session.run(":load samples/basic")
+        session.run("Patient.name.family")
+        session.run("Patient.birthDate")
+        session.run(":name col #1")
+        session.run(":view col #2")
+        session.run(":save v")
+        // The name now means something else: the column computes what its title says.
+        session.run(":name col #2")
+        val rebound = session.run(":view @v")
+        assertContains(rebound, "1979-02-28")
+        assertFalse(rebound.contains("Schmidt"), rebound)
+        // Saved again while #2 is gone from the log, then back: the number returns.
+        val log = home.resolve("workspaces/w1/expressions")
+        Files.writeString(log, "Patient.name.family\n")
+        session.run(":unname col")
+        session.run(":view @v")
+        session.run(":save v")
+        Files.writeString(log, "Patient.name.family\nPatient.birthDate\n")
+        assertContains(session.run(":view @v").lines()[1], "#2 birthDate")
+    }
 }

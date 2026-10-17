@@ -14,8 +14,10 @@ import java.nio.file.Path
  */
 class NameStore(file: Path?) {
 
+    // Everything after the name is the expression, tabs and all: a hand edit may
+    // have put one inside a string literal.
     private val store = KeyedStore(file, encode = { expression: String -> listOf(expression) }) { fields ->
-        fields.singleOrNull()?.takeIf { it.isNotEmpty() }
+        fields.joinToString("\t").trim().takeIf { it.isNotEmpty() }
     }
 
     /** Why the file is not being used, once reading or writing it has failed. */
