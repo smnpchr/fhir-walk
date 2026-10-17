@@ -3,6 +3,7 @@ package dev.fhirwalk.repl
 import dev.fhirwalk.complete.FhirPathCompleter
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.Focus
+import dev.fhirwalk.eval.FocusResolver
 import dev.fhirwalk.eval.FocusResolver.Resolution
 import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.model.FhirVersion
@@ -25,7 +26,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private val commands = listOf(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
         FhirPathCompleter.CommandInfo(":pool", "", "what is in the pool"),
-        FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|..]", "evaluate against one resource or element"),
+        FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|[n]|..]", "evaluate against one resource or element"),
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
@@ -60,6 +61,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      * between the two does not lose it.
      */
     private var lastExpression: String? = null
+
+    /**
+     * The rows of the last numbered listing, so `:focus [n]` can pick one. Listings
+     * without numbers (`:pool`, a focus announcement) leave it alone; a change of
+     * focus makes it stale, which the resolver checks.
+     */
+    private var lastPicks: FocusResolver.Picks? = null
 
     /** Rows printed per listing before the rest is held for `:more`; 0 = unlimited. */
     private var rowLimit = DEFAULT_ROW_LIMIT
@@ -191,6 +199,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                     out.println("{} empty — :why")
                     return
                 }
+                lastPicks = FocusResolver.Picks(expression, session.focusResolver.found(focus.resource, outcome.values), focus)
                 emit(
                     out,
                     header = null,
@@ -488,12 +497,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             }
             return
         }
-        when (val resolution = session.focusResolver.resolve(argument, current)) {
+        when (val resolution = session.focusResolver.resolve(argument, current, lastPicks)) {
             is Resolution.Focused -> {
                 session.focus = resolution.focus
                 announceFocus(resolution.focus, out)
             }
             is Resolution.NotInPool -> out.println("not in pool: ${resolution.argument}")
+            is Resolution.CannotPick -> out.println(resolution.reason)
             is Resolution.Invalid ->
                 out.println(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
             is Resolution.Failed -> out.println(style.error("! ${resolution.message}"))
@@ -504,13 +514,14 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 out.println("$label$argument yields nothing — :why")
             }
             is Resolution.Several -> {
-                val results = resolution.results
+                lastPicks = resolution.picks
+                val results = resolution.picks.results
                 val byResource = resolution.owners > 1
                 val counted = if (byResource) "from ${resolution.owners} resources" else ""
                 emit(
                     out,
                     header = listOf("${results.size} values", counted).filter { it.isNotEmpty() }.joinToString(" ") +
-                        "; focus needs one — ${resolution.hint}",
+                        "; focus needs one — pick it with  :focus [n]",
                     preview = results.mapIndexed { idx, found ->
                         valueRow(found.value, idx, found.owner.label.takeIf { byResource })
                     },
@@ -579,6 +590,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         }
         try {
             session = Session(version)
+            // Rows from the old pool; a pool-wide pick would otherwise still look valid.
+            lastPicks = null
             out.println("switched to FHIR ${version.id.uppercase()} — pool reset")
         } catch (e: FhirVersionUnavailable) {
             out.println(style.error("! ${e.message}"))
@@ -599,6 +612,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println("element. Expressions then start from that element — coding.code,")
         out.println("not Observation.code.coding — and :focus .. steps back up.")
         out.println(":more right after :focus prints the focused value in full.")
+        out.println(":focus [n] picks row n of the last numbered listing, e.g. when")
+        out.println("an expression matched several values.")
         out.println()
         out.println(":why with no expression re-diagnoses the last one you ran, so the")
         out.println("hint printed after an empty result can be followed by just :why.")

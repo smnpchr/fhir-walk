@@ -79,23 +79,53 @@ class FocusResolverTest {
         assertEquals("Patient/pat1", patient.label)
     }
 
-    @Test
-    fun `several values from one resource suggest an indexer`() {
-        val pat1 = focusOn("Patient/pat1")
-        val names = assertIs<Resolution.Several>(resolver.resolve("name", pat1))
-        assertEquals(1, names.owners)
-        assertEquals("pick it with  :focus name[0]", names.hint)
+    private fun several(argument: String, current: Focus? = null) =
+        assertIs<Resolution.Several>(resolver.resolve(argument, current))
 
-        // Unspaced or not, an operator means the indexer must wrap the whole thing.
-        val union = assertIs<Resolution.Several>(resolver.resolve("name|contact.name", pat1))
-        assertEquals("pick it with  :focus (name|contact.name)[0]", union.hint)
+    @Test
+    fun `several values across resources pick by row`() {
+        val codes = several("Observation.code")
+        assertEquals(3, codes.owners)
+        // Each resource gave one code, so no indexer: the label is the resource's own.
+        val picked = assertIs<Resolution.Focused>(resolver.resolve("[1]", null, codes.picks)).focus
+        assertEquals("Observation/obs2.code", picked.label)
+        assertEquals("Observation.code", picked.path)
+        assertEquals(null, picked.parent)
     }
 
     @Test
-    fun `several values across resources suggest picking a resource`() {
-        val codes = assertIs<Resolution.Several>(resolver.resolve("Observation.code", null))
-        assertEquals(3, codes.owners)
-        assertTrue(codes.hint.contains("label first"), codes.hint)
+    fun `a pick within one resource is spelled as the indexer that selects it`() {
+        val pat1 = focusOn("Patient/pat1")
+        val names = several("name", pat1)
+        val second = assertIs<Resolution.Focused>(resolver.resolve("[1]", pat1, names.picks)).focus
+        assertEquals("Patient/pat1.name[1]", second.label)
+        assertEquals("Patient.name[1]", second.path)
+        assertEquals(pat1, second.parent)
+
+        // An indexer on a union has to wrap all of it.
+        val union = several("name|contact.name", pat1)
+        val first = assertIs<Resolution.Focused>(resolver.resolve("[0]", pat1, union.picks)).focus
+        assertEquals("Patient/pat1.(name|contact.name)[0]", first.label)
+    }
+
+    @Test
+    fun `picking a resolved resource gives a resource focus`() {
+        val patients = several("Observation.subject.resolve()")
+        val pat2 = assertIs<Resolution.Focused>(resolver.resolve("[1]", null, patients.picks)).focus
+        assertTrue(pat2.isResource)
+        assertEquals("Patient/pat2", pat2.label)
+    }
+
+    @Test
+    fun `a pick needs a listing from the current focus and an index in it`() {
+        assertIs<Resolution.CannotPick>(resolver.resolve("[0]", null, null))
+        val pat1 = focusOn("Patient/pat1")
+        val names = several("name", pat1)
+        // A different focus, even of the same resource: those rows were not its rows.
+        assertIs<Resolution.CannotPick>(resolver.resolve("[0]", focusOn("Patient/pat1"), names.picks))
+        val outOfRange = assertIs<Resolution.CannotPick>(resolver.resolve("[5]", pat1, names.picks))
+        assertTrue(outOfRange.reason.contains("[0] to [1]"), outOfRange.reason)
+        assertIs<Resolution.CannotPick>(resolver.resolve("[99999999999]", pat1, names.picks))
     }
 
     @Test
