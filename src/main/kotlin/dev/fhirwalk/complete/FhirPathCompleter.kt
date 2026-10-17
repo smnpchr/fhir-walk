@@ -34,6 +34,8 @@ class FhirPathCompleter(
     private val focus: () -> Focus? = { null },
     private val recorded: () -> List<String> = { emptyList() },
     private val named: () -> Map<String, String> = { emptyMap() },
+    private val savedViews: () -> Set<String> = { emptySet() },
+    private val workspaces: () -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -87,8 +89,22 @@ class FhirPathCompleter(
                 val taken = arguments.dropLast(1).mapNotNull { ref ->
                     ref.removePrefix("#").toIntOrNull()?.let { log.getOrNull(it - 1) } ?: named()[ref]
                 }.toSet()
-                val shown = names(lastToken, taken, MAX_ROWS, candidates)
+                // `@` asks for a saved view, so nothing else matches it.
+                if (lastToken.startsWith("@")) {
+                    views(lastToken.drop(1), "@", candidates)
+                    return
+                }
+                // On an empty word the views are offered too; once a letter is typed,
+                // `@family` could never match it.
+                val shown = (if (lastToken.isEmpty()) views("", "@", candidates) else 0) +
+                    names(lastToken, taken, MAX_ROWS, candidates)
                 recordedColumns(lastToken, taken, minOf(MAX_ROWS, MAX_MENU - shown), candidates)
+            }
+            ":save", ":unsave" -> if (arguments.size == 1) views(lastToken.removePrefix("@"), "", candidates)
+            ":workspace" -> if (arguments.size == 1) {
+                workspaces().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it, it, "workspaces", null)
+                }
             }
             // The name first, to show or rebind one; then the number it is to hold.
             ":name" -> when (arguments.size) {
@@ -132,6 +148,19 @@ class FhirPathCompleter(
             .filter { (name, expression) -> name.startsWith(partial) && expression !in taken }
             .take(limit)
         matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", "named expressions", null) }
+        return matching.size
+    }
+
+    /**
+     * Saved views whose name starts with [partial].
+     *
+     * @param prefix what goes before the name in the inserted value: `@` after
+     *   `:view`, nothing after `:save`.
+     * @return how many were offered.
+     */
+    private fun views(partial: String, prefix: String, candidates: MutableList<Candidate>): Int {
+        val matching = savedViews().filter { it.startsWith(partial) }.take(MAX_ROWS)
+        matching.forEach { candidates += commandCand("$prefix$it", "@$it", "saved views", null) }
         return matching.size
     }
 

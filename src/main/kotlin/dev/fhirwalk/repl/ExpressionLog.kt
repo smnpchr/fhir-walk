@@ -48,9 +48,4 @@ class ExpressionLog(file: Path?) {
         if (!file.appendLine(expression)) sessionOnly += expression
         return true
     }
-
-    companion object {
-        /** `~/.fhir-walk/expressions`. */
-        fun default(): ExpressionLog = ExpressionLog(WatchedFile.inHome("expressions"))
-    }
 }

@@ -112,9 +112,12 @@ Type a FHIRPath expression, or:
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
-| `:view #n\|name …` | a table: one row per resource, a column per recorded expression |
+| `:view #n\|name\|@view …` | a table: one row per resource, a column per recorded expression |
 | `:name [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
 | `:unname <name>` | forget a name |
+| `:save [view]` | save the last `:view`, to rerun as `:view @view`; alone, list the saved views |
+| `:unsave <view>` | forget a saved view |
+| `:workspace [name]` | switch workspace; alone, show it and list the others |
 | `:more` | reprint the last listing in full, nothing shortened |
 | `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
 | `:fhir [version]` | switch FHIR version (resets the pool) |
@@ -181,8 +184,8 @@ With an element in focus HAPI has no root resource, so `%resource` is unavailabl
 ### Recorded expressions and `:view`
 
 A pool-wide expression — a bare one with no focus, or any `:all` — is recorded when
-it parses and matches at least one resource. The log is `~/.fhir-walk/expressions`,
-one expression per line, append-only and without duplicates, so a number from
+it parses and matches at least one resource. The log is the workspace's `expressions`
+file (see [Workspaces](#workspaces)), one expression per line, append-only and without duplicates, so a number from
 `:history` keeps meaning the same expression across sessions. Expressions typed under
 a focus are not recorded: `coding.code` means nothing once the focus is gone. A
 misspelt element parses fine and only ever comes back empty, which is why a match is
@@ -236,19 +239,68 @@ r4:pool(6)> :view family #2
   Patient/pat2  Schmidt     1979-02-28
 ```
 
-Names are kept in `~/.fhir-walk/names`, one `name<TAB>expression` per line, and
+Names are kept in the workspace's `names` file, one `name<TAB>expression` per line, and
 handled like the log: re-read when it changes, left untouched once it cannot be read.
 A name holds the expression's text rather than its number, so renumbering the log by
 hand does not change what `family` means. Only expressions that would be recorded can
 be named this way — pool-wide, and matching something — but a name may hold a
-structured one such as `Patient.name`; it is `:view` that asks for primitives. `:history` shows each entry's names beside
-it, `:name` alone lists them all, and `:name family #3` rebinds a name, saying what it
+structured one such as `Patient.name`; it is `:view` that asks for primitives.
+`:history` shows each entry's names beside it, `:name` alone lists them all, and `:name family #3` rebinds a name, saying what it
 held before.
 
 A name starts with a letter, so it never reads as a number, and names are
 case-sensitive. Typing a command without its colon (`view #1`, `name family #1`) still
 gets a hint, unless the word is an element where the expression would run *and* the
 line parses as FHIRPath: a bare `name` is `Patient.name`, not `:name`.
+
+A view can be saved and rerun. `:save people` saves the last `:view`, `:view @people`
+runs it again, and further columns can follow (`:view @people #4`); `:save` alone lists
+the saved views and `:unsave people` forgets one. Like a name, a saved view holds its
+columns' expressions rather than their numbers. Its titles are renumbered against the
+log as it stands, and a column whose expression has left the log keeps its place with
+no number.
+
+### Workspaces
+
+Everything that outlives a session belongs to a workspace: the expression log, names,
+saved views, the up-arrow history, and the state the session was left in — FHIR
+version, loaded paths, `:limit` and focus. Starting in a workspace restores that state:
+
+```
+$ fhir-walk --workspace basic samples/basic
+workspace basic, FHIR R4
+loaded 6 resource(s) from 3 file(s); pool now 6
+r4:pool(6)> :focus Patient/pat1
+focus Patient/pat1  (bundle.json#entry[0])
+  …
+r4:Patient/pat1> :quit
+
+$ fhir-walk --workspace basic
+workspace basic, FHIR R4
+loaded 6 resource(s) from 3 file(s); pool now 6
+focus Patient/pat1
+r4:Patient/pat1>
+```
+
+The default workspace is `~/.fhir-walk` itself; a named one lives in
+`~/.fhir-walk/workspaces/<name>/` and is created the first time something is saved
+there. Separate workspaces keep datasets apart: the expressions worth keeping for one
+pool are noise against another. `:workspace` shows the current one and lists the others, and `:workspace other`
+switches mid-session: a pool, focus and history of its own.
+
+The state is a description rather than a replay of commands, so each part is restored,
+or reported, on its own. A loaded path that has gone is reported and kept, to load
+again once it is back. The focus is saved as the chain of `:focus` steps that reached
+it, so `:focus ..` still steps back up; one that no longer resolves ends the focus as
+far as it got. `:fhir` resets the pool and forgets its paths.
+
+On the command line, `--fhir` wins over the version the workspace was left on, and
+paths load on top of the restored ones. `--fresh` starts with an empty pool and no
+focus, and leaves the saved state as it is until something changes: the first
+`:load`, `:focus`, `:limit` or `:fhir` replaces it.
+
+Two sessions in one workspace share its log and names, as above. Each writes its own
+state, so the one that changes something last is the one the next start restores.
 
 ## Output
 
@@ -336,7 +388,10 @@ eval/      PoolEvaluationContext            pool-backed resolve()
            PrefixWalker                     powers :why
            ViewBuilder                      powers :view
 complete/  FhirPathCompleter                merges both axes into JLine candidates
-repl/      Repl, Session, FhirPathParser, Render, ExpressionLog
+repl/      Repl, Session, FhirPathParser, Render
+           Workspace, SavedState            what outlives a session
+           ExpressionLog, NameStore,        its files, on WatchedFile /
+           ViewStore, KeyedStore            KeyedStore
 ```
 
 Everything outside `model/` takes a `FhirContext` and is version-agnostic by

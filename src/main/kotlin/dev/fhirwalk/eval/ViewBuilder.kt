@@ -26,21 +26,22 @@ class ViewBuilder(
 ) {
 
     /**
-     * @param ref how the column was asked for: `#3`, a number in the expression log,
-     *   or a name.
+     * @param ref how the column was asked for: `#3`, a number in the expression log;
+     *   a name; or empty, for a saved view's column whose expression is no longer in
+     *   the log under any number.
      */
     data class Column(val ref: String, val expression: String) {
-        private val named: Boolean get() = !ref.startsWith("#")
+        private val named: Boolean get() = ref.isNotEmpty() && !ref.startsWith("#")
 
         /**
          * A name is its own title. A number is followed by the expression without its
          * resource-type root, which every column shares.
          */
         fun title(type: String): String =
-            if (named) ref else "$ref ${expression.removePrefix("$type.").ifBlank { expression }}"
+            if (named) ref else listOf(ref, expression.removePrefix("$type.").ifBlank { expression }).joinToString(" ").trim()
 
         /** For messages: the reference with the expression it stands for. */
-        val described: String get() = if (named) "$ref ($expression)" else "$ref $expression"
+        val described: String get() = if (named) "$ref ($expression)" else "$ref $expression".trim()
     }
 
     data class Row(val resource: PooledResource, val cells: List<String>)
@@ -60,7 +61,7 @@ class ViewBuilder(
     fun build(columns: List<Column>): Result {
         if (columns.isEmpty()) return Result.Refused("a view needs at least one column")
         columns.forEach { column ->
-            evaluator.validate(column.expression)?.let { return Result.Refused("${column.ref}: $it") }
+            evaluator.validate(column.expression)?.let { return Result.Refused("${column.described}: $it") }
         }
 
         val roots = columns.map { it to rootType(it.expression) }
@@ -72,7 +73,7 @@ class ViewBuilder(
         }
         val types = roots.mapNotNull { it.second }.distinct()
         if (types.size > 1) {
-            val spread = roots.joinToString(", ") { (column, type) -> "${column.ref} $type" }
+            val spread = roots.joinToString(", ") { (column, type) -> "${column.ref.ifEmpty { column.expression }} $type" }
             return Result.Refused("columns start from different types ($spread) — a view has one row per resource of one type")
         }
         val type = types.single()
@@ -101,7 +102,7 @@ class ViewBuilder(
                     }
                     is Outcome.Failure -> {
                         errors++
-                        if (firstError == null) firstError = "${column.ref}: ${outcome.message}"
+                        if (firstError == null) firstError = "${column.described}: ${outcome.message}"
                         ERROR_CELL
                     }
                 }
