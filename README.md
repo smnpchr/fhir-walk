@@ -186,6 +186,12 @@ a focus are not recorded: `coding.code` means nothing once the focus is gone. A
 misspelt element parses fine and only ever comes back empty, which is why a match is
 the bar.
 
+The file is yours to edit. Blank and repeated lines are skipped, so `#n` is the n-th
+distinct expression: appending a line or editing one in place keeps the numbers, while
+deleting a line renumbers everything after it. Sessions running side by side share the
+file and agree on the numbers. If the file cannot be read or written, that is reported
+once and the session keeps its expressions in memory, leaving the file untouched.
+
 `:view` turns recorded expressions into columns:
 
 ```

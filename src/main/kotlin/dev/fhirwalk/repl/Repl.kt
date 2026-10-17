@@ -127,6 +127,8 @@ class Repl(
 
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         out.println("FHIR ${session.version.id.uppercase()}")
+        log.entries()
+        reportLogProblem(out)
         initialPaths.forEach { load(it, out) }
         if (initialPaths.isEmpty()) {
             out.println("pool is empty — :load <path> to import")
@@ -484,19 +486,25 @@ class Repl(
 
     // -------------------------------------------------------------- recorded
 
-    private var logErrorReported = false
+    private var logProblemReported = false
+
+    /** Once, wherever the log is touched first: at startup, or when it fails later. */
+    private fun reportLogProblem(out: PrintWriter) {
+        val problem = log.problem ?: return
+        if (logProblemReported) return
+        logProblemReported = true
+        out.println(style.error("! $problem — expressions are kept for this session only"))
+    }
 
     private fun record(expression: String, out: PrintWriter) {
         log.record(expression)
-        val error = log.writeError
-        if (error != null && !logErrorReported) {
-            logErrorReported = true
-            out.println(style.error("! $error — expressions are kept for this session only"))
-        }
+        reportLogProblem(out)
     }
 
     private fun history(argument: String, out: PrintWriter) {
-        val numbered = log.entries().mapIndexed { idx, expression -> idx + 1 to expression }
+        val entries = log.entries()
+        reportLogProblem(out)
+        val numbered = entries.mapIndexed { idx, expression -> idx + 1 to expression }
             .filter { (_, expression) -> expression.contains(argument, ignoreCase = true) }
             .asReversed()
         if (numbered.isEmpty()) {
@@ -527,6 +535,8 @@ class Repl(
             out.println("usage: :view #n [#n …]  —  numbers from :history, one column each")
             return
         }
+        log.entries()
+        reportLogProblem(out)
         val picked = refs.map { ref ->
             val number = ref.removePrefix("#").toIntOrNull()
             val expression = number?.let { log.get(it) } ?: run {
@@ -761,7 +771,6 @@ class Repl(
         out.println("tabulates them: one row per resource of the type they start from,")
         out.println("one column each. Columns must yield primitives, e.g. name.family")
         out.println("rather than name; several values in one cell are joined with \", \".")
-        out.println()
         out.println()
         out.println("A listing fills the window and keeps the rest for :more, which")
         out.println("reprints it whole with no value shortened. :limit off prints")

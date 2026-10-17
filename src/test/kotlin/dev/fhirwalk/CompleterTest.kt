@@ -278,14 +278,21 @@ class CompleterTest {
 
     @Test
     fun `view offers recorded expressions by number, newest first`() {
-        val recorded = listOf("Patient.name.family", "Patient.birthDate")
+        val recorded = (1..150).map { "Patient.id.where(\$this != 'x$it')" }
         val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null }, { recorded })
-        val line = ":view #1 "
-        val found = mutableListOf<Candidate>().also {
+        fun complete(line: String) = mutableListOf<Candidate>().also {
             completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
         }
-        assertEquals(listOf("#2", "#1"), found.map { it.value() })
-        assertEquals("#2  Patient.birthDate", found.first().displ())
+
+        val all = complete(":view ")
+        assertTrue(all.size < 100, "got ${all.size}")
+        assertEquals("#150", all.first().value())
+        assertEquals("#150  Patient.id.where(\$this != 'x150')", all.first().displ())
+        // The oldest entries are past the cap, but reachable once their number is typed.
+        assertEquals((listOf(3) + (30..39)).map { "#$it" }.sorted(), complete(":view #3").map { it.value() }.sorted())
+        // A bare number completes as one, and one already on the line is not offered.
+        val bare = complete(":view 12 1").map { it.value() }
+        assertTrue("1" in bare && "13" in bare && "12" !in bare, "got $bare")
     }
 
     /** A completer whose focus is the result of [expression] on [label]. */

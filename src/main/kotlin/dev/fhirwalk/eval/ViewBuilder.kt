@@ -71,41 +71,42 @@ class ViewBuilder(
 
         var errors = 0
         var firstError: String? = null
-        val values = resources.map { resource ->
-            columns.map { column ->
+        // Column by column, so a structured value is refused before the columns after
+        // it have run -- resolve() across a large pool is not free. Refused as a whole
+        // rather than cell by cell: a column that is primitive in some rows and
+        // structured in others would read as missing data.
+        val cellsByColumn = columns.map { column ->
+            resources.map { resource ->
                 when (val outcome = evaluator.evaluate(resource.resource, column.expression)) {
-                    is Outcome.Values -> outcome.values
+                    is Outcome.Values -> {
+                        outcome.values.firstOrNull { it !is IPrimitiveType<*> }?.let { structured ->
+                            return Result.Refused(
+                                "#${column.number} ${column.expression} yields ${typeOf(structured)}, " +
+                                    "not a primitive — only primitive values fit a column; navigate one level further",
+                            )
+                        }
+                        cell(outcome.values)
+                    }
                     is Outcome.Failure -> {
                         errors++
                         if (firstError == null) firstError = "#${column.number}: ${outcome.message}"
-                        null
+                        ERROR_CELL
                     }
                 }
             }
         }
 
-        // Refused as a whole rather than cell by cell: a column that is primitive in
-        // some rows and structured in others would read as missing data.
-        columns.forEachIndexed { idx, column ->
-            val structured = values.firstNotNullOfOrNull { row -> row[idx]?.firstOrNull { it !is IPrimitiveType<*> } }
-            if (structured != null) {
-                return Result.Refused(
-                    "#${column.number} ${column.expression} yields ${typeOf(structured)}, not a primitive — " +
-                        "only primitive values fit a column; navigate one level further",
-                )
-            }
-        }
-
-        val rows = resources.zip(values).map { (resource, cells) ->
-            Row(
-                resource,
-                cells.map { cell ->
-                    cell?.joinToString(", ") { (it as IPrimitiveType<*>).valueAsString.orEmpty() } ?: ERROR_CELL
-                },
-            )
-        }
+        val rows = resources.mapIndexed { idx, resource -> Row(resource, cellsByColumn.map { it[idx] }) }
         return Result.Table(type, columns, rows, errors, firstError)
     }
+
+    /**
+     * One line, whatever the values hold: a narrative `div` or a note with line breaks
+     * would otherwise spread one row over several and break the column alignment.
+     */
+    private fun cell(values: List<IBase>): String =
+        values.joinToString(", ") { (it as IPrimitiveType<*>).valueAsString.orEmpty() }
+            .replace(WHITESPACE, " ").trim()
 
     private fun rootType(expression: String): String? =
         FhirPathTokenizer.segments(expression).firstOrNull()?.name
@@ -114,5 +115,7 @@ class ViewBuilder(
     companion object {
         /** What a cell shows when its expression failed against that resource. */
         const val ERROR_CELL = "!"
+
+        private val WHITESPACE = Regex("\\s+")
     }
 }
