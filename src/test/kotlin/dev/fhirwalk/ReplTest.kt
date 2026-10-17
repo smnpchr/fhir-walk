@@ -84,4 +84,12 @@ class ReplTest {
         assertContains(run(":focus [99999999999]"), "no [99999999999]")
         assertContains(run(":focus [ 1 ]"), "focus Observation/obs2.code.coding")
     }
+
+    @Test
+    fun `switching version clears the rows`() {
+        run(":focus Observation.code.coding")
+        assertContains(run(":fhir r5"), "switched to FHIR R5")
+        // The pool was replaced; pool-wide rows from it must not be pickable.
+        assertContains(run(":focus [0]"), "nothing numbered to pick from")
+    }
 }

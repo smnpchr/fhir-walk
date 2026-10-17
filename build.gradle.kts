@@ -29,7 +29,9 @@ dependencies {
     // The base StructureDefinitions, shipped apart from the structures JARs. Without
     // them HAPI's worker context cannot resolve type names, so ofType()/as()/is()
     // fail with HAPI-0255 -- and choice elements are navigated via ofType().
-    // These are local files, not a package-server fetch.
+    // These are local files, not a package-server fetch. R4's are loose files HAPI
+    // reads itself; R5's are NPM packages, read by PackageDefinitions -- HAPI's own
+    // reader for those lives in hapi-fhir-validation, deliberately not a dependency.
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r4:$hapiVersion")
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r5:$hapiVersion")
 
