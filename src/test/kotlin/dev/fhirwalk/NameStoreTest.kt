@@ -40,7 +40,7 @@ class NameStoreTest {
         a.set("family", "Patient.name.family")
         b.set("born", "Patient.birthDate")
         assertEquals(setOf("family", "born"), a.all().keys)
-        assertEquals(listOf("family", "born"), b.namesOf("Patient.name.family") + b.namesOf("Patient.birthDate"))
+        assertEquals(mapOf("family" to "Patient.name.family", "born" to "Patient.birthDate"), b.all())
     }
 
     @Test
@@ -54,5 +54,21 @@ class NameStoreTest {
         store.set("family", "Patient.name.family")
         assertEquals("Patient.name.family", store.get("family"))
         assertTrue(Files.readAllBytes(file).contentEquals(bytes))
+    }
+
+    @Test
+    fun `a name is never written back over one another session added`() {
+        val a = NameStore(file)
+        val b = NameStore(file)
+        a.set("aa", "Patient.id")
+        b.all()
+        // a's next write looks unchanged to b: same size, same modification time.
+        val time = Files.getLastModifiedTime(file)
+        a.set("aa", "Patient.ic")
+        Files.setLastModifiedTime(file, time)
+        a.set("bb", "Patient.gender")
+        Files.setLastModifiedTime(file, time)
+        b.set("cc", "Patient.birthDate")
+        assertEquals(setOf("aa", "bb", "cc"), NameStore(file).all().keys)
     }
 }

@@ -310,6 +310,11 @@ class CompleterTest {
         // Neither a name nor a number already on the line comes back.
         assertEquals(setOf("born", "#2"), values(":view family #1 ").toSet())
         assertEquals(listOf("family"), values(":view fa"))
+        // Names are case-sensitive, so completion is too.
+        assertEquals(emptyList(), values(":view Fa"))
+        // A name and the number it holds are one column: either rules out the other.
+        assertEquals(setOf("born", "#2"), values(":view family ").toSet())
+        assertEquals(setOf("family", "#1"), values(":view #2 ").toSet())
         assertEquals(setOf("family", "born"), values(":unname ").toSet())
         assertEquals(setOf("family", "born"), values(":name ").toSet())
         assertEquals(listOf("#2", "#1"), values(":name born "))

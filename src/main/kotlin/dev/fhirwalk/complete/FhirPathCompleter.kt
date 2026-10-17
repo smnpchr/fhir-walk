@@ -81,8 +81,12 @@ class FhirPathCompleter(
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
             ":view" -> {
-                // Everything already on the line, so neither a name nor a number repeats.
-                val taken = arguments.dropLast(1).map { it.removePrefix("#") }.toSet()
+                // The expressions already on the line, however they were asked for: a
+                // name and the number it holds are the same column.
+                val log = recorded()
+                val taken = arguments.dropLast(1).mapNotNull { ref ->
+                    ref.removePrefix("#").toIntOrNull()?.let { log.getOrNull(it - 1) } ?: named()[ref]
+                }.toSet()
                 val shown = names(lastToken, taken, MAX_ROWS, candidates)
                 recordedColumns(lastToken, taken, minOf(MAX_ROWS, MAX_MENU - shown), candidates)
             }
@@ -99,14 +103,14 @@ class FhirPathCompleter(
      * Recorded expressions by number, newest first as `:history` lists them, and
      * narrowed by the digits typed before the cap, or a long log would leave its
      * oldest entries uncompletable. A bare number completes as one, `#` or nothing
-     * as `#n`; a number in [taken] is not offered. The number typed exactly comes
-     * first, or `1` in a long log would offer #150 to #100 and never #1.
+     * as `#n`; an expression in [taken] is not offered. The number typed exactly
+     * comes first, or `1` in a long log would offer #150 to #100 and never #1.
      */
     private fun recordedColumns(partial: String, taken: Set<String>, limit: Int, candidates: MutableList<Candidate>) {
         val hash = if (partial.startsWith("#") || partial.isEmpty()) "#" else ""
         val digits = partial.removePrefix("#")
         recorded().withIndex().reversed()
-            .filter { (idx, _) -> (idx + 1).toString().let { it.startsWith(digits) && it !in taken } }
+            .filter { (idx, expression) -> (idx + 1).toString().startsWith(digits) && expression !in taken }
             .sortedByDescending { (idx, _) -> (idx + 1).toString() == digits }
             .take(limit)
             // JLine orders by value unless told otherwise, which puts #10 before #2.
@@ -117,13 +121,15 @@ class FhirPathCompleter(
     }
 
     /**
-     * Names from `:name`, narrowed by what is typed before the cap.
+     * Names from `:name`, narrowed by what is typed before the cap. Case-sensitive,
+     * as names are: offering `family` for `Fam` would complete what `:view Fam…`,
+     * typed out, would refuse. A name whose expression is in [taken] is skipped.
      *
      * @return how many were offered, so the numbers offered alongside leave room.
      */
     private fun names(partial: String, taken: Set<String>, limit: Int, candidates: MutableList<Candidate>): Int {
         val matching = named().entries
-            .filter { (name, _) -> name.startsWith(partial, ignoreCase = true) && name !in taken }
+            .filter { (name, expression) -> name.startsWith(partial) && expression !in taken }
             .take(limit)
         matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", "named expressions", null) }
         return matching.size

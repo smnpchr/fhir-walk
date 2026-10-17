@@ -1,12 +1,6 @@
 package dev.fhirwalk.repl
 
-import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
-import java.nio.file.StandardOpenOption
-import java.nio.file.attribute.FileTime
 
 /**
  * Pool-wide expressions that parsed and matched something, kept across sessions.
@@ -26,28 +20,22 @@ import java.nio.file.attribute.FileTime
  *
  * @param file where entries persist, or null to keep them for this session only.
  */
-class ExpressionLog(private val file: Path?) {
+class ExpressionLog(file: Path?) {
+
+    private val file = WatchedFile(file)
 
     /** What the file held when last read. */
     private var stored: List<String> = emptyList()
 
-    /** Modification time and size at the last read, to skip re-reading an unchanged file. */
-    private var stamp: Pair<FileTime, Long>? = null
-
     /** Entries recorded while the file could not be used, numbered after [stored]. */
     private val sessionOnly = mutableListOf<String>()
 
-    /**
-     * Why the file is not being used, once reading or writing it has failed. From
-     * then on nothing is written to it: appending to a file whose contents could not
-     * be read would hand out numbers that disagree with it.
-     */
-    var problem: String? = null
-        private set
+    /** Why the file is not being used, once reading or writing it has failed. */
+    val problem: String? get() = file.problem
 
     /** Oldest first; entry n is at index n - 1. */
     fun entries(): List<String> {
-        refresh()
+        file.readIfChanged()?.let { lines -> stored = lines.map { it.trim() }.filter { it.isNotEmpty() }.distinct() }
         return stored + sessionOnly
     }
 
@@ -57,52 +45,12 @@ class ExpressionLog(private val file: Path?) {
     /** @return true when the expression was new and has been added. */
     fun record(expression: String): Boolean {
         if (expression.isBlank() || expression in entries()) return false
-        if (file == null || problem != null) {
-            sessionOnly += expression
-            return true
-        }
-        try {
-            file.parent?.let { Files.createDirectories(it) }
-            // A hand edit may leave no final newline; appending would join two lines.
-            val separator = if (endsWithoutNewline(file)) "\n" else ""
-            Files.writeString(file, separator + expression + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-            stamp = null
-        } catch (e: IOException) {
-            problem = "cannot write $file: ${e.message ?: e.javaClass.simpleName}"
-            sessionOnly += expression
-        }
+        if (!file.appendLine(expression)) sessionOnly += expression
         return true
-    }
-
-    private fun refresh() {
-        if (file == null || problem != null) return
-        try {
-            if (!Files.exists(file)) {
-                stored = emptyList()
-                stamp = null
-                return
-            }
-            val current = Files.getLastModifiedTime(file) to Files.size(file)
-            if (current == stamp) return
-            stored = Files.readAllLines(file).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            stamp = current
-        } catch (e: IOException) {
-            problem = "cannot read $file: ${e.message ?: e.javaClass.simpleName}"
-        }
-    }
-
-    private fun endsWithoutNewline(file: Path): Boolean {
-        if (!Files.exists(file) || Files.size(file) == 0L) return false
-        Files.newByteChannel(file).use { channel ->
-            val last = ByteBuffer.allocate(1)
-            channel.position(channel.size() - 1).read(last)
-            return last.get(0) != '\n'.code.toByte()
-        }
     }
 
     companion object {
         /** `~/.fhir-walk/expressions`. */
-        fun default(): ExpressionLog =
-            ExpressionLog(Paths.get(System.getProperty("user.home"), ".fhir-walk", "expressions"))
+        fun default(): ExpressionLog = ExpressionLog(WatchedFile.inHome("expressions"))
     }
 }

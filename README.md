@@ -245,9 +245,10 @@ structured one such as `Patient.name`; it is `:view` that asks for primitives. `
 it, `:name` alone lists them all, and `:name family #3` rebinds a name, saying what it
 held before.
 
-A name starts with a letter, so it never reads as a number. Typing a command without
-its colon (`view #1`) still gets a hint, unless the word is an element where the
-expression would run: a bare `name` is `Patient.name`, not `:name`.
+A name starts with a letter, so it never reads as a number, and names are
+case-sensitive. Typing a command without its colon (`view #1`, `name family #1`) still
+gets a hint, unless the word is an element where the expression would run *and* the
+line parses as FHIRPath: a bare `name` is `Patient.name`, not `:name`.
 
 ## Output
 

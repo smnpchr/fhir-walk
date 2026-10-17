@@ -190,7 +190,7 @@ class Repl(
             // an element where the expression runs: `name` is a command and, far more
             // often, Patient.name.
             val firstWord = input.substringBefore(' ')
-            if (":$firstWord" in commandNames && !isElementHere(firstWord)) {
+            if (":$firstWord" in commandNames && !(isElementHere(firstWord) && parses(input))) {
                 out.println(style.error("! not a FHIRPath expression — did you mean  :$input"))
                 return true
             }
@@ -225,6 +225,12 @@ class Repl(
         }
         return true
     }
+
+    /**
+     * Whether the line is FHIRPath at all. `name family #1` starts with an element
+     * name too, but no expression continues that way, so it is a dropped colon.
+     */
+    private fun parses(input: String): Boolean = session.evaluator.validate(input) == null
 
     /** Whether [word] is a child of the focus, or with none, of a resource type in the pool. */
     private fun isElementHere(word: String): Boolean {
@@ -406,6 +412,8 @@ class Repl(
     /** Not numbered: rows are resources, and an indexer would not pick between them. */
     private fun evaluateAll(expression: String, out: PrintWriter) {
         lastPicks = null
+        // Before the syntax check, so a failed :all leaves nothing behind to name.
+        nameable = null
         if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
         val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
@@ -548,8 +556,10 @@ class Repl(
             return
         }
         val width = "#${numbered.first().first}".length
+        // Once per listing, not per row: each lookup checks the names file.
+        val namesOf = names.all().entries.groupBy({ it.value }, { it.key })
         fun row(number: Int, expression: String, shorten: Boolean): String {
-            val named = names.namesOf(expression).joinToString(", ").let { if (it.isEmpty()) "" else "  ($it)" }
+            val named = namesOf[expression].orEmpty().joinToString(", ").let { if (it.isEmpty()) "" else "  ($it)" }
             val text = if (shorten) abbreviate(expression, valueWidth(width + 4 + named.length)) else expression
             return "  ${style.index("#$number".padEnd(width))}  $text${style.hint(named)}"
         }
@@ -749,9 +759,10 @@ class Repl(
             }
             return
         }
-        // An expression here is an evaluation too, and is not pool-wide-and-recorded.
-        nameable = null
         val resolution = session.focusResolver.resolve(argument, current, lastPicks)
+        // An expression here is an evaluation too, and not a recorded one; a label,
+        // #index or pick runs nothing and leaves the last expression nameable.
+        if (resolution.evaluated) nameable = null
         lastPicks = when (resolution) {
             is Resolution.Several -> resolution.picks
             // Picking, or failing to, leaves the same rows on offer for the next pick.

@@ -238,4 +238,26 @@ class ReplTest {
         assertContains(run(":name x"), "nothing to name")
         assertNull(names.get("x"))
     }
+
+    @Test
+    fun `a command word with arguments that do not parse is still a dropped colon`() {
+        run("Patient.name.family")
+        assertContains(run("name family #1"), "did you mean  :name family #1")
+        assertContains(run("focus Observation.subject"), "did you mean  :focus Observation.subject")
+    }
+
+    @Test
+    fun `a failed all leaves nothing to name`() {
+        run("Patient.name.family")
+        run(":all Patient.name.where(")
+        assertContains(run(":name fam"), "nothing to name")
+    }
+
+    @Test
+    fun `focusing by label or index keeps the expression nameable`() {
+        run("Patient.name.family")
+        run(":focus #0")
+        run(":focus Patient/pat1")
+        assertContains(run(":name fam"), "fam  Patient.name.family")
+    }
 }
