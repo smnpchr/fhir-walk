@@ -6,6 +6,7 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.ModelNavigator
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.eval.Focus
+import dev.fhirwalk.eval.FocusResolver
 import dev.fhirwalk.pool.ResourcePool
 
 /**
@@ -23,6 +24,7 @@ class Session(val version: FhirVersion) {
     val prefixWalker = PrefixWalker(evaluator, pool)
     val render = Render(ctx)
     val importer = Importer(ctx, pool)
+    val focusResolver = FocusResolver(evaluator, pool, navigator, render::typeOf)
 
     var focus: Focus? = null
 }

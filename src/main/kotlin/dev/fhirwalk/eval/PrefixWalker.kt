@@ -33,7 +33,12 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
 
     data class Coverage(val expression: String, val matching: Int, val considered: Int)
 
-    fun diagnose(input: IBase, expression: String): Diagnosis {
+    /**
+     * @param poolWide the expression to count across the pool for a prefix. Coverage
+     *   is looked up by root resource type, so a path relative to a focus has to be
+     *   rooted first; by default the prefix is taken as already rooted.
+     */
+    fun diagnose(input: IBase, expression: String, poolWide: (String) -> String = { it }): Diagnosis {
         val prefixes = FhirPathTokenizer.prefixes(expression)
         val steps = mutableListOf<Step>()
         var firstEmpty: Int? = null
@@ -58,7 +63,7 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
         }
 
         val coverage = firstEmpty?.let { idx ->
-            val failing = prefixes[idx]
+            val failing = poolWide(prefixes[idx])
             val candidates = candidatesFor(failing)
             if (candidates.isEmpty()) {
                 null

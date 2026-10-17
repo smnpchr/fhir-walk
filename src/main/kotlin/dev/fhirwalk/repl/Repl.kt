@@ -3,6 +3,7 @@ package dev.fhirwalk.repl
 import dev.fhirwalk.complete.FhirPathCompleter
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.Focus
+import dev.fhirwalk.eval.FocusResolver.Resolution
 import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
@@ -11,9 +12,7 @@ import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Reference
 import org.jline.reader.UserInterruptException
-import dev.fhirwalk.pool.PooledResource
 import org.hl7.fhir.instance.model.api.IBase
-import org.hl7.fhir.instance.model.api.IBaseResource
 import org.jline.terminal.Terminal
 import org.jline.terminal.TerminalBuilder
 import java.io.PrintWriter
@@ -195,10 +194,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 emit(
                     out,
                     header = null,
-                    preview = outcome.values.mapIndexed { idx, value ->
-                        "  ${style.index("[$idx]")} ${style.type(session.render.typeOf(value))}  " +
-                            style.value(session.render.value(value, valueWidth(VALUE_INDENT)), keysOnly = true)
-                    },
+                    preview = outcome.values.mapIndexed { idx, value -> valueRow(value, idx) },
                     full = outcome.values.flatMapIndexed { idx, value ->
                         expanded("  [$idx] ", value)
                     },
@@ -298,6 +294,19 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private fun valueWidth(indent: Int): Int = (columns - indent).coerceAtLeast(MIN_VALUE_WIDTH)
 
     /**
+     * One value on one line, shortened to fit: `[idx] Type  value`.
+     *
+     * @param label adds a resource column, for rows drawn from several resources.
+     */
+    private fun valueRow(value: IBase, index: Int? = null, label: String? = null): String {
+        val idx = index?.let { style.index("[$it]") + " " }.orEmpty()
+        val owner = label?.let { style.label(it.padEnd(LABEL_WIDTH)) + " " }.orEmpty()
+        val indent = VALUE_INDENT + if (label != null) LABEL_WIDTH else 0
+        return "  $idx$owner${style.type(session.render.typeOf(value))}  " +
+            style.value(session.render.value(value, valueWidth(indent)), keysOnly = true)
+    }
+
+    /**
      * One value in full: a primitive stays on the label's line, while anything
      * structured gets pretty-printed JSON underneath it.
      */
@@ -387,7 +396,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         val focus = session.focus
             ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
         if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
-        val diagnosis = session.prefixWalker.diagnose(focus.node, expression)
+        // A relative step is rooted at the focus, then stripped of where()/[n] the way
+        // the census spells it: "how many Observations populate code.coding.foo" is
+        // the question, not how many share this one's indexes.
+        val diagnosis = session.prefixWalker.diagnose(focus.node, expression) { prefix ->
+            val rooted = session.focus?.absolute(prefix)
+            if (rooted == null || rooted == prefix) prefix else session.navigator.censusPath(rooted)
+        }
         // Each row shows only the step it adds, not the whole prefix: with long
         // extension URLs in the path, repeating the prefix makes the table unreadable.
         val segments = FhirPathTokenizer.segments(expression)
@@ -455,82 +470,56 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
      * A label or `#index` picks a resource; anything else is an expression, run
      * against the current focus (or across the pool when there is none), whose one
      * result becomes the focus. Each new focus remembers the last, for `:focus ..`.
-     *
-     * `Observation/obs2` is a label and also a valid expression (a division), so
-     * labels are tried first and the expression reading is the fallback.
+     * The rules live in [FocusResolver]; this only reports.
      */
     private fun focus(argument: String, out: PrintWriter) {
         val current = session.focus
-        when {
-            argument.isBlank() -> {
-                session.focus = null
-                out.println("focus cleared — expressions now run across the pool")
-            }
-            argument == ".." -> {
-                session.focus = current?.parent
-                when {
-                    current == null -> out.println("nothing in focus")
-                    current.parent == null -> out.println("focus cleared — expressions now run across the pool")
-                    else -> announceFocus(current.parent, out)
-                }
-            }
-            argument.startsWith("#") -> {
-                val target = session.pool.byIndex(argument.drop(1).toIntOrNull() ?: -1)
-                if (target == null) out.println("not in pool: $argument") else setFocus(Focus.of(target, current), out)
-            }
-            else -> {
-                val target = session.pool.find(argument) ?: session.pool.all().firstOrNull { it.label == argument }
-                if (target != null) setFocus(Focus.of(target, current), out) else focusByExpression(argument, out)
-            }
-        }
-    }
-
-    private fun focusByExpression(expression: String, out: PrintWriter) {
-        // An empty result points at :why, which should not need the expression retyped.
-        lastExpression = expression
-        session.evaluator.validate(expression)?.let {
-            out.println(style.error("! not in pool, and not a valid expression: $it"))
+        if (argument.isBlank()) {
+            session.focus = null
+            out.println("focus cleared — expressions now run across the pool")
             return
         }
-        val current = session.focus
-        // Each result paired with the resource it was found in.
-        val results: List<Pair<PooledResource, IBase>> = if (current != null) {
-            when (val outcome = session.evaluator.evaluate(current.node, expression)) {
-                is Outcome.Failure -> {
-                    out.println(style.error("! ${outcome.message}"))
-                    return
-                }
-                is Outcome.Values -> outcome.values.map { current.resource to it }
+        if (argument == "..") {
+            session.focus = current?.parent
+            when {
+                current == null -> out.println("nothing in focus")
+                current.parent == null -> out.println("focus cleared — expressions now run across the pool")
+                else -> announceFocus(current.parent, out)
             }
-        } else {
-            val result = session.evaluator.evaluateAll(expression)
-            if (result.hits.isEmpty() && result.errors > 0) {
-                out.println(style.error("! ${result.firstError}"))
-                return
-            }
-            result.hits.flatMap { hit -> hit.values.map { hit.resource to it } }
-        }
-        val (owner, node) = results.singleOrNull() ?: run {
-            reportFocusAmbiguity(expression, results, out)
             return
         }
-        setFocus(focusOn(owner, node, expression, current), out)
-    }
-
-    /**
-     * A resource result, reached by `resolve()` or by a pool-wide query, becomes an
-     * ordinary resource focus when the pool holds it. Anything else is an element.
-     */
-    private fun focusOn(owner: PooledResource, node: IBase, expression: String, parent: Focus?): Focus {
-        if (node is IBaseResource) {
-            session.pool.all().firstOrNull { it.resource === node }?.let { return Focus.of(it, parent) }
+        when (val resolution = session.focusResolver.resolve(argument, current)) {
+            is Resolution.Focused -> {
+                session.focus = resolution.focus
+                announceFocus(resolution.focus, out)
+            }
+            is Resolution.NotInPool -> out.println("not in pool: ${resolution.argument}")
+            is Resolution.Invalid ->
+                out.println(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
+            is Resolution.Failed -> out.println(style.error("! ${resolution.message}"))
+            is Resolution.Nothing -> {
+                // The hint points at :why, which should not need the expression retyped.
+                lastExpression = argument
+                val label = if (resolution.couldBeLabel) "not a pool label, and " else ""
+                out.println("$label$argument yields nothing — :why")
+            }
+            is Resolution.Several -> {
+                val results = resolution.results
+                val byResource = resolution.owners > 1
+                val counted = if (byResource) "from ${resolution.owners} resources" else ""
+                emit(
+                    out,
+                    header = listOf("${results.size} values", counted).filter { it.isNotEmpty() }.joinToString(" ") +
+                        "; focus needs one — ${resolution.hint}",
+                    preview = results.mapIndexed { idx, found ->
+                        valueRow(found.value, idx, found.owner.label.takeIf { byResource })
+                    },
+                    full = results.flatMapIndexed { idx, found ->
+                        expanded("  [$idx] ${if (byResource) found.owner.label + "  " else ""}", found.value)
+                    },
+                )
+            }
         }
-        return Focus.reached(owner, node, session.render.typeOf(node), expression, parent, session.navigator)
-    }
-
-    private fun setFocus(focus: Focus, out: PrintWriter) {
-        session.focus = focus
-        announceFocus(focus, out)
     }
 
     /**
@@ -542,42 +531,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         emit(
             out,
             header = "focus ${focus.label}  ($what)",
-            preview = listOf(
-                "  ${style.type(focus.typeName)}  " +
-                    style.value(session.render.value(focus.node, valueWidth(VALUE_INDENT)), keysOnly = true),
-            ),
+            preview = listOf(valueRow(focus.node)),
             full = expanded("  ", focus.node),
-        )
-    }
-
-    private fun reportFocusAmbiguity(expression: String, results: List<Pair<PooledResource, IBase>>, out: PrintWriter) {
-        if (results.isEmpty()) {
-            // Only worth saying "not a label" when it could have been meant as one.
-            val label = if (session.focus?.isResource != false) "not a pool label, and " else ""
-            out.println("$label$expression yields nothing — :why")
-            return
-        }
-        val owners = results.map { it.first }.distinct()
-        // An indexer applies per resource, so [n] only narrows results that all came
-        // from one resource; across several, pick the resource first.
-        val header = if (owners.size == 1) {
-            val indexed = if (expression.contains(' ')) "($expression)" else expression
-            "${results.size} values; focus needs one — pick it with  :focus $indexed[0]"
-        } else {
-            "${results.size} values from ${owners.size} resources; focus needs one — " +
-                ":focus a label first, or narrow with where()"
-        }
-        emit(
-            out,
-            header = header,
-            preview = results.mapIndexed { idx, (owner, value) ->
-                val where = if (owners.size > 1) style.label(owner.label.padEnd(LABEL_WIDTH)) + " " else ""
-                "  ${style.index("[$idx]")} $where${style.type(session.render.typeOf(value))}  " +
-                    style.value(session.render.value(value, valueWidth(VALUE_INDENT)), keysOnly = true)
-            },
-            full = results.flatMapIndexed { idx, (owner, value) ->
-                expanded("  [$idx] ${if (owners.size > 1) owner.label + "  " else ""}", value)
-            },
         )
     }
 

@@ -46,11 +46,13 @@ class FhirPathCompleter(
             completeCommand(text, candidates)
             return
         }
-        val command = text.trimStart().takeIf { it.startsWith(":") }?.substringBefore(' ')
         // `:all` runs across the pool whatever is in focus, so it completes unrebased.
-        val relativeTo = focus().takeIf { command != ":all" }
-        if (command == ":focus") focusLabels(slice, relativeTo, candidates)
-        completeExpression(slice.text, slice.cursor, relativeTo, candidates)
+        val relativeTo = focus().takeIf { slice.command != ":all" }
+        val expression = mutableListOf<Candidate>()
+        completeExpression(slice.text, slice.cursor, relativeTo, expression)
+        // Labels first in the menu, but sized to the room the expression left.
+        if (slice.command == ":focus") focusLabels(slice, relativeTo, expression, candidates)
+        candidates += expression
     }
 
     // ------------------------------------------------------------------ commands
@@ -98,15 +100,34 @@ class FhirPathCompleter(
      * `ob`; each label is inserted minus what precedes that word, or accepting it
      * would repeat `Observation/`. Narrowed by what is typed before the cap, or a
      * large pool would leave everything past the first MAX_ROWS uncompletable.
+     *
+     * Only the word is replaced, so the text before it must already match the label
+     * exactly: `patient/p` cannot become `Patient/p1`, and offering it would leave a
+     * line that is no label at all.
+     *
+     * @param others the expression candidates offered alongside; together they must
+     *   stay under JLine's threshold.
      */
-    private fun focusLabels(slice: PromptLine.Slice, focus: Focus?, candidates: MutableList<Candidate>) {
+    private fun focusLabels(
+        slice: PromptLine.Slice,
+        focus: Focus?,
+        others: List<Candidate>,
+        candidates: MutableList<Candidate>,
+    ) {
         val typed = slice.text.take(slice.cursor)
         // Drilling into an element, the element's members are what you want on a
-        // bare TAB; sixty labels on top would push the menu past JLine's threshold.
+        // bare TAB; sixty labels on top would crowd them out.
         if (typed.isBlank() && focus != null && !focus.isResource) return
-        val beforeWord = typed.take(FhirPathTokenizer.cursorContext(slice.text, slice.cursor).replaceFrom)
-        pool().all().filter { it.label.startsWith(typed, ignoreCase = true) }
-            .take(MAX_ROWS)
+        val context = FhirPathTokenizer.cursorContext(slice.text, slice.cursor)
+        val beforeWord = typed.take(context.replaceFrom)
+        // JLine counts what matches the word, not everything handed to it.
+        val room = MAX_MENU - others.count { it.value().startsWith(context.partial, ignoreCase = true) }
+        pool().all()
+            .filter {
+                it.label.startsWith(beforeWord) &&
+                    it.label.drop(beforeWord.length).startsWith(context.partial, ignoreCase = true)
+            }
+            .take(minOf(MAX_ROWS, room))
             .forEach { candidates += commandCand(it.label.drop(beforeWord.length), it.label, "pool", it.origin) }
     }
 
@@ -132,7 +153,11 @@ class FhirPathCompleter(
             } else {
                 // A resource in focus also takes a relative path, `code` for
                 // `Observation.code`, which is how `:focus` drills into it.
-                focus?.let { members(it.path, nav, census, candidates) }
+                focus?.let {
+                    members(it.path, nav, census, candidates)
+                    // Only once typed, as for resource types: the bare TAB is crowded.
+                    if (context.partial.isNotEmpty()) functions(candidates, context.partial)
+                }
                 // With nothing typed yet, only the types the pool actually holds are
                 // useful -- evaluating Practitioner.name against a pool with no
                 // Practitioner tells you nothing. One keystroke opens up the full schema.
@@ -357,6 +382,8 @@ class FhirPathCompleter(
 
     private companion object {
         const val MAX_ROWS = 60
+        /** Past 100 matching candidates JLine asks "see all N possibilities?". */
+        const val MAX_MENU = 99
         const val MAX_EXTENSION_STEPS = 24
     }
 }

@@ -240,6 +240,18 @@ class PoolTest {
     }
 
     @Test
+    fun `why counts a relative step across the pool once it is rooted`() {
+        val walker = PrefixWalker(evaluator, pool)
+        val obs2 = requireNonNull(pool.find("Observation/obs2"))
+        val code = assertIsValues(evaluator.evaluate(obs2.resource, "Observation.code")).single()
+        // Relative, the root `coding` is no resource type: no coverage to report.
+        assertEquals(null, walker.diagnose(code, "coding.foo").poolCoverage)
+        val rooted = walker.diagnose(code, "coding.foo") { "Observation.code.$it" }
+        assertEquals(3, rooted.poolCoverage?.considered)
+        assertEquals(0, rooted.poolCoverage?.matching)
+    }
+
+    @Test
     fun `a focused choice the census cannot type is narrowed with ofType`() {
         val mixed = ResourcePool(ctx)
         val json = ctx.newJsonParser()

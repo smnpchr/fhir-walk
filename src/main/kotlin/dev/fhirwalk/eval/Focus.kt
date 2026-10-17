@@ -80,7 +80,7 @@ class Focus(
             val from = parent?.path ?: owner.type
             val claimed = if (step.isEmpty()) from else "$from.$step"
             // ofType() types whatever precedes it, so it would vouch for a non-path.
-            val pathShaped = FhirPathTokenizer.segments(step).all { IDENTIFIER.matches(it.name) }
+            val pathShaped = FhirPathTokenizer.isPath(step)
             val path = listOf(claimed, "$claimed.ofType($typeName)")
                 .takeIf { pathShaped }
                 ?.firstOrNull { navigator.resolveType(it)?.name.equals(typeName, ignoreCase = true) }
@@ -89,7 +89,5 @@ class Focus(
             val label = if (step.isEmpty()) base else "$base.$step"
             return Focus(owner, node, typeName, path, label, parent)
         }
-
-        private val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
     }
 }

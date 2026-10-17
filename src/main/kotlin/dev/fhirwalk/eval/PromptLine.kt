@@ -20,8 +20,11 @@ object PromptLine {
      * @param text the expression alone.
      * @param cursor the cursor position within [text].
      * @param offset where [text] starts in the original line.
+     * @param command the command the expression is the argument of, or null for a
+     *   bare line. Callers ask this rather than re-reading the line, so there is one
+     *   answer to "which command is this".
      */
-    data class Slice(val text: String, val cursor: Int, val offset: Int)
+    data class Slice(val text: String, val cursor: Int, val offset: Int, val command: String? = null)
 
     /**
      * @return the expression under the cursor, or null when the cursor sits in a
@@ -34,12 +37,13 @@ object PromptLine {
         // The command name ends at the first whitespace after it; with none, the
         // cursor is still in the name itself and there is no expression yet.
         val nameEnd = (start until line.length).firstOrNull { line[it].isWhitespace() } ?: return null
-        if (line.substring(start, nameEnd) !in EXPRESSION_COMMANDS) return null
+        val command = line.substring(start, nameEnd)
+        if (command !in EXPRESSION_COMMANDS) return null
 
         var expressionStart = nameEnd
         while (expressionStart < line.length && line[expressionStart].isWhitespace()) expressionStart++
         if (cursor < expressionStart) return null
 
-        return Slice(line.substring(expressionStart), cursor - expressionStart, expressionStart)
+        return Slice(line.substring(expressionStart), cursor - expressionStart, expressionStart, command)
     }
 }
