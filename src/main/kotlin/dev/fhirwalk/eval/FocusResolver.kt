@@ -45,18 +45,40 @@ class FocusResolver(
     }
 
     sealed interface Resolution {
-        /** @param picked whether it came from a row of [Picks], which stay pickable. */
-        data class Focused(val focus: Focus, val picked: Boolean = false) : Resolution
+        /**
+         * Whether the argument was taken as an expression and evaluated, as opposed to
+         * a label, an `#index` or a pick: callers that track "the expression just run"
+         * must know which.
+         */
+        val evaluated: Boolean get() = false
+
+        /**
+         * @param picked whether it came from a row of [Picks], which stay pickable.
+         * @param evaluated whether an expression found it, rather than a label or `#index`.
+         */
+        data class Focused(
+            val focus: Focus,
+            val picked: Boolean = false,
+            override val evaluated: Boolean = false,
+        ) : Resolution
         data class NotInPool(val argument: String) : Resolution
         data class CannotPick(val reason: String) : Resolution
-        data class Invalid(val message: String) : Resolution
-        data class Failed(val message: String) : Resolution
+        data class Invalid(val message: String) : Resolution {
+            override val evaluated: Boolean get() = true
+        }
+        data class Failed(val message: String) : Resolution {
+            override val evaluated: Boolean get() = true
+        }
 
         /** @param couldBeLabel whether the argument may have been meant as a label. */
-        data class Nothing(val couldBeLabel: Boolean) : Resolution
+        data class Nothing(val couldBeLabel: Boolean) : Resolution {
+            override val evaluated: Boolean get() = true
+        }
 
         /** @param picks the same results, numbered for `:focus [n]`. */
-        data class Several(val picks: Picks, val owners: Int) : Resolution
+        data class Several(val picks: Picks, val owners: Int) : Resolution {
+            override val evaluated: Boolean get() = true
+        }
     }
 
     /** @param picks the rows of the last numbered listing, if any. */
@@ -94,7 +116,7 @@ class FocusResolver(
             } else {
                 Resolution.Several(Picks(expression, current) { distinct }, distinct.map { it.owner }.distinct().size)
             }
-        return Resolution.Focused(focusOn(one, expression, current))
+        return Resolution.Focused(focusOn(one, expression, current), evaluated = true)
     }
 
     /** @param number the digits as typed, so a message never names another number. */

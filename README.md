@@ -112,7 +112,9 @@ Type a FHIRPath expression, or:
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
-| `:view #n [#n …]` | a table: one row per resource, a column per recorded expression |
+| `:view #n\|name …` | a table: one row per resource, a column per recorded expression |
+| `:name [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
+| `:unname <name>` | forget a name |
 | `:more` | reprint the last listing in full, nothing shortened |
 | `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
 | `:fhir [version]` | switch FHIR version (resets the pool) |
@@ -213,6 +215,40 @@ primitives — `Patient.name.family`, not `Patient.name` — and several values 
 are joined with `, `. Anything else is refused before a row is printed. `resolve()` and
 `extension('…')` work in a column as anywhere else. TAB after `:view` offers the
 recorded expressions by number.
+
+A column can also be named, and is then asked for and titled by its name. `:name
+family` right after a pool-wide expression names that one; `:name family #1` names one
+from `:history`:
+
+```
+r4:pool(6)> Patient.name.family
+2 of 6 resource(s) matched
+  Patient/pat1                 Mustermann
+  Patient/pat2                 Schmidt
+
+r4:pool(6)> :name family
+family  Patient.name.family
+
+r4:pool(6)> :view family #2
+2 Patient row(s)
+                family      #2 birthDate
+  Patient/pat1  Mustermann  1964-08-12
+  Patient/pat2  Schmidt     1979-02-28
+```
+
+Names are kept in `~/.fhir-walk/names`, one `name<TAB>expression` per line, and
+handled like the log: re-read when it changes, left untouched once it cannot be read.
+A name holds the expression's text rather than its number, so renumbering the log by
+hand does not change what `family` means. Only expressions that would be recorded can
+be named this way — pool-wide, and matching something — but a name may hold a
+structured one such as `Patient.name`; it is `:view` that asks for primitives. `:history` shows each entry's names beside
+it, `:name` alone lists them all, and `:name family #3` rebinds a name, saying what it
+held before.
+
+A name starts with a letter, so it never reads as a number, and names are
+case-sensitive. Typing a command without its colon (`view #1`, `name family #1`) still
+gets a hint, unless the word is an element where the expression would run *and* the
+line parses as FHIRPath: a bare `name` is `Patient.name`, not `:name`.
 
 ## Output
 

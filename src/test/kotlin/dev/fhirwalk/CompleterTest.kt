@@ -295,6 +295,31 @@ class CompleterTest {
         assertTrue("1" in bare && "13" in bare && "12" !in bare, "got $bare")
     }
 
+    @Test
+    fun `names complete after view, unname and the first word of name`() {
+        val recorded = listOf("Patient.name.family", "Patient.birthDate")
+        val named = mapOf("family" to "Patient.name.family", "born" to "Patient.birthDate")
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null }, { recorded }, { named },
+        )
+        fun values(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+
+        assertEquals(setOf("family", "born", "#2", "#1"), values(":view ").toSet())
+        // Neither a name nor a number already on the line comes back.
+        assertEquals(setOf("born", "#2"), values(":view family #1 ").toSet())
+        assertEquals(listOf("family"), values(":view fa"))
+        // Names are case-sensitive, so completion is too.
+        assertEquals(emptyList(), values(":view Fa"))
+        // A name and the number it holds are one column: either rules out the other.
+        assertEquals(setOf("born", "#2"), values(":view family ").toSet())
+        assertEquals(setOf("family", "#1"), values(":view #2 ").toSet())
+        assertEquals(setOf("family", "born"), values(":unname ").toSet())
+        assertEquals(setOf("family", "born"), values(":name ").toSet())
+        assertEquals(listOf("#2", "#1"), values(":name born "))
+    }
+
     /** A completer whose focus is the result of [expression] on [label]. */
     private fun focusedOn(label: String, expression: String? = null): FhirPathCompleter {
         val nav = ModelNavigator(ctx, pool.census)

@@ -25,10 +25,22 @@ class ViewBuilder(
     private val typeOf: (IBase) -> String,
 ) {
 
-    /** @param number the column's number in the expression log, for messages and titles. */
-    data class Column(val number: Int, val expression: String) {
-        /** The expression without its resource-type root, which every column shares. */
-        fun title(type: String): String = expression.removePrefix("$type.").ifBlank { expression }
+    /**
+     * @param ref how the column was asked for: `#3`, a number in the expression log,
+     *   or a name.
+     */
+    data class Column(val ref: String, val expression: String) {
+        private val named: Boolean get() = !ref.startsWith("#")
+
+        /**
+         * A name is its own title. A number is followed by the expression without its
+         * resource-type root, which every column shares.
+         */
+        fun title(type: String): String =
+            if (named) ref else "$ref ${expression.removePrefix("$type.").ifBlank { expression }}"
+
+        /** For messages: the reference with the expression it stands for. */
+        val described: String get() = if (named) "$ref ($expression)" else "$ref $expression"
     }
 
     data class Row(val resource: PooledResource, val cells: List<String>)
@@ -48,19 +60,19 @@ class ViewBuilder(
     fun build(columns: List<Column>): Result {
         if (columns.isEmpty()) return Result.Refused("a view needs at least one column")
         columns.forEach { column ->
-            evaluator.validate(column.expression)?.let { return Result.Refused("#${column.number}: $it") }
+            evaluator.validate(column.expression)?.let { return Result.Refused("${column.ref}: $it") }
         }
 
         val roots = columns.map { it to rootType(it.expression) }
         roots.firstOrNull { it.second == null }?.let { (column, _) ->
             return Result.Refused(
-                "#${column.number} ${column.expression} does not start from a resource type — " +
+                "${column.described} does not start from a resource type — " +
                     "a view needs one to know what its rows are",
             )
         }
         val types = roots.mapNotNull { it.second }.distinct()
         if (types.size > 1) {
-            val spread = roots.joinToString(", ") { (column, type) -> "#${column.number} $type" }
+            val spread = roots.joinToString(", ") { (column, type) -> "${column.ref} $type" }
             return Result.Refused("columns start from different types ($spread) — a view has one row per resource of one type")
         }
         val type = types.single()
@@ -81,7 +93,7 @@ class ViewBuilder(
                     is Outcome.Values -> {
                         outcome.values.firstOrNull { it !is IPrimitiveType<*> }?.let { structured ->
                             return Result.Refused(
-                                "#${column.number} ${column.expression} yields ${typeOf(structured)}, " +
+                                "${column.described} yields ${typeOf(structured)}, " +
                                     "not a primitive — only primitive values fit a column; navigate one level further",
                             )
                         }
@@ -89,7 +101,7 @@ class ViewBuilder(
                     }
                     is Outcome.Failure -> {
                         errors++
-                        if (firstError == null) firstError = "#${column.number}: ${outcome.message}"
+                        if (firstError == null) firstError = "${column.ref}: ${outcome.message}"
                         ERROR_CELL
                     }
                 }

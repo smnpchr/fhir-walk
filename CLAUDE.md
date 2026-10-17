@@ -138,9 +138,9 @@ produces confusing results that look like product bugs.
   `./gradlew test --rerun-tasks` whenever an outcome depends on sample data (new
   fixtures, or checking the `assumeTrue` skip guard by hiding one). A real run of this
   suite takes about ten seconds; a sub-second success means nothing executed.
-- `Repl` records pool-wide expressions to `~/.fhir-walk/expressions` by default. Tests
-  must pass `ExpressionLog(null)` (or a temp file), or they write into the developer's
-  home. `./gradlew run` does not forward `JAVA_OPTS`, so `-Duser.home=…` does not
+- `Repl` records pool-wide expressions to `~/.fhir-walk/expressions` and names to
+  `~/.fhir-walk/names` by default. Tests must pass `ExpressionLog(null)` and
+  `NameStore(null)` (or temp files), or they write into the developer's home. `./gradlew run` does not forward `JAVA_OPTS`, so `-Duser.home=…` does not
   redirect it there either; the installed start script does honour it.
 - Listings go through `Repl.emit`, which keeps whatever does not fit for `:more`.
   Never truncate output without an expansion path.

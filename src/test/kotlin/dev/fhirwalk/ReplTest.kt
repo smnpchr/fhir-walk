@@ -2,12 +2,14 @@ package dev.fhirwalk
 
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.ExpressionLog
+import dev.fhirwalk.repl.NameStore
 import dev.fhirwalk.repl.Repl
 import java.io.PrintWriter
 import java.io.StringWriter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -18,7 +20,8 @@ import kotlin.test.assertTrue
 class ReplTest {
 
     private val log = ExpressionLog(null)
-    private val repl = Repl(FhirVersion.R4, emptyList(), log)
+    private val names = NameStore(null)
+    private val repl = Repl(FhirVersion.R4, emptyList(), log, names)
 
     init {
         run(":load samples/basic")
@@ -158,6 +161,103 @@ class ReplTest {
         assertContains(run(":view #1"), "#1 Patient.name yields HumanName, not a primitive")
         assertContains(run(":view #2 #3"), "columns start from different types")
         assertContains(run(":view #7"), "nothing recorded as #7")
-        assertContains(run(":view family"), "not a :history number: family")
+        assertContains(run(":view family"), "no :history number or name family")
+    }
+
+    // ------------------------------------------------------------------- :name
+
+    @Test
+    fun `a named column is asked for and titled by its name`() {
+        run("Patient.name.family")
+        run("Patient.birthDate")
+        assertContains(run(":name family #1"), "family  Patient.name.family")
+        val table = run(":view family #2")
+        val titles = table.lines()[1]
+        assertTrue(titles.contains("family") && titles.contains("#2 birthDate"), table)
+        assertFalse(titles.contains("#1"), table)
+        assertContains(table, "Mustermann")
+    }
+
+    @Test
+    fun `rebinding a name says what it held`() {
+        run("Patient.name.family")
+        run("Patient.name.given")
+        run(":name n #1")
+        assertContains(run(":name n #1"), "n already names Patient.name.family")
+        assertContains(run(":name n 2"), "n  Patient.name.given  (was Patient.name.family)")
+        assertEquals("Patient.name.given", names.get("n"))
+    }
+
+    @Test
+    fun `names are listed, shown, refused and forgotten`() {
+        run("Patient.name.family")
+        assertContains(run(":name"), "no names yet")
+        assertContains(run(":name 2x #1"), "not a valid name: 2x")
+        assertContains(run(":name family #9"), "nothing recorded as #9")
+        run(":name family #1")
+        assertContains(run(":name"), "family  Patient.name.family")
+        assertContains(run(":history"), "(family)")
+        assertContains(run(":unname family"), "forgot family")
+        assertContains(run(":unname family"), "no name family")
+    }
+
+    @Test
+    fun `a command word that is an element here is an expression, not a dropped colon`() {
+        assertContains(run("name"), "2 of 6 resource(s) matched")
+        assertContains(run("name = 'x'"), "matched")
+        assertContains(run("view #1"), "did you mean  :view #1")
+        run(":focus Observation/obs1")
+        assertContains(run("name"), "did you mean  :name")
+    }
+
+    @Test
+    fun `name with no number names the pool-wide expression just run`() {
+        assertContains(run(":name early"), "nothing to name")
+        run("Patient.birthDate")
+        assertContains(run(":name born"), "born  Patient.birthDate")
+        run(":all Patient.name.family")
+        assertContains(run(":name family"), "family  Patient.name.family")
+        // Structured is fine for a name; only :view asks for primitives.
+        run("Patient.name")
+        assertContains(run(":name who"), "who  Patient.name")
+        assertContains(run(":view who"), "who (Patient.name) yields HumanName")
+    }
+
+    @Test
+    fun `an empty or focus-relative expression leaves nothing to name`() {
+        run("Patient.birthDate")
+        run("Patient.nmae")
+        assertContains(run(":name x"), "nothing to name")
+        run("Patient.birthDate")
+        run(":focus Patient/pat1")
+        run("gender")
+        assertContains(run(":name x"), "nothing to name")
+        run(":focus")
+        run("Patient.birthDate")
+        run(":focus Observation.code.coding")
+        assertContains(run(":name x"), "nothing to name")
+        assertNull(names.get("x"))
+    }
+
+    @Test
+    fun `a command word with arguments that do not parse is still a dropped colon`() {
+        run("Patient.name.family")
+        assertContains(run("name family #1"), "did you mean  :name family #1")
+        assertContains(run("focus Observation.subject"), "did you mean  :focus Observation.subject")
+    }
+
+    @Test
+    fun `a failed all leaves nothing to name`() {
+        run("Patient.name.family")
+        run(":all Patient.name.where(")
+        assertContains(run(":name fam"), "nothing to name")
+    }
+
+    @Test
+    fun `focusing by label or index keeps the expression nameable`() {
+        run("Patient.name.family")
+        run(":focus #0")
+        run(":focus Patient/pat1")
+        assertContains(run(":name fam"), "fam  Patient.name.family")
     }
 }
