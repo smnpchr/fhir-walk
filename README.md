@@ -11,6 +11,8 @@ no terminology lookup — the base StructureDefinitions ship as a JAR dependency
 
 r4:pool(6)> :focus Observation/obs2
 focus Observation/obs2  (observations.ndjson:1)
+  Observation  {"resourceType":"Observation","id":"obs2","status":"final","code":{"coding":[{"system…
+  … shortened to fit — :more
 
 r4:Observation/obs2> Observation.subject.resolve().name.family
   [0] string  Mustermann
@@ -125,6 +127,7 @@ resource. Expressions and completion are then relative to it:
 ```
 r4:Observation/obs2> :focus code
 focus Observation/obs2.code  (CodeableConcept in observations.ndjson:1)
+  CodeableConcept  {"coding":[{"system":"http://loinc.org","code":"8302-2","display":"Body height"}]}
 
 r4:Observation/obs2.code> coding.code
   [0] code  8302-2
@@ -134,6 +137,10 @@ Completion keeps both axes: the element's path is spelled the way the census
 records it, so `coding.code = '` still offers the codes observed there. Each focus
 remembers the one it was reached from; `:focus ..` steps back up, and a blank
 `:focus` clears the lot.
+
+The announcement is itself a listing, so `:more` right after `:focus` prints the
+focused value whole — the quickest way to see what a long path landed on. Later,
+`$this` shows it again.
 
 A focus needs exactly one value. When the expression yields several, they are listed
 and you narrow with an indexer (`:focus name[0]`) or `where()`. A result that is a

@@ -533,9 +533,21 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         announceFocus(focus, out)
     }
 
+    /**
+     * A listing of one, so `:more` straight after `:focus` shows the focused value
+     * whole. A long element path is exactly when you want to see what it landed on.
+     */
     private fun announceFocus(focus: Focus, out: PrintWriter) {
         val what = if (focus.isResource) focus.resource.origin else "${focus.typeName} in ${focus.resource.origin}"
-        out.println("focus ${focus.label}  ($what)")
+        emit(
+            out,
+            header = "focus ${focus.label}  ($what)",
+            preview = listOf(
+                "  ${style.type(focus.typeName)}  " +
+                    style.value(session.render.value(focus.node, valueWidth(VALUE_INDENT)), keysOnly = true),
+            ),
+            full = expanded("  ", focus.node),
+        )
     }
 
     private fun reportFocusAmbiguity(expression: String, results: List<Pair<PooledResource, IBase>>, out: PrintWriter) {
@@ -630,7 +642,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         out.println(":focus also takes an expression: it runs against the current focus")
         out.println("(or the pool) and its one result becomes the focus, which may be an")
         out.println("element. Expressions then start from that element — coding.code,")
-        out.println("not Observation.code.coding -- and :focus .. steps back up.")
+        out.println("not Observation.code.coding — and :focus .. steps back up.")
+        out.println(":more right after :focus prints the focused value in full.")
         out.println()
         out.println(":why with no expression re-diagnoses the last one you ran, so the")
         out.println("hint printed after an empty result can be followed by just :why.")
