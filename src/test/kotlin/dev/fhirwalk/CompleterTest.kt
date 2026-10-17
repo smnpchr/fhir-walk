@@ -276,6 +276,18 @@ class CompleterTest {
         assertEquals(listOf("p149"), narrowed.map { it.value() })
     }
 
+    @Test
+    fun `view offers recorded expressions by number, newest first`() {
+        val recorded = listOf("Patient.name.family", "Patient.birthDate")
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null }, { recorded })
+        val line = ":view #1 "
+        val found = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        assertEquals(listOf("#2", "#1"), found.map { it.value() })
+        assertEquals("#2  Patient.birthDate", found.first().displ())
+    }
+
     /** A completer whose focus is the result of [expression] on [label]. */
     private fun focusedOn(label: String, expression: String? = null): FhirPathCompleter {
         val nav = ModelNavigator(ctx, pool.census)

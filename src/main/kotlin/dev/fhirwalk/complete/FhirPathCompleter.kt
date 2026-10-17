@@ -32,6 +32,7 @@ class FhirPathCompleter(
     private val pool: () -> ResourcePool,
     private val commands: () -> List<CommandInfo>,
     private val focus: () -> Focus? = { null },
+    private val recorded: () -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -75,6 +76,12 @@ class FhirPathCompleter(
             ":load" -> completePath(lastToken, candidates)
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
+            }
+            // Newest first, as :history lists them; the expression is what you pick by.
+            // JLine orders by value unless told otherwise, which puts #10 before #2.
+            ":view" -> recorded().withIndex().reversed().take(MAX_ROWS).forEachIndexed { rank, (idx, expression) ->
+                val number = "#${idx + 1}"
+                candidates += Candidate(number, "$number  $expression", "recorded expressions", null, null, null, true, rank)
             }
         }
     }
