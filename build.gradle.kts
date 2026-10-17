@@ -29,7 +29,9 @@ dependencies {
     // The base StructureDefinitions, shipped apart from the structures JARs. Without
     // them HAPI's worker context cannot resolve type names, so ofType()/as()/is()
     // fail with HAPI-0255 -- and choice elements are navigated via ofType().
-    // These are local files, not a package-server fetch.
+    // These are local files, not a package-server fetch. R4's are loose files HAPI
+    // reads itself; R5's are NPM packages, read by PackageDefinitions -- HAPI's own
+    // reader for those lives in hapi-fhir-validation, deliberately not a dependency.
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r4:$hapiVersion")
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r5:$hapiVersion")
 
@@ -38,6 +40,11 @@ dependencies {
     // default provider, so newFhirPath() throws HAPI-2200 without one.
     implementation("org.fhir:ucum:1.0.10")
     implementation("ca.uhn.hapi.fhir:hapi-fhir-caching-caffeine:$hapiVersion")
+
+    // PackageDefinitions reads an NPM package's .index.json with it. Already brought
+    // in by hapi-fhir-base; declared because we now use it directly. No version: the
+    // one HAPI's constraints resolve to.
+    implementation("com.fasterxml.jackson.core:jackson-databind")
 
     implementation("org.jline:jline:3.30.17")
     implementation("org.slf4j:slf4j-simple:2.0.16")

@@ -62,6 +62,16 @@ when extending the walker.
   `hapi-fhir-caching-caffeine` (without it `newFhirPath()` throws HAPI-2200), and
   `hapi-fhir-validation-resources-*` (without it `ofType()`/`as()` fail with
   HAPI-0255 — and choice navigation goes through `ofType()`).
+- **R5's base definitions are NPM packages, and HAPI's reader for them is not a
+  dependency.** Without `PackageDefinitions`, `newFhirPath()` on R5 fails with
+  HAPI-2330 (`DefaultProfileValidationSupportNpmStrategy`, in `hapi-fhir-validation`:
+  29 modules, including an HTTP client). R4's definitions are loose files that
+  `hapi-fhir-base` reads itself. `PackageDefinitions` is lazy on purpose: parsing all
+  307 R5 definitions up front takes 5 s and ~200 MB, more than Gradle's 512 MB test
+  heap can spare; the engine only asks for a handful by URL. It asks in several
+  spellings — canonical, `StructureDefinition/X`, bare `X`, and `String` meaning
+  the primitive `string` — and an exact-URL lookup turns `ofType(String)` from
+  R4's empty answer into an R5 error.
 - **`setPrettyPrint(true)` is not honoured by `encodeToString`** for datatype elements,
   only by `encodeResourceToString`. Most values here are datatypes, hence the
   hand-written indenter in `Render`.
