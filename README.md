@@ -160,9 +160,11 @@ focus Observation/obs2.code.coding  (Coding in observations.ndjson:1)
 
 An indexer inside the expression would not do this across the pool: it applies within
 each resource, and every Observation here has exactly one coding. `[n]` picks a row of
-the last numbered listing — this one, or the result of an expression evaluated under a
-focus — as long as the focus has not changed since, so `:focus [0]`, `:focus ..`,
-`:focus [1]` works. When the row is one of several from its resource, the label spells
+the last result: this listing, or an expression evaluated under a focus. Any other
+result (`:all`, an empty one, a `:focus` that did not pick) leaves nothing to pick,
+so `[n]` never reaches past what is on screen; command output such as `:pool` or
+`:more` leaves the rows alone. Picking keeps them, so `:focus [0]`, `:focus ..`,
+`:focus [1]` tries one row after another. When the row is one of several from its resource, the label spells
 it as the indexer that selects it (`Patient/pat1.name[1]`), so it still names exactly
 one element.
 

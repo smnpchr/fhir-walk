@@ -31,18 +31,22 @@ class FocusResolver(
      *   an indexer on the expression would select it by.
      * @param siblings how many results that resource gave in all.
      */
-    data class Found(val owner: PooledResource, val value: IBase, val position: Int = 0, val siblings: Int = 1)
+    data class Found(val owner: PooledResource, val value: IBase, val position: Int, val siblings: Int)
 
     /**
-     * The rows of a numbered listing, for `:focus [n]`.
+     * The rows of a numbered listing, for `:focus [n]`. Built with [picksOf] or by
+     * [resolve]; numbered lazily, since few listings are ever picked from.
      *
      * @param from the focus the expression ran against, or null for the pool. A pick
      *   is only meaningful while that is still the focus.
      */
-    class Picks(val expression: String, val results: List<Found>, val from: Focus?)
+    class Picks internal constructor(val expression: String, val from: Focus?, rows: () -> List<Found>) {
+        val results: List<Found> by lazy(rows)
+    }
 
     sealed interface Resolution {
-        data class Focused(val focus: Focus) : Resolution
+        /** @param picked whether it came from a row of [Picks], which stay pickable. */
+        data class Focused(val focus: Focus, val picked: Boolean = false) : Resolution
         data class NotInPool(val argument: String) : Resolution
         data class CannotPick(val reason: String) : Resolution
         data class Invalid(val message: String) : Resolution
@@ -57,7 +61,7 @@ class FocusResolver(
 
     /** @param picks the rows of the last numbered listing, if any. */
     fun resolve(argument: String, current: Focus?, picks: Picks? = null): Resolution {
-        PICK.matchEntire(argument.trim())?.let { return pick(it.groupValues[1].toIntOrNull() ?: Int.MAX_VALUE, current, picks) }
+        PICK.matchEntire(argument.trim())?.let { return pick(it.groupValues[1], current, picks) }
         if (argument.startsWith("#")) {
             val target = pool.byIndex(argument.drop(1).toIntOrNull() ?: -1)
                 ?: return Resolution.NotInPool(argument)
@@ -88,29 +92,27 @@ class FocusResolver(
             ?: return if (distinct.isEmpty()) {
                 Resolution.Nothing(couldBeLabel = current?.isResource != false)
             } else {
-                Resolution.Several(Picks(expression, distinct, current), distinct.map { it.owner }.distinct().size)
+                Resolution.Several(Picks(expression, current) { distinct }, distinct.map { it.owner }.distinct().size)
             }
         return Resolution.Focused(focusOn(one, expression, current))
     }
 
-    private fun pick(index: Int, current: Focus?, picks: Picks?): Resolution {
+    /** @param number the digits as typed, so a message never names another number. */
+    private fun pick(number: String, current: Focus?, picks: Picks?): Resolution {
         picks ?: return Resolution.CannotPick("nothing numbered to pick from — run an expression first")
         if (picks.from !== current) return Resolution.CannotPick("the focus changed since that listing — rerun it")
-        val found = picks.results.getOrNull(index)
-            ?: return Resolution.CannotPick("no [$index] — that listing has [0] to [${picks.results.lastIndex}]")
-        // Spelled as the indexer that selects it, so the label and completion path
-        // describe this one element rather than every match.
-        val step = (picks.from ?: Focus.of(found.owner)).step(picks.expression)
-        val indexed = when {
-            found.siblings == 1 -> step
-            FhirPathTokenizer.isPath(step) -> "$step[${found.position}]"
-            else -> "($step)[${found.position}]"
-        }
-        return Resolution.Focused(focusOn(found, indexed, picks.from))
+        val found = number.toIntOrNull()?.let { picks.results.getOrNull(it) }
+            ?: return Resolution.CannotPick("no [$number] — that listing has [0] to [${picks.results.lastIndex}]")
+        val index = found.position.takeIf { found.siblings > 1 }
+        return Resolution.Focused(focusOn(found, picks.expression, picks.from, index), picked = true)
     }
 
+    /** The rows of [values], [expression]'s result against [focus], for `:focus [n]`. */
+    fun picksOf(expression: String, focus: Focus, values: List<IBase>): Picks =
+        Picks(expression, focus) { found(focus.resource, values) }
+
     /** Numbers [values] the way an indexer on the expression would. */
-    fun found(owner: PooledResource, values: List<IBase>): List<Found> =
+    private fun found(owner: PooledResource, values: List<IBase>): List<Found> =
         values.mapIndexed { idx, value -> Found(owner, value, idx, values.size) }
 
     /**
@@ -126,12 +128,13 @@ class FocusResolver(
      * A resource result, reached by `resolve()` or by a pool-wide query, becomes an
      * ordinary resource focus when the pool holds it. Anything else is an element.
      */
-    private fun focusOn(found: Found, expression: String, parent: Focus?): Focus {
+    private fun focusOn(found: Found, expression: String, parent: Focus?, index: Int? = null): Focus {
         (found.value as? IBaseResource)?.let(pool::entryFor)?.let { return Focus.of(it, parent) }
-        return Focus.reached(found.owner, found.value, typeOf(found.value), expression, parent, navigator)
+        return Focus.reached(found.owner, found.value, typeOf(found.value), expression, parent, navigator, index)
     }
 
     private companion object {
-        val PICK = Regex("""\[(\d+)]""")
+        /** Loose on purpose: `[ 1 ]` and `[-1]` are meant as picks, not as FHIRPath. */
+        val PICK = Regex("""\[\s*(-?\d+)\s*]""")
     }
 }

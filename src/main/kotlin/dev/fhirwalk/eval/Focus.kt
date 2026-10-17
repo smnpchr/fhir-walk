@@ -67,6 +67,10 @@ class Focus(
          * expression that is not a path (`a | b`), or a choice the census cannot
          * type, would otherwise complete against the wrong thing. A choice gets one
          * more try narrowed with `ofType()`, which keeps its census spelling.
+         *
+         * @param index which of the expression's results [node] is, when it gave
+         *   several: the step is then spelled with the indexer that selects it, so the
+         *   label and path name this one element rather than every match.
          */
         fun reached(
             owner: PooledResource,
@@ -75,8 +79,15 @@ class Focus(
             expression: String,
             parent: Focus?,
             navigator: ModelNavigator,
+            index: Int? = null,
         ): Focus {
-            val step = (parent ?: of(owner)).step(expression)
+            val relative = (parent ?: of(owner)).step(expression)
+            val step = when {
+                index == null -> relative
+                FhirPathTokenizer.isPath(relative) -> "$relative[$index]"
+                // `name|contact.name[0]` would index only the right operand.
+                else -> "($relative)[$index]"
+            }
             val from = parent?.path ?: owner.type
             val claimed = if (step.isEmpty()) from else "$from.$step"
             // ofType() types whatever precedes it, so it would vouch for a non-path.

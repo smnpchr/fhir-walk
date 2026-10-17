@@ -63,9 +63,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private var lastExpression: String? = null
 
     /**
-     * The rows of the last numbered listing, so `:focus [n]` can pick one. Listings
-     * without numbers (`:pool`, a focus announcement) leave it alone; a change of
-     * focus makes it stale, which the resolver checks.
+     * The rows of the last result, so `:focus [n]` can pick one. Every result
+     * replaces it -- a numbered one with its rows, any other (`:all`, an empty or
+     * failed one, a `:focus` that did not pick) with nothing -- so `[n]` never
+     * reaches past what is on screen. Command output (`:pool`, `:more`, `:why`, a
+     * focus announcement) is not a result and leaves it alone, which is what lets
+     * `:focus [0]`, `:focus ..`, `:focus [1]` work. A pick made under a different
+     * focus is refused by the resolver.
      */
     private var lastPicks: FocusResolver.Picks? = null
 
@@ -140,8 +144,13 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         return "${session.version.id}:$scope> "
     }
 
-    /** @return false to exit. */
-    private fun dispatch(input: String, out: PrintWriter): Boolean {
+    /**
+     * One line of input, as [run] hands it over. Internal so tests can drive the
+     * REPL without a terminal: none of this needs one.
+     *
+     * @return false to exit.
+     */
+    internal fun dispatch(input: String, out: PrintWriter): Boolean {
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so
             // beats handing the whole line to the FHIRPath parser.
@@ -181,6 +190,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     // ------------------------------------------------------------------ evaluate
 
     private fun evaluate(expression: String, out: PrintWriter) {
+        lastPicks = null
         if (reportSyntaxError(expression, out)) return
         val focus = session.focus
         if (focus == null) {
@@ -199,7 +209,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                     out.println("{} empty — :why")
                     return
                 }
-                lastPicks = FocusResolver.Picks(expression, session.focusResolver.found(focus.resource, outcome.values), focus)
+                lastPicks = session.focusResolver.picksOf(expression, focus, outcome.values)
                 emit(
                     out,
                     header = null,
@@ -344,7 +354,9 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         return true
     }
 
+    /** Not numbered: rows are resources, and an indexer would not pick between them. */
     private fun evaluateAll(expression: String, out: PrintWriter) {
+        lastPicks = null
         if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
         val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
@@ -485,6 +497,8 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         val current = session.focus
         if (argument.isBlank()) {
             session.focus = null
+            // Clears the lot: pool-wide rows would otherwise come back into play.
+            lastPicks = null
             out.println("focus cleared — expressions now run across the pool")
             return
         }
@@ -497,7 +511,15 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             }
             return
         }
-        when (val resolution = session.focusResolver.resolve(argument, current, lastPicks)) {
+        val resolution = session.focusResolver.resolve(argument, current, lastPicks)
+        lastPicks = when (resolution) {
+            is Resolution.Several -> resolution.picks
+            // Picking, or failing to, leaves the same rows on offer for the next pick.
+            is Resolution.CannotPick -> lastPicks
+            is Resolution.Focused -> lastPicks.takeIf { resolution.picked }
+            else -> null
+        }
+        when (resolution) {
             is Resolution.Focused -> {
                 session.focus = resolution.focus
                 announceFocus(resolution.focus, out)
@@ -514,7 +536,6 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 out.println("$label$argument yields nothing — :why")
             }
             is Resolution.Several -> {
-                lastPicks = resolution.picks
                 val results = resolution.picks.results
                 val byResource = resolution.owners > 1
                 val counted = if (byResource) "from ${resolution.owners} resources" else ""
