@@ -22,11 +22,13 @@ import java.nio.file.Paths
 
 /**
  * @param log where pool-wide expressions are recorded for `:history` and `:view`.
+ * @param names names for recorded expressions, for `:name` and `:view`.
  */
 class Repl(
     startVersion: FhirVersion,
     private val initialPaths: List<String>,
     private val log: ExpressionLog = ExpressionLog.default(),
+    private val names: NameStore = NameStore.default(),
 ) {
 
     private var session = Session(startVersion)
@@ -39,7 +41,9 @@ class Repl(
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
         FhirPathCompleter.CommandInfo(":history", "[filter]", "recorded pool-wide expressions, newest first"),
-        FhirPathCompleter.CommandInfo(":view", "#n [#n …]", "a table: one row per resource, a column per recorded expression"),
+        FhirPathCompleter.CommandInfo(":view", "#n|name …", "a table: one row per resource, a column per recorded expression"),
+        FhirPathCompleter.CommandInfo(":name", "[name [#n]]", "name the expression just run, or #n, for :view; alone, list"),
+        FhirPathCompleter.CommandInfo(":unname", "<name>", "forget a name"),
         FhirPathCompleter.CommandInfo(":more", "", "reprint the last listing in full, nothing shortened"),
         FhirPathCompleter.CommandInfo(":limit", "[rows|off]", "rows per listing before the rest waits for :more"),
         FhirPathCompleter.CommandInfo(":fhir", "[version]", "switch FHIR version (resets the pool)"),
@@ -79,6 +83,14 @@ class Repl(
     private var lastExpression: String? = null
 
     /**
+     * What `:name <name>` with no number names: the expression just run, if it was
+     * pool-wide and matched -- the ones that are recorded. Every evaluation replaces
+     * it, so a focus-relative or empty one in between leaves nothing to name rather
+     * than an older expression the user has stopped looking at.
+     */
+    private var nameable: String? = null
+
+    /**
      * The rows of the last result, so `:focus [n]` can pick one. Every result
      * replaces it -- a numbered one with its rows, any other (`:all`, an empty or
      * failed one, a `:focus` that did not pick) with nothing -- so `[n]` never
@@ -104,7 +116,9 @@ class Repl(
             .terminal(terminal)
             .parser(FhirPathParser())
             .completer(
-                FhirPathCompleter({ session.navigator }, { session.pool }, { commands }, { session.focus }, log::entries),
+                FhirPathCompleter(
+                    { session.navigator }, { session.pool }, { commands }, { session.focus }, log::entries, names::all,
+                ),
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
@@ -127,8 +141,7 @@ class Repl(
 
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         out.println("FHIR ${session.version.id.uppercase()}")
-        log.entries()
-        reportLogProblem(out)
+        reportStorageProblems(out)
         initialPaths.forEach { load(it, out) }
         if (initialPaths.isEmpty()) {
             out.println("pool is empty — :load <path> to import")
@@ -173,9 +186,11 @@ class Repl(
     internal fun dispatch(input: String, out: PrintWriter): Boolean {
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so
-            // beats handing the whole line to the FHIRPath parser.
+            // beats handing the whole line to the FHIRPath parser -- unless the word is
+            // an element where the expression runs: `name` is a command and, far more
+            // often, Patient.name.
             val firstWord = input.substringBefore(' ')
-            if (":$firstWord" in commandNames) {
+            if (":$firstWord" in commandNames && !isElementHere(firstWord)) {
                 out.println(style.error("! not a FHIRPath expression — did you mean  :$input"))
                 return true
             }
@@ -201,6 +216,8 @@ class Repl(
             ":ext" -> extensions(argument, out)
             ":history" -> history(argument, out)
             ":view" -> view(argument, out)
+            ":name" -> name(argument, out)
+            ":unname" -> unname(argument, out)
             ":more" -> more(out)
             ":limit" -> limit(argument, out)
             ":fhir" -> switchVersion(argument, out)
@@ -209,10 +226,17 @@ class Repl(
         return true
     }
 
+    /** Whether [word] is a child of the focus, or with none, of a resource type in the pool. */
+    private fun isElementHere(word: String): Boolean {
+        val paths = session.focus?.let { listOf(it.path) } ?: session.pool.types()
+        return paths.any { path -> session.navigator.childrenAt(path).any { it.name == word } }
+    }
+
     // ------------------------------------------------------------------ evaluate
 
     private fun evaluate(expression: String, out: PrintWriter) {
         lastPicks = null
+        nameable = null
         if (reportSyntaxError(expression, out)) return
         val focus = session.focus
         if (focus == null) {
@@ -388,6 +412,7 @@ class Repl(
             if (result.errors > 0) style.error("; ${result.errors} error(s): ${result.firstError}") else ""
         // Matching something is the bar: a misspelt element parses fine and only
         // ever comes back empty, and would otherwise clutter the log.
+        nameable = expression.takeIf { result.hits.isNotEmpty() }
         if (result.hits.isNotEmpty()) record(expression, out)
         if (result.hits.isEmpty()) {
             out.println(header)
@@ -486,24 +511,29 @@ class Repl(
 
     // -------------------------------------------------------------- recorded
 
-    private var logProblemReported = false
+    private val reportedProblems = mutableSetOf<String>()
 
-    /** Once, wherever the log is touched first: at startup, or when it fails later. */
-    private fun reportLogProblem(out: PrintWriter) {
-        val problem = log.problem ?: return
-        if (logProblemReported) return
-        logProblemReported = true
-        out.println(style.error("! $problem — expressions are kept for this session only"))
+    /**
+     * Each problem once, wherever the log or the names are touched first: at
+     * startup, or when a write fails later. Asking for the entries is what reads
+     * the files, so a problem is known by the time this looks.
+     */
+    private fun reportStorageProblems(out: PrintWriter) {
+        log.entries()
+        names.all()
+        listOfNotNull(log.problem, names.problem).filter { reportedProblems.add(it) }.forEach {
+            out.println(style.error("! $it — changes are kept for this session only"))
+        }
     }
 
     private fun record(expression: String, out: PrintWriter) {
         log.record(expression)
-        reportLogProblem(out)
+        reportStorageProblems(out)
     }
 
     private fun history(argument: String, out: PrintWriter) {
         val entries = log.entries()
-        reportLogProblem(out)
+        reportStorageProblems(out)
         val numbered = entries.mapIndexed { idx, expression -> idx + 1 to expression }
             .filter { (_, expression) -> expression.contains(argument, ignoreCase = true) }
             .asReversed()
@@ -518,34 +548,115 @@ class Repl(
             return
         }
         val width = "#${numbered.first().first}".length
+        fun row(number: Int, expression: String, shorten: Boolean): String {
+            val named = names.namesOf(expression).joinToString(", ").let { if (it.isEmpty()) "" else "  ($it)" }
+            val text = if (shorten) abbreviate(expression, valueWidth(width + 4 + named.length)) else expression
+            return "  ${style.index("#$number".padEnd(width))}  $text${style.hint(named)}"
+        }
         emit(
             out,
             header = null,
-            preview = numbered.map { (number, expression) ->
-                "  ${style.index("#$number".padEnd(width))}  " + abbreviate(expression, valueWidth(width + 4))
-            },
-            full = numbered.map { (number, expression) -> "  ${style.index("#$number".padEnd(width))}  $expression" },
+            preview = numbered.map { (number, expression) -> row(number, expression, shorten = true) },
+            full = numbered.map { (number, expression) -> row(number, expression, shorten = false) },
         )
     }
 
-    /** @param argument recorded expressions by number, `#3 #5` or `3, 5`. */
+    /**
+     * `:name` lists, `:name family` names the expression just run, `:name family #1`
+     * names a recorded one. A name may hold any expression; only `:view` asks for
+     * primitives, and says so when it is used.
+     */
+    private fun name(argument: String, out: PrintWriter) {
+        val parts = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        reportStorageProblems(out)
+        when (parts.size) {
+            0 -> {
+                val all = names.all()
+                if (all.isEmpty()) {
+                    out.println("no names yet — :name <name> #n names a recorded expression")
+                    return
+                }
+                val width = all.keys.maxOf { it.length }
+                emit(
+                    out,
+                    header = null,
+                    preview = all.map { (name, expression) ->
+                        "  ${style.label(name.padEnd(width))}  " + abbreviate(expression, valueWidth(width + 4))
+                    },
+                    full = all.map { (name, expression) -> "  ${style.label(name.padEnd(width))}  $expression" },
+                )
+            }
+            1, 2 -> {
+                val name = parts[0]
+                if (!NameStore.valid(name)) {
+                    out.println("not a valid name: $name — a letter, then letters, digits, - or _")
+                    return
+                }
+                val expression = if (parts.size == 1) {
+                    nameable ?: run {
+                        out.println(
+                            "nothing to name — run a pool-wide expression that matches something first, " +
+                                "or :name $name #n for one from :history",
+                        )
+                        return
+                    }
+                } else {
+                    val number = parts[1].removePrefix("#").toIntOrNull() ?: run {
+                        out.println("usage: :name <name> [#n]  —  #n from :history")
+                        return
+                    }
+                    log.get(number) ?: run {
+                        out.println("nothing recorded as #$number — see :history")
+                        return
+                    }
+                }
+                val before = names.set(name, expression)
+                reportStorageProblems(out)
+                out.println(
+                    when (before) {
+                        null -> "$name  $expression"
+                        expression -> "$name already names $expression"
+                        else -> "$name  $expression  (was $before)"
+                    },
+                )
+            }
+            else -> out.println("usage: :name [name [#n]]")
+        }
+    }
+
+    private fun unname(argument: String, out: PrintWriter) {
+        if (argument.isBlank()) {
+            out.println("usage: :unname <name>")
+            return
+        }
+        val before = names.remove(argument)
+        reportStorageProblems(out)
+        out.println(if (before == null) "no name $argument — :name lists them" else "forgot $argument  ($before)")
+    }
+
+    /** @param argument recorded expressions by number or name: `#3 family`, `3, 5`. */
     private fun view(argument: String, out: PrintWriter) {
         val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
         if (refs.isEmpty()) {
-            out.println("usage: :view #n [#n …]  —  numbers from :history, one column each")
+            out.println("usage: :view #n|name …  —  numbers from :history or names from :name, one column each")
             return
         }
-        log.entries()
-        reportLogProblem(out)
+        reportStorageProblems(out)
         val picked = refs.map { ref ->
             val number = ref.removePrefix("#").toIntOrNull()
-            val expression = number?.let { log.get(it) } ?: run {
-                out.println(
-                    if (number == null) "not a :history number: $ref" else "nothing recorded as #$number — see :history",
-                )
-                return
+            if (number != null) {
+                val expression = log.get(number) ?: run {
+                    out.println("nothing recorded as #$number — see :history")
+                    return
+                }
+                ViewBuilder.Column("#$number", expression)
+            } else {
+                val expression = names.get(ref) ?: run {
+                    out.println("no :history number or name $ref — see :history and :name")
+                    return
+                }
+                ViewBuilder.Column(ref, expression)
             }
-            ViewBuilder.Column(number, expression)
         }
         val table = when (val result = session.viewBuilder.build(picked)) {
             is ViewBuilder.Result.Refused -> {
@@ -554,7 +665,7 @@ class Repl(
             }
             is ViewBuilder.Result.Table -> result
         }
-        val titles = table.columns.map { "#${it.number} ${it.title(table.type)}" }
+        val titles = table.columns.map { it.title(table.type) }
         val labelWidth = table.rows.maxOf { it.resource.label.length }
         // In full each column is as wide as its widest cell; the preview shares out
         // what the window leaves after the labels.
@@ -638,6 +749,8 @@ class Repl(
             }
             return
         }
+        // An expression here is an evaluation too, and is not pool-wide-and-recorded.
+        nameable = null
         val resolution = session.focusResolver.resolve(argument, current, lastPicks)
         lastPicks = when (resolution) {
             is Resolution.Several -> resolution.picks
@@ -771,6 +884,10 @@ class Repl(
         out.println("tabulates them: one row per resource of the type they start from,")
         out.println("one column each. Columns must yield primitives, e.g. name.family")
         out.println("rather than name; several values in one cell are joined with \", \".")
+        out.println(":name family right after a pool-wide expression names it; :name family #1")
+        out.println("names a recorded one. Then :view family birth #3 works and the column is")
+        out.println("titled family. Names are kept in ~/.fhir-walk/names and hold the")
+        out.println("expression itself, not its number.")
         out.println()
         out.println("A listing fills the window and keeps the rest for :more, which")
         out.println("reprints it whole with no value shortened. :limit off prints")

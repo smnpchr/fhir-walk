@@ -33,6 +33,7 @@ class FhirPathCompleter(
     private val commands: () -> List<CommandInfo>,
     private val focus: () -> Focus? = { null },
     private val recorded: () -> List<String> = { emptyList() },
+    private val named: () -> Map<String, String> = { emptyMap() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -69,6 +70,8 @@ class FhirPathCompleter(
             return
         }
         val lastToken = trimmed.substringAfterLast(' ', "")
+        // The arguments so far, the last being the one under the cursor (possibly "").
+        val arguments = trimmed.split(Regex("[\\s,]+")).drop(1)
         when (command) {
             ":fhir" -> FhirVersion.entries.forEach {
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
@@ -77,30 +80,53 @@ class FhirPathCompleter(
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
-            ":view" -> recordedColumns(trimmed, lastToken, candidates)
+            ":view" -> {
+                // Everything already on the line, so neither a name nor a number repeats.
+                val taken = arguments.dropLast(1).map { it.removePrefix("#") }.toSet()
+                val shown = names(lastToken, taken, MAX_ROWS, candidates)
+                recordedColumns(lastToken, taken, minOf(MAX_ROWS, MAX_MENU - shown), candidates)
+            }
+            // The name first, to show or rebind one; then the number it is to hold.
+            ":name" -> when (arguments.size) {
+                1 -> names(lastToken, emptySet(), MAX_ROWS, candidates)
+                2 -> recordedColumns(lastToken, emptySet(), MAX_ROWS, candidates)
+            }
+            ":unname" -> if (arguments.size == 1) names(lastToken, emptySet(), MAX_ROWS, candidates)
         }
     }
 
     /**
-     * Recorded expressions for `:view`, newest first as `:history` lists them, and
+     * Recorded expressions by number, newest first as `:history` lists them, and
      * narrowed by the digits typed before the cap, or a long log would leave its
      * oldest entries uncompletable. A bare number completes as one, `#` or nothing
-     * as `#n`; a number already on the line is not offered again. The number typed
-     * exactly comes first, or `1` in a long log would offer #150 to #100 and never #1.
+     * as `#n`; a number in [taken] is not offered. The number typed exactly comes
+     * first, or `1` in a long log would offer #150 to #100 and never #1.
      */
-    private fun recordedColumns(line: String, partial: String, candidates: MutableList<Candidate>) {
-        val taken = line.split(Regex("[\\s,]+")).drop(1).dropLast(1).map { it.removePrefix("#") }.toSet()
+    private fun recordedColumns(partial: String, taken: Set<String>, limit: Int, candidates: MutableList<Candidate>) {
         val hash = if (partial.startsWith("#") || partial.isEmpty()) "#" else ""
         val digits = partial.removePrefix("#")
         recorded().withIndex().reversed()
             .filter { (idx, _) -> (idx + 1).toString().let { it.startsWith(digits) && it !in taken } }
             .sortedByDescending { (idx, _) -> (idx + 1).toString() == digits }
-            .take(MAX_ROWS)
+            .take(limit)
             // JLine orders by value unless told otherwise, which puts #10 before #2.
             .forEachIndexed { rank, (idx, expression) ->
                 val number = "$hash${idx + 1}"
                 candidates += Candidate(number, "#${idx + 1}  $expression", "recorded expressions", null, null, null, true, rank)
             }
+    }
+
+    /**
+     * Names from `:name`, narrowed by what is typed before the cap.
+     *
+     * @return how many were offered, so the numbers offered alongside leave room.
+     */
+    private fun names(partial: String, taken: Set<String>, limit: Int, candidates: MutableList<Candidate>): Int {
+        val matching = named().entries
+            .filter { (name, _) -> name.startsWith(partial, ignoreCase = true) && name !in taken }
+            .take(limit)
+        matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", "named expressions", null) }
+        return matching.size
     }
 
     private fun completePath(partial: String, candidates: MutableList<Candidate>) {
