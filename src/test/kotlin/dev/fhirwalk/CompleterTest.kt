@@ -1,6 +1,7 @@
 package dev.fhirwalk
 
 import dev.fhirwalk.complete.FhirPathCompleter
+import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.ModelNavigator
 import dev.fhirwalk.pool.Importer
@@ -268,8 +269,93 @@ class CompleterTest {
 
         // Past 100 JLine asks "see all N possibilities?" instead of showing a menu.
         assertTrue(complete(":focus ").size < 100)
-        // A resource past the cap is still reachable once its prefix is typed.
-        assertEquals(listOf("Patient/p149"), complete(":focus Patient/p149").map { it.value() })
+        // A resource past the cap is still reachable once its prefix is typed. The
+        // argument splits as FHIRPath, so only the word after the '/' is replaced.
+        val narrowed = complete(":focus Patient/p149").filter { it.group() == "pool" }
+        assertEquals(listOf("Patient/p149"), narrowed.map { it.displ() })
+        assertEquals(listOf("p149"), narrowed.map { it.value() })
+    }
+
+    /** A completer whose focus is the result of [expression] on [label]. */
+    private fun focusedOn(label: String, expression: String? = null): FhirPathCompleter {
+        val nav = ModelNavigator(ctx, pool.census)
+        val owner = pool.find(label)!!
+        var focus = Focus.of(owner)
+        if (expression != null) {
+            val evaluator = dev.fhirwalk.eval.Evaluator(ctx, pool)
+            val node = (evaluator.evaluate(owner.resource, expression) as dev.fhirwalk.eval.Outcome.Values).values.single()
+            focus = Focus.reached(owner, node, ctx.getElementDefinition(node.javaClass)!!.name, expression, focus, nav)
+        }
+        return FhirPathCompleter({ nav }, { pool }, { COMMANDS }, { focus })
+    }
+
+    private fun FhirPathCompleter.values(line: String) = mutableListOf<Candidate>().also {
+        complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+    }.map { it.value() }
+
+    @Test
+    fun `an element focus completes relative to the element`() {
+        val completer = focusedOn("Observation/obs2", "code")
+        // A bare TAB offers the element's members, not resource types.
+        val root = completer.values("")
+        assertTrue(root.containsAll(listOf("coding", "text")), "got $root")
+        assertTrue("Patient" !in root, "got $root")
+
+        assertTrue(completer.values("coding.").containsAll(listOf("code", "system")))
+        assertTrue(completer.values("CodeableConcept.coding.").contains("code"))
+        assertTrue(completer.values(":focus coding.").contains("system"))
+        // The census still answers, under the resource-rooted spelling.
+        assertTrue(completer.values("coding.code = '").contains("8302-2'"), "got ${completer.values("coding.code = '")}")
+    }
+
+    @Test
+    fun `a resource focus completes relative paths too`() {
+        val completer = focusedOn("Patient/pat1")
+        val onName = completer.values("name.extension('")
+        assertTrue(onName.any { it.contains("humanname-namenszusatz") }, "got $onName")
+        // Typed in full, the path is left alone.
+        assertTrue(completer.values("Patient.name.").contains("given"))
+        // At the root, the resource's own elements sit beside the resource types.
+        val root = completer.values(":focus ")
+        assertTrue(root.containsAll(listOf("name", "Patient")), "got $root")
+        assertTrue(root.size < 100, "got ${root.size}")
+    }
+
+    @Test
+    fun `a focus label is offered only when the typed prefix matches its case`() {
+        val completer = focusedOn("Observation/obs2")
+        // Only the word after '/' is replaced, so `patient/` would stay on the line.
+        assertTrue(completer.values(":focus patient/p").none { it.startsWith("pat") })
+        assertTrue(completer.values(":focus Patient/p").contains("pat1"))
+    }
+
+    @Test
+    fun `focus labels make room for the members of a resource in focus`() {
+        val big = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        repeat(150) { big.add(json.parseResource("""{"resourceType":"Observation","id":"o$it"}"""), null, "test") }
+        // Many types in the pool: each is a candidate on a bare TAB, as are the labels.
+        ctx.resourceTypes.sorted().filter { it != "Observation" }.take(40).forEach {
+            big.add(json.parseResource("""{"resourceType":"$it","id":"x"}"""), null, "test")
+        }
+        val focus = Focus.of(big.find("Observation/o0")!!)
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, big.census) }, { big }, { COMMANDS }, { focus })
+        val all = completer.values(":focus ")
+        assertTrue(all.size < 100, "got ${all.size}")
+        assertTrue(all.containsAll(listOf("code", "component", "Observation/o0")), "got $all")
+    }
+
+    @Test
+    fun `a resource focus offers functions once something is typed`() {
+        val completer = focusedOn("Patient/pat1")
+        assertTrue(completer.values("whe").contains("where("))
+    }
+
+    @Test
+    fun `all completes across the pool whatever is in focus`() {
+        val completer = focusedOn("Observation/obs2", "code")
+        assertTrue(completer.values(":all Pat").contains("Patient"))
+        assertTrue(completer.values(":all Patient.").contains("name"))
     }
 
     private companion object {

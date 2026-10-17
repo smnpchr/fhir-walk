@@ -73,6 +73,35 @@ object FhirPathTokenizer {
         return segs.indices.map { idx -> segs.take(idx + 1).joinToString(".") { it.text } }
     }
 
+    /**
+     * Whether [expr] is a plain navigation path: identifiers joined by `.`, each
+     * optionally followed by call parentheses and `[n]` indexers. `a | b`, `x + 1`
+     * and `(code)` are not, even where a segment's [Segment.name] looks fine --
+     * `name[0] | x` has the name `name`.
+     */
+    fun isPath(expr: String): Boolean = segments(expr).all { segment ->
+        val text = segment.text.trim()
+        val name = PATH_STEP_NAME.find(text)?.value ?: return@all false
+        var depth = 0
+        var quote: Char? = null
+        var i = name.length
+        while (i < text.length) {
+            val c = text[i]
+            when {
+                quote != null -> if (c == '\\') i++ else if (c == quote) quote = null
+                c == '\'' || c == '"' || c == '`' -> quote = c
+                c == '(' || c == '[' -> depth++
+                c == ')' || c == ']' -> depth--
+                // Anything between groups is an operator or a stray token.
+                depth == 0 -> return@all false
+            }
+            i++
+        }
+        depth == 0
+    }
+
+    private val PATH_STEP_NAME = Regex("^[A-Za-z_\$%][A-Za-z0-9_]*")
+
     /** Splits on a separator at paren/quote depth zero. */
     fun splitTopLevel(text: String, separator: Char): List<String> {
         val out = mutableListOf<String>()

@@ -1,6 +1,9 @@
 package dev.fhirwalk.repl
 
 import dev.fhirwalk.complete.FhirPathCompleter
+import dev.fhirwalk.eval.FhirPathTokenizer
+import dev.fhirwalk.eval.Focus
+import dev.fhirwalk.eval.FocusResolver.Resolution
 import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
@@ -22,7 +25,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private val commands = listOf(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
         FhirPathCompleter.CommandInfo(":pool", "", "what is in the pool"),
-        FhirPathCompleter.CommandInfo(":focus", "[label|#index]", "evaluate against one resource (blank to clear)"),
+        FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|..]", "evaluate against one resource or element"),
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
@@ -72,7 +75,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         val reader = LineReaderBuilder.builder()
             .terminal(terminal)
             .parser(FhirPathParser())
-            .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }))
+            .completer(FhirPathCompleter({ session.navigator }, { session.pool }, { commands }, { session.focus }))
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
             // passive list and you get command history instead of the next candidate.
@@ -125,8 +128,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     }
 
     private fun prompt(): String {
-        val focus = session.focus
-        val scope = focus?.label ?: "pool(${session.pool.size})"
+        val scope = session.focus?.label?.let { abbreviate(it, PROMPT_WIDTH) } ?: "pool(${session.pool.size})"
         return "${session.version.id}:$scope> "
     }
 
@@ -182,7 +184,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             evaluateAll(expression, out)
             return
         }
-        when (val outcome = session.evaluator.evaluate(focus.resource, expression)) {
+        when (val outcome = session.evaluator.evaluate(focus.node, expression)) {
             is Outcome.Failure -> out.println(style.error("! ${outcome.message}"))
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
@@ -192,10 +194,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
                 emit(
                     out,
                     header = null,
-                    preview = outcome.values.mapIndexed { idx, value ->
-                        "  ${style.index("[$idx]")} ${style.type(session.render.typeOf(value))}  " +
-                            style.value(session.render.value(value, valueWidth(VALUE_INDENT)), keysOnly = true)
-                    },
+                    preview = outcome.values.mapIndexed { idx, value -> valueRow(value, idx) },
                     full = outcome.values.flatMapIndexed { idx, value ->
                         expanded("  [$idx] ", value)
                     },
@@ -295,6 +294,19 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
     private fun valueWidth(indent: Int): Int = (columns - indent).coerceAtLeast(MIN_VALUE_WIDTH)
 
     /**
+     * One value on one line, shortened to fit: `[idx] Type  value`.
+     *
+     * @param label adds a resource column, for rows drawn from several resources.
+     */
+    private fun valueRow(value: IBase, index: Int? = null, label: String? = null): String {
+        val idx = index?.let { style.index("[$it]") + " " }.orEmpty()
+        val owner = label?.let { style.label(it.padEnd(LABEL_WIDTH)) + " " }.orEmpty()
+        val indent = VALUE_INDENT + if (label != null) LABEL_WIDTH else 0
+        return "  $idx$owner${style.type(session.render.typeOf(value))}  " +
+            style.value(session.render.value(value, valueWidth(indent)), keysOnly = true)
+    }
+
+    /**
      * One value in full: a primitive stays on the label's line, while anything
      * structured gets pretty-printed JSON underneath it.
      */
@@ -371,7 +383,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             out.println("pool is empty")
             return
         }
-        val root = dev.fhirwalk.eval.FhirPathTokenizer.segments(expression)
+        val root = FhirPathTokenizer.segments(expression)
             .firstOrNull()?.name?.takeIf { it.isNotBlank() }
         // Diagnosing a Specimen expression against a Patient reports "empty at step
         // one" and teaches nothing, so the subject must match the expression's root.
@@ -382,13 +394,18 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
             return
         }
         val focus = session.focus
-            ?: session.prefixWalker.diagnosisTarget(expression)
-            ?: session.pool.all().first()
+            ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
         if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
-        val diagnosis = session.prefixWalker.diagnose(focus.resource, expression)
+        // A relative step is rooted at the focus, then stripped of where()/[n] the way
+        // the census spells it: "how many Observations populate code.coding.foo" is
+        // the question, not how many share this one's indexes.
+        val diagnosis = session.prefixWalker.diagnose(focus.node, expression) { prefix ->
+            val rooted = session.focus?.absolute(prefix)
+            if (rooted == null || rooted == prefix) prefix else session.navigator.censusPath(rooted)
+        }
         // Each row shows only the step it adds, not the whole prefix: with long
         // extension URLs in the path, repeating the prefix makes the table unreadable.
-        val segments = dev.fhirwalk.eval.FhirPathTokenizer.segments(expression)
+        val segments = FhirPathTokenizer.segments(expression)
             .filter { it.text.isNotBlank() }
         for ((idx, step) in diagnosis.steps.withIndex()) {
             val marker = if (idx == diagnosis.firstEmpty) "  <-- empty here" else ""
@@ -449,23 +466,74 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         )
     }
 
+    /**
+     * A label or `#index` picks a resource; anything else is an expression, run
+     * against the current focus (or across the pool when there is none), whose one
+     * result becomes the focus. Each new focus remembers the last, for `:focus ..`.
+     * The rules live in [FocusResolver]; this only reports.
+     */
     private fun focus(argument: String, out: PrintWriter) {
+        val current = session.focus
         if (argument.isBlank()) {
             session.focus = null
             out.println("focus cleared — expressions now run across the pool")
             return
         }
-        val target = if (argument.startsWith("#")) {
-            session.pool.byIndex(argument.drop(1).toIntOrNull() ?: -1)
-        } else {
-            session.pool.find(argument) ?: session.pool.all().firstOrNull { it.label == argument }
-        }
-        if (target == null) {
-            out.println("not in pool: $argument")
+        if (argument == "..") {
+            session.focus = current?.parent
+            when {
+                current == null -> out.println("nothing in focus")
+                current.parent == null -> out.println("focus cleared — expressions now run across the pool")
+                else -> announceFocus(current.parent, out)
+            }
             return
         }
-        session.focus = target
-        out.println("focus ${target.label}  (${target.origin})")
+        when (val resolution = session.focusResolver.resolve(argument, current)) {
+            is Resolution.Focused -> {
+                session.focus = resolution.focus
+                announceFocus(resolution.focus, out)
+            }
+            is Resolution.NotInPool -> out.println("not in pool: ${resolution.argument}")
+            is Resolution.Invalid ->
+                out.println(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
+            is Resolution.Failed -> out.println(style.error("! ${resolution.message}"))
+            is Resolution.Nothing -> {
+                // The hint points at :why, which should not need the expression retyped.
+                lastExpression = argument
+                val label = if (resolution.couldBeLabel) "not a pool label, and " else ""
+                out.println("$label$argument yields nothing — :why")
+            }
+            is Resolution.Several -> {
+                val results = resolution.results
+                val byResource = resolution.owners > 1
+                val counted = if (byResource) "from ${resolution.owners} resources" else ""
+                emit(
+                    out,
+                    header = listOf("${results.size} values", counted).filter { it.isNotEmpty() }.joinToString(" ") +
+                        "; focus needs one — ${resolution.hint}",
+                    preview = results.mapIndexed { idx, found ->
+                        valueRow(found.value, idx, found.owner.label.takeIf { byResource })
+                    },
+                    full = results.flatMapIndexed { idx, found ->
+                        expanded("  [$idx] ${if (byResource) found.owner.label + "  " else ""}", found.value)
+                    },
+                )
+            }
+        }
+    }
+
+    /**
+     * A listing of one, so `:more` straight after `:focus` shows the focused value
+     * whole. A long element path is exactly when you want to see what it landed on.
+     */
+    private fun announceFocus(focus: Focus, out: PrintWriter) {
+        val what = if (focus.isResource) focus.resource.origin else "${focus.typeName} in ${focus.resource.origin}"
+        emit(
+            out,
+            header = "focus ${focus.label}  ($what)",
+            preview = listOf(valueRow(focus.node)),
+            full = expanded("  ", focus.node),
+        )
     }
 
     private fun extensions(argument: String, out: PrintWriter) {
@@ -519,10 +587,18 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
 
     private fun help(out: PrintWriter) {
         out.println("Type a FHIRPath expression, or:")
-        commands.forEach { out.println("  ${it.name} ${it.args}".padEnd(26) + it.doc) }
+        val usages = commands.map { "  ${it.name} ${it.args}" }
+        val width = usages.maxOf { it.length } + 2
+        commands.zip(usages).forEach { (command, usage) -> out.println(usage.padEnd(width) + command.doc) }
         out.println()
         out.println("With a focus set, an expression runs against that resource;")
         out.println("with no focus it runs across the whole pool.")
+        out.println()
+        out.println(":focus also takes an expression: it runs against the current focus")
+        out.println("(or the pool) and its one result becomes the focus, which may be an")
+        out.println("element. Expressions then start from that element — coding.code,")
+        out.println("not Observation.code.coding — and :focus .. steps back up.")
+        out.println(":more right after :focus prints the focused value in full.")
         out.println()
         out.println(":why with no expression re-diagnoses the last one you ran, so the")
         out.println("hint printed after an empty result can be followed by just :why.")
@@ -554,6 +630,7 @@ class Repl(startVersion: FhirVersion, private val initialPaths: List<String>) {
         const val UNLIMITED = 0
         const val STEP_WIDTH = 48
         const val LABEL_WIDTH = 28
+        const val PROMPT_WIDTH = 48
         const val VALUE_INDENT = 14
         const val MIN_VALUE_WIDTH = 40
         const val MIN_ROW_LIMIT = 8

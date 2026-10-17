@@ -4,6 +4,8 @@ import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.FhirPathTokenizer.CursorKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class FhirPathTokenizerTest {
 
@@ -113,5 +115,14 @@ class FhirPathTokenizerTest {
         // Not a comparison: no operand.
         assertEquals(null, compared("Patient.name.extension('"))
         assertEquals(null, compared("Patient.birthDate >= '"))
+    }
+
+    @Test
+    fun `a path is identifiers, calls and indexers joined by dots`() {
+        listOf("name", "Patient.name[0].given", "extension('http://x.org/a b').value", "where(a = 'b').code", "\$this.x")
+            .forEach { assertTrue(FhirPathTokenizer.isPath(it), it) }
+        // Operators make it not a path, wherever they hide.
+        listOf("name|contact.name", "name[0] | x", "a+b", "(code)", "x != y", "code.coding = 'x'")
+            .forEach { assertFalse(FhirPathTokenizer.isPath(it), it) }
     }
 }

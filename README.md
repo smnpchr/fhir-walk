@@ -11,6 +11,8 @@ no terminology lookup — the base StructureDefinitions ship as a JAR dependency
 
 r4:pool(6)> :focus Observation/obs2
 focus Observation/obs2  (observations.ndjson:1)
+  Observation  {"resourceType":"Observation","id":"obs2","status":"final","code":{"coding":[{"system…
+  … shortened to fit — :more
 
 r4:Observation/obs2> Observation.subject.resolve().name.family
   [0] string  Mustermann
@@ -105,7 +107,7 @@ Type a FHIRPath expression, or:
 |---|---|
 | `:load <path>` | import a file, bundle, NDJSON, or directory tree |
 | `:pool` | what is in the pool |
-| `:focus [label\|#index]` | evaluate against one resource (blank clears) |
+| `:focus [label\|#index\|expr\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:ext [path]` | extension URLs observed in the pool |
@@ -115,6 +117,38 @@ Type a FHIRPath expression, or:
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
 across the pool.
+
+### Focusing on an element
+
+`:focus` also takes an expression. It runs against the current focus (or across the
+pool, with none) and its single result becomes the focus — usually an element, not a
+resource. Expressions and completion are then relative to it:
+
+```
+r4:Observation/obs2> :focus code
+focus Observation/obs2.code  (CodeableConcept in observations.ndjson:1)
+  CodeableConcept  {"coding":[{"system":"http://loinc.org","code":"8302-2","display":"Body height"}]}
+
+r4:Observation/obs2.code> coding.code
+  [0] code  8302-2
+```
+
+Completion keeps both axes: the element's path is spelled the way the census
+records it, so `coding.code = '` still offers the codes observed there. Each focus
+remembers the one it was reached from; `:focus ..` steps back up, and a blank
+`:focus` clears the lot.
+
+The announcement is itself a listing, so `:more` right after `:focus` prints the
+focused value whole — the quickest way to see what a long path landed on. Later,
+`$this` shows it again.
+
+A focus needs exactly one value. When the expression yields several, they are listed
+and you narrow with an indexer (`:focus name[0]`) or `where()`. A result that is a
+resource in the pool, such as `:focus subject.resolve()`, becomes an ordinary resource
+focus. Labels are matched before expressions: `Observation/obs2` is a label, even
+though it also parses as a division.
+
+With an element in focus HAPI has no root resource, so `%resource` is unavailable.
 
 ## Output
 

@@ -1,6 +1,7 @@
 package dev.fhirwalk
 
 import dev.fhirwalk.eval.Evaluator
+import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.eval.PrefixWalker
 import dev.fhirwalk.model.FhirVersion
@@ -200,6 +201,70 @@ class PoolTest {
         census.recordValue("X.code", "c0")
         assertTrue(census.valuesAt("X.code").isEmpty())
         assertTrue("X.code" in census.highCardinality)
+    }
+
+    @Test
+    fun `an element evaluates as the input of a relative expression`() {
+        val obs2 = requireNonNull(pool.find("Observation/obs2"))
+        val code = assertIsValues(evaluator.evaluate(obs2.resource, "Observation.code")).single()
+        val codes = assertIsValues(evaluator.evaluate(code, "coding.code"))
+        assertEquals(listOf("8302-2"), codes.map { (it as IPrimitiveType<*>).valueAsString })
+        // The type name may lead, as it does for a resource.
+        assertEquals(1, assertIsValues(evaluator.evaluate(code, "CodeableConcept.coding.code")).size)
+    }
+
+    @Test
+    fun `a focus reached by expression keeps a resource-rooted completion path`() {
+        val nav = ModelNavigator(ctx, pool.census)
+        val obs2 = requireNonNull(pool.find("Observation/obs2"))
+        val root = Focus.of(obs2)
+        fun reach(parent: Focus?, expression: String): Focus {
+            val node = assertIsValues(evaluator.evaluate(parent?.node ?: obs2.resource, expression)).single()
+            return Focus.reached(obs2, node, ctx.getElementDefinition(node.javaClass)!!.name, expression, parent, nav)
+        }
+
+        val code = reach(root, "code")
+        assertEquals("Observation.code", code.path)
+        assertEquals("Observation/obs2.code", code.label)
+        // A leading type name names the focus itself, so it is not repeated.
+        val coding = reach(code, "CodeableConcept.coding[0]")
+        assertEquals("Observation.code.coding[0]", coding.path)
+        assertEquals("Observation/obs2.code.coding[0]", coding.label)
+        assertEquals(code, coding.parent)
+
+        // Pool-wide: the expression is already rooted at the resource type.
+        assertEquals("Observation.code", reach(null, "Observation.code").path)
+
+        // Not a path: the navigator cannot follow it, so only the type survives.
+        assertEquals("CodeableConcept", reach(root, "(code)").path)
+    }
+
+    @Test
+    fun `why counts a relative step across the pool once it is rooted`() {
+        val walker = PrefixWalker(evaluator, pool)
+        val obs2 = requireNonNull(pool.find("Observation/obs2"))
+        val code = assertIsValues(evaluator.evaluate(obs2.resource, "Observation.code")).single()
+        // Relative, the root `coding` is no resource type: no coverage to report.
+        assertEquals(null, walker.diagnose(code, "coding.foo").poolCoverage)
+        val rooted = walker.diagnose(code, "coding.foo") { "Observation.code.$it" }
+        assertEquals(3, rooted.poolCoverage?.considered)
+        assertEquals(0, rooted.poolCoverage?.matching)
+    }
+
+    @Test
+    fun `a focused choice the census cannot type is narrowed with ofType`() {
+        val mixed = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        mixed.add(json.parseResource("""{"resourceType":"Observation","id":"q","valueQuantity":{"value":1}}"""), null, "t")
+        mixed.add(json.parseResource("""{"resourceType":"Observation","id":"s","valueString":"x"}"""), null, "t")
+        val nav = ModelNavigator(ctx, mixed.census)
+        val owner = requireNonNull(mixed.find("Observation/q"))
+        val node = assertIsValues(Evaluator(ctx, mixed).evaluate(owner.resource, "value")).single()
+
+        val focus = Focus.reached(owner, node, "Quantity", "value", Focus.of(owner), nav)
+        assertEquals("Observation.value.ofType(Quantity)", focus.path)
+        // ofType() keeps the census spelling, so counts still line up.
+        assertEquals("Observation.value", nav.censusPath(focus.path))
     }
 
     private fun assertIsValues(outcome: Outcome): List<org.hl7.fhir.instance.model.api.IBase> =

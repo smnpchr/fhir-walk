@@ -3,6 +3,7 @@ package dev.fhirwalk.pool
 import ca.uhn.fhir.context.FhirContext
 import org.hl7.fhir.instance.model.api.IBaseResource
 import org.hl7.fhir.instance.model.api.IIdType
+import java.util.IdentityHashMap
 
 /**
  * Every resource imported in this session, indexed for `resolve()`.
@@ -17,6 +18,7 @@ class ResourcePool(val ctx: FhirContext) {
     private val byKey = HashMap<String, PooledResource>()
     private val byFullUrl = HashMap<String, PooledResource>()
     private val byBareId = HashMap<String, MutableList<PooledResource>>()
+    private val byInstance = IdentityHashMap<IBaseResource, PooledResource>()
 
     val census = Census()
     private val walker = CensusWalker(ctx, census)
@@ -35,8 +37,16 @@ class ResourcePool(val ctx: FhirContext) {
 
     fun byIndex(index: Int): PooledResource? = items.getOrNull(index)
 
-    fun find(reference: String): PooledResource? =
-        byKey[reference] ?: byFullUrl[reference] ?: byBareId[reference]?.singleOrNull()
+    /**
+     * @param bareIds whether an unambiguous bare id counts. `:focus` turns it off
+     *   while something is in focus, where `code` means the element, not a
+     *   resource that happens to have the id `code`.
+     */
+    fun find(reference: String, bareIds: Boolean = true): PooledResource? =
+        byKey[reference] ?: byFullUrl[reference] ?: byBareId[reference]?.takeIf { bareIds }?.singleOrNull()
+
+    /** The pool entry for this very instance, e.g. one `resolve()` returned. */
+    fun entryFor(resource: IBaseResource): PooledResource? = byInstance[resource]
 
     fun add(resource: IBaseResource, fullUrl: String?, origin: String): PooledResource {
         val type = ctx.getResourceType(resource)
@@ -46,6 +56,7 @@ class ResourcePool(val ctx: FhirContext) {
         item.key?.let { byKey.putIfAbsent(it, item) }
         fullUrl?.takeIf { it.isNotBlank() }?.let { byFullUrl.putIfAbsent(it, item) }
         id?.let { byBareId.getOrPut(it) { mutableListOf() } += item }
+        byInstance[resource] = item
         walker.visit(resource, type)
         return item
     }
@@ -96,6 +107,7 @@ class ResourcePool(val ctx: FhirContext) {
         byKey.clear()
         byFullUrl.clear()
         byBareId.clear()
+        byInstance.clear()
         census.clear()
     }
 }

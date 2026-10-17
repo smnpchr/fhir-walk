@@ -65,6 +65,10 @@ when extending the walker.
 - **`setPrettyPrint(true)` is not honoured by `encodeToString`** for datatype elements,
   only by `encodeResourceToString`. Most values here are datatypes, hence the
   hand-written indenter in `Render`.
+- **`IFhirPath.evaluate` takes any `IBase`**, which is what makes an element focus
+  possible — but there is no way to pass the containing resource, so `%resource`
+  fails against an element. A leading datatype name (`CodeableConcept.coding`) works
+  against an element just as `Observation.code` does against a resource.
 - **`IFhirPath.parse()` returns an opaque handle**, so no AST is available. Nothing
   needs one: `FhirPathTokenizer` splits expressions on the raw string, which also
   means a half-typed expression still completes.

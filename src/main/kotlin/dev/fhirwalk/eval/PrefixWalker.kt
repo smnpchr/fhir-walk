@@ -2,7 +2,7 @@ package dev.fhirwalk.eval
 
 import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.pool.ResourcePool
-import org.hl7.fhir.instance.model.api.IBaseResource
+import org.hl7.fhir.instance.model.api.IBase
 
 /**
  * Answers "why is my expression empty" by evaluating successive prefixes and
@@ -33,7 +33,12 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
 
     data class Coverage(val expression: String, val matching: Int, val considered: Int)
 
-    fun diagnose(resource: IBaseResource, expression: String): Diagnosis {
+    /**
+     * @param poolWide the expression to count across the pool for a prefix. Coverage
+     *   is looked up by root resource type, so a path relative to a focus has to be
+     *   rooted first; by default the prefix is taken as already rooted.
+     */
+    fun diagnose(input: IBase, expression: String, poolWide: (String) -> String = { it }): Diagnosis {
         val prefixes = FhirPathTokenizer.prefixes(expression)
         val steps = mutableListOf<Step>()
         var firstEmpty: Int? = null
@@ -44,7 +49,7 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
                 steps += Step(prefix, null, null, null, reached = false)
                 continue
             }
-            when (val outcome = evaluator.evaluate(resource, prefix)) {
+            when (val outcome = evaluator.evaluate(input, prefix)) {
                 is Outcome.Failure -> {
                     steps += Step(prefix, null, null, outcome.message, reached = true)
                     firstEmpty = idx
@@ -58,7 +63,7 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
         }
 
         val coverage = firstEmpty?.let { idx ->
-            val failing = prefixes[idx]
+            val failing = poolWide(prefixes[idx])
             val candidates = candidatesFor(failing)
             if (candidates.isEmpty()) {
                 null
@@ -87,6 +92,6 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
     private fun rootTypeOf(expression: String): String? =
         FhirPathTokenizer.segments(expression).firstOrNull()?.name?.takeIf { it.isNotBlank() }
 
-    private fun isTrue(value: org.hl7.fhir.instance.model.api.IBase): Boolean =
+    private fun isTrue(value: IBase): Boolean =
         (value as? org.hl7.fhir.instance.model.api.IPrimitiveType<*>)?.valueAsString == "true"
 }
