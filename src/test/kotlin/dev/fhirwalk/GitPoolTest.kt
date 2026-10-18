@@ -238,4 +238,41 @@ class GitPoolTest {
         val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
         assertTrue(state.any { it.startsWith("source\t") }, state.toString())
     }
+
+    @Test
+    fun `a workspace left at a revision that cannot be read still starts`() {
+        opened().run(":step -2")
+        breakTree(registry.out2, "import/Specimen")
+        val next = Run()
+        assertContains(next.out, "cannot read")
+        assertContains(next.out, "kept in the workspace")
+        assertContains(next.run(":pools"), "unavailable: ")
+        // A change elsewhere rewrites the state, and the pool's place in it survives.
+        next.run(":limit 3")
+        val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
+        assertTrue("at\t${registry.out2.name}" in state, state.toString())
+        assertTrue("scope\tdelta" in state, state.toString())
+    }
+
+    @Test
+    fun `at a revision that cannot be read keeps the line and the focus`() {
+        val session = opened()
+        session.run(":focus Specimen/30012")
+        breakTree(registry.m2, "import/Specimen")
+        assertContains(session.run(":at master"), "! cannot read")
+        assertContains(session.run(":pool"), "at ${registry.out4.short} on branch/out")
+        assertContains(session.run("type.coding.code"), "CITRATE_PLASMA")
+        assertContains(session.run(":log 1"), "branch/out in ")
+    }
+
+    @Test
+    fun `log marks commits whose changes cannot be read`() {
+        val session = opened()
+        breakTree(registry.out2, "import/Specimen")
+        val log = session.run(":log")
+        // out2's own diff and out3's, which compares against out2, both need the tree.
+        assertEquals(2, log.lines().count { "Δ?" in it && "cannot be read" !in it }, log)
+        assertContains(log, "what 2 commit(s) changed cannot be read")
+        assertContains(log, "* ${registry.out4.short}")
+    }
 }

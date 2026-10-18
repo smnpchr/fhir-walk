@@ -1343,21 +1343,34 @@ class Repl(
             out.println("usage: :log [n]")
             return
         }
-        val commits = git.history(limit)
+        // A damaged repository throws from any read, as in a move: a history that
+        // cannot be walked is an error, a commit whose changes cannot be read a Δ?.
+        val commits = try {
+            git.history(limit)
+        } catch (e: Exception) {
+            out.println(style.error("! cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}"))
+            return
+        }
         if (commits.isEmpty()) {
             out.println("${git.line} names no commit any more")
             return
         }
+        var unreadable = 0
         emit(
             out,
             header = "${git.line} in ${git.source.path}, newest first",
             preview = commits.map { commit ->
                 val marker = if (commit.id == git.commit.id) "*" else " "
-                val changed = "Δ${git.changedFiles(commit, session.importer::reads)}"
+                val count = runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
+                if (count == null) unreadable++
+                val changed = "Δ${count ?: "?"}"
                 "$marker ${style.index(commit.short)}  ${COMMIT_TIME.format(commit.time)}  " +
                     "${style.count(changed.padStart(6))}  ${abbreviate(commit.subject, valueWidth(LOG_INDENT))}"
             },
         )
+        if (unreadable > 0) {
+            out.println(style.error("  Δ? — what $unreadable commit(s) changed cannot be read from ${git.source.path}"))
+        }
         if (commits.none { it.id == git.commit.id }) {
             out.println(style.hint("  (at ${git.commit.short}, which is not among these)"))
         }
