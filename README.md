@@ -450,7 +450,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 59 tests
+./gradlew test                              # 171 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
