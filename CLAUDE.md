@@ -97,6 +97,13 @@ when extending the walker.
 - **Parsed resources are shared between revisions**, kept by blob id in
   `RevisionLoader`. Never mutate a resource from the pool; it may belong to the
   revision you step to next.
+- **A revision is read completely before the pool is touched.** A missing or
+  damaged commit or tree throws from the JGit read; `RevisionLoader.load` does all
+  of those first, `GitPool` turns a failure into `Move.Failed`, and `Repl.openGit`
+  attaches a `GitPool` only once it has loaded. Keep that order: a half-loaded git
+  pool breaks the prompt and the saved state. An unreadable *blob* is softer: it is
+  reported as a problem for its file, like a parse error, and the move goes ahead.
+  `:log` shows a commit whose changes cannot be read as `Δ?`.
 - **A forward step has to be found from the line's tip**: a commit does not know
   its children. Back follows first parents and always works.
 

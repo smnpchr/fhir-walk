@@ -50,31 +50,38 @@ class RevisionLoader(
     private var current = HashMap<ObjectId, Blob>()
     private var previous = HashMap<ObjectId, Blob>()
 
+    /**
+     * Everything that reads the repository happens before the pool is touched, so a
+     * revision that cannot be read throws with the pool, [commit] and [delta] still
+     * describing the last one.
+     */
     fun load(commit: GitSource.Commit): Importer.Report {
+        val next = HashMap<ObjectId, Blob>()
+        fun blobOf(path: String, id: ObjectId): Blob =
+            next.getOrPut(id) { current[id] ?: previous[id] ?: parse(path, id) }
+        val files = source.files(commit, importer::reads).map { it to blobOf(it.path, it.blob) }
+        val changes = source.changes(commit, importer::reads)
+        // Kept with this revision's: the parent, one step back, holds them.
+        val deletedBlobs = changes.filter { it.kind == GitSource.Kind.DELETED }
+            .map { change -> change to change.oldBlob?.let { blobOf(change.path, it) } }
+        val parent = commit.parent?.let(source::commit)
+
         val report = Importer.Report()
         val byFile = HashMap<String, List<PooledResource>>()
-        val next = HashMap<ObjectId, Blob>()
         pool.clear()
-        for (file in source.files(commit, importer::reads)) {
+        for ((file, blob) in files) {
             report.files++
-            val blob = next[file.blob] ?: current[file.blob] ?: previous[file.blob] ?: parse(file.path, file.blob)
-            next[file.blob] = blob
             report.problems += blob.problems
             byFile[file.path] = blob.parsed.map { pool.add(it.resource, it.fullUrl, it.origin) }
         }
         report.resources = pool.size
         pool.settleReferences()
-        val changes = source.changes(commit, importer::reads)
         delta = Delta(
-            commit.parent?.let(source::commit),
+            parent,
             added = changes.filter { it.kind == GitSource.Kind.ADDED }.flatMap { byFile[it.path].orEmpty() },
             modified = changes.filter { it.kind == GitSource.Kind.MODIFIED }.flatMap { byFile[it.path].orEmpty() },
-            deleted = changes.filter { it.kind == GitSource.Kind.DELETED }.flatMap { change ->
-                val old = change.oldBlob ?: return@flatMap listOf(change.path)
-                // Kept with this revision's: the parent, one step back, holds it.
-                val blob = next[old] ?: current[old] ?: previous[old] ?: parse(change.path, old)
-                next[old] = blob
-                blob.parsed.map { labelOf(it) }.ifEmpty { listOf(change.path) }
+            deleted = deletedBlobs.flatMap { (change, blob) ->
+                blob?.parsed?.map { labelOf(it) }?.ifEmpty { null } ?: listOf(change.path)
             },
         )
         previous = current
