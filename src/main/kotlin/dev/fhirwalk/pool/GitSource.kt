@@ -69,12 +69,20 @@ class GitSource private constructor(
 
     /**
      * What `dir@` with nothing after the `@` follows: the branch HEAD is on, or HEAD's
-     * commit when it is detached. Null in a repository with no commits yet.
+     * full commit id when it is detached. Null in a repository with no commits yet,
+     * whose HEAD names a branch that does not exist.
      */
     fun headLine(): String? {
-        val full = runCatching { repository.fullBranch }.getOrNull() ?: return null
-        if (full.startsWith(Constants.R_HEADS)) return full.removePrefix(Constants.R_HEADS)
-        return runCatching { repository.resolve(Constants.HEAD)?.name }.getOrNull()
+        val head = runCatching { repository.resolve(Constants.HEAD) }.getOrNull() ?: return null
+        val full = runCatching { repository.fullBranch }.getOrNull()
+        return if (full != null && full.startsWith(Constants.R_HEADS)) full.removePrefix(Constants.R_HEADS) else head.name
+    }
+
+    /** Whether HEAD's tree holds this directory: whether it has a history to open at all. */
+    fun hasHistory(): Boolean {
+        val head = runCatching { repository.resolve("${Constants.HEAD}^{tree}") }.getOrNull() ?: return false
+        if (subpath.isEmpty()) return true
+        return runCatching { TreeWalk.forPath(repository, subpath, head)?.use { true } ?: false }.getOrDefault(false)
     }
 
     /** Local branches, then tags, as they would be typed after `:at`. */
@@ -167,11 +175,29 @@ class GitSource private constructor(
         }
 
         /**
-         * The branch HEAD is on in the repository [directory] is inside, or null when
-         * it is in none. For the hint that a directory has a history to open.
+         * For the hint that a directory has a history to open: where HEAD is in the
+         * repository [directory] is inside -- its branch, or `HEAD detached at 3f2a1c0`
+         * -- or null when there is no history of this directory to open: outside any
+         * repository, before the first commit, or a directory no commit holds
+         * (untracked or ignored).
          */
-        fun headLineAt(directory: Path): String? =
-            runCatching { open(directory).use { it.headLine() } }.getOrNull()
+        fun historyAt(directory: Path): String? = runCatching {
+            open(directory).use { source ->
+                val line = source.headLine()?.takeIf { source.hasHistory() } ?: return@use null
+                if (source.isBranch(line)) line else "HEAD detached at ${line.take(SHORT)}"
+            }
+        }.getOrNull()
+
+        /**
+         * A token as `:open` and its completion both read it: a path that exists as
+         * written is a path, even with an `@` in it; otherwise [split].
+         */
+        fun revisionSpec(token: String, exists: (String) -> Boolean): Pair<String, String>? =
+            if (runCatching { exists(token) }.getOrDefault(false)) null else split(token)
+
+        /** A full commit id as the short one, anything else (a branch, a tag) as it is. */
+        fun label(revision: String): String =
+            if (revision.length == 40 && revision.all { it in '0'..'9' || it in 'a'..'f' }) revision.take(SHORT) else revision
 
         /** The branches and tags of the repository [directory] is inside, for completing `dir@`. */
         fun refNamesAt(directory: Path): List<String> =

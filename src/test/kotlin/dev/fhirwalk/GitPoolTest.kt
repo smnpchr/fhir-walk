@@ -290,7 +290,7 @@ class GitPoolTest {
     fun `a directory inside a repository loads from disk and points at its history`() {
         val inside = Run().run(":open plain ${registry.import}")
         assertContains(inside, "loaded 24 resource(s)")
-        assertContains(inside, "in a git repository on branch/out — :open <name> ${registry.import}@ opens its history")
+        assertContains(inside, "in a git repository, on branch/out — :open <name> ${registry.import}@ opens its history")
         val outside = Files.createTempDirectory("not-a-repo")
         Files.writeString(outside.resolve("p.json"), """{"resourceType":"Patient","id":"p"}""")
         assertFalse(Run().run(":open plain $outside").contains("git repository"))
@@ -310,5 +310,64 @@ class GitPoolTest {
         }.map { it.value() }
         assertEquals(setOf("${registry.import}@branch/out", "${registry.import}@master"), values(":open spec ${registry.import}@").toSet())
         assertEquals(listOf("${registry.import}@master"), values(":open spec ${registry.import}@ma"))
+    }
+
+    private fun completer(session: Session) = dev.fhirwalk.complete.FhirPathCompleter(
+        { session.navigator }, { session.pool }, { emptyList() },
+        revisionsAt = { GitSource.refNamesAt(java.nio.file.Paths.get(it)) },
+        gitSpec = { token -> GitSource.revisionSpec(token) { Files.exists(java.nio.file.Paths.get(it)) } },
+    )
+
+    private fun offered(completer: dev.fhirwalk.complete.FhirPathCompleter, line: String): List<String> {
+        val terminal = org.jline.terminal.TerminalBuilder.builder().dumb(true).build()
+        val reader = org.jline.reader.LineReaderBuilder.builder().terminal(terminal).build()
+        return mutableListOf<org.jline.reader.Candidate>().also {
+            completer.complete(reader, dev.fhirwalk.repl.FhirPathParser().parse(line, line.length, org.jline.reader.Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+    }
+
+    @Test
+    fun `a path with an at sign in it still completes as a path`() {
+        val dir = Files.createTempDirectory("paths").resolve("user@host")
+        Files.createDirectories(dir)
+        Files.writeString(dir.resolve("p.json"), "{}")
+        val completer = completer(Session(FhirVersion.R4))
+        // Existing as written: a path.
+        assertTrue(offered(completer, ":open x $dir/").any { it.endsWith("p.json") })
+        // Half typed, and no repository's revision either: still a path.
+        assertTrue(offered(completer, ":open x ${dir.parent}/user@ho").any { it.endsWith("user@host/") })
+    }
+
+    @Test
+    fun `no hint for a directory no commit holds`() {
+        val untracked = registry.root.resolve("untracked")
+        Files.createDirectories(untracked)
+        Files.writeString(untracked.resolve("p.json"), """{"resourceType":"Patient","id":"p"}""")
+        val output = Run().run(":open u $untracked")
+        assertContains(output, "loaded 1 resource(s)")
+        assertFalse(output.contains("git repository"), output)
+    }
+
+    @Test
+    fun `a repository with no commits has no history to open`() {
+        val root = Files.createTempDirectory("empty-repo")
+        org.eclipse.jgit.api.Git.init().setDirectory(root.toFile()).call().close()
+        val dir = Files.createDirectories(root.resolve("import"))
+        Files.writeString(dir.resolve("p.json"), """{"resourceType":"Patient","id":"p"}""")
+        val session = Run()
+        assertContains(session.run(":open p $dir@"), "is in a repository with no commits yet")
+        assertFalse(session.run(":open q $dir").contains("git repository"))
+    }
+
+    @Test
+    fun `a detached HEAD pins the pool and says so`() {
+        org.eclipse.jgit.api.Git.open(registry.root.toFile()).use { it.checkout().setName(registry.out2.name).call() }
+        val session = Run()
+        val opened = session.run(":open spec ${registry.import}@")
+        assertContains(opened, "HEAD is detached — pinned at ${registry.out2.short}; :at <branch> to follow one")
+        assertContains(opened, "at ${registry.out2.short} on ${registry.out2.short},")
+        assertFalse(opened.contains(registry.out2.name), opened)
+        assertContains(session.run(":step +1"), "already at the tip of ${registry.out2.short}")
+        assertContains(Run().run(":open plain ${registry.import}"), "in a git repository, HEAD detached at ${registry.out2.short}")
     }
 }

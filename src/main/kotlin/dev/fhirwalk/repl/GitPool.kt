@@ -35,6 +35,9 @@ class GitPool(
             applyScope()
         }
 
+    /** [line] for showing: a branch as it is, a pinned commit by its short id. */
+    val lineLabel: String get() = GitSource.label(line)
+
     /** `~/fp/registry/in/import@branch/out`, as the workspace saves it. */
     val spec: String get() = "${source.path}@$line"
 
@@ -72,13 +75,13 @@ class GitPool(
             }
             return@reading Move.Moved(load(target))
         }
-        val tip = source.resolve(line) ?: return@reading Move.Refused("$line names no commit any more")
+        val tip = source.resolve(line) ?: return@reading Move.Refused("$lineLabel names no commit any more")
         val history = source.history(tip)
         val here = history.indexOfFirst { it.id == commit.id }
         when {
-            here < 0 -> Move.Refused("${commit.short} is not on $line's first-parent history — :at $line goes back to it")
-            here == 0 -> Move.Refused("already at the tip of $line")
-            here < by -> Move.Refused("only $here commit(s) after ${commit.short} on $line")
+            here < 0 -> Move.Refused("${commit.short} is not on $lineLabel's first-parent history — :at $lineLabel goes back to it")
+            here == 0 -> Move.Refused("already at the tip of $lineLabel")
+            here < by -> Move.Refused("only $here commit(s) after ${commit.short} on $lineLabel")
             else -> Move.Moved(load(history[here - by]))
         }
     }
