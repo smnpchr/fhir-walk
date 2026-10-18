@@ -33,10 +33,6 @@ class GitPoolTest {
         return text.toString()
     }
 
-    private companion object {
-        const val EXT = "https://fhir.centraxx.de/extension"
-    }
-
     private fun assertContains(output: String, expected: String) =
         assertTrue(output.contains(expected), "expected \"$expected\" in:\n$output")
 
@@ -74,8 +70,7 @@ class GitPoolTest {
         assertContains(types, "3 of 3 resource(s) matched")
         assertFalse(types.contains("EDTA"), types)
         // Their masters did not change in out3, but the changed aliquots still reach them.
-        val container = "Specimen.parent.resolve().parent.resolve()" +
-            ".extension('$EXT/sprec').extension('$EXT/sprec/primarySampleContainer').value.code"
+        val container = "Specimen.parent.resolve().parent.resolve().extension('${RegistryFixture.EXT}/primary-container').value"
         assertContains(session.run(container), "2 of 3 resource(s) matched")
         assertContains(session.run("Specimen.subject.resolve().name.family"), "Muster")
         session.run(":name family")

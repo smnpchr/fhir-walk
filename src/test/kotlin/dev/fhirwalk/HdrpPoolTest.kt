@@ -14,14 +14,17 @@ import org.jline.reader.Candidate
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
 import org.jline.terminal.TerminalBuilder
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeEach
 import java.nio.file.Paths
+import kotlin.io.path.isDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The real-world shape, from `samples/hdrp`: a local HDRP (CentraXX) export. Masters
+ * The real-world shape, from the local-only `samples/hdrp`: a LIMS export. Masters
  * are aliquoted through *aliquot groups*, and PBMC isolated from a master is
  * aliquoted again, so a pellet is four `resolve()` hops from its master:
  *
@@ -44,6 +47,19 @@ class HdrpPoolTest {
 
     init {
         Importer(ctx, pool).load(FIXTURE)
+    }
+
+    /**
+     * The fixture is deliberately not published, so these tests skip rather than fail
+     * on a clone that does not have it. A missing optional fixture should not read as
+     * a broken build.
+     */
+    @BeforeEach
+    fun requireFixture() {
+        assumeTrue(
+            FIXTURE.isDirectory(),
+            "$FIXTURE is a local-only fixture and is not published; see CLAUDE.md",
+        )
     }
 
     private companion object {
@@ -130,7 +146,7 @@ class HdrpPoolTest {
 
     @Test
     fun `extensions on sub-elements are censused at their own path`() {
-        // The saliva sample's receipt time is unknown: HDRP says so on the primitive.
+        // The saliva sample's receipt time is unknown: the export says so on the primitive.
         assertEquals(listOf(DAR), pool.census.extensionsAt("Specimen.receivedTime").map { it.value })
         assertEquals(listOf("unknown"), strings("Specimen/30030", "Specimen.receivedTime.extension('$DAR').value"))
         // ... and not confused with the ones on the Specimen root.
@@ -231,7 +247,7 @@ class HdrpPoolTest {
     }
 
     @Test
-    fun `completion offers the HDRP extension urls scoped to their element`() {
+    fun `completion offers the fixture's extension urls scoped to their element`() {
         val terminal = TerminalBuilder.builder().dumb(true).build()
         val reader = LineReaderBuilder.builder().terminal(terminal).build()
         val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { emptyList() })

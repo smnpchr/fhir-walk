@@ -96,13 +96,8 @@ r4:pool(6)> :ext
   Encounter          1 ×  http://example.org/StructureDefinition/encounter-ward          string
 ```
 
-`samples/hdrp` is a deeper one: a synthetic local LIMS export in the shape IQVIA HDRP
-(formerly CentraXX) writes. It has masters aliquoted through aliquot groups, a
-pellet four `resolve()` hops from its master, nested extensions, and plasma aliquots
-whose central type depends on a container recorded only on their master. Its
-[README](samples/hdrp/README.md) says where each part of its shape comes from.
-
-Point `:load` at your own data for anything beyond that.
+Point `:load` at your own data for anything beyond that. Some tests additionally use a
+deeper, domain-specific fixture that is not published; they skip when it is absent.
 
 ## Commands
 
@@ -537,7 +532,7 @@ repositories and reads trees, blobs and diffs from them.
 ## Build
 
 ```
-./gradlew test                              # 197 tests
+./gradlew test                              # 197 tests; 18 skip without the local fixture
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
