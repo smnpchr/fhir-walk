@@ -548,7 +548,7 @@ repositories and reads trees, blobs and diffs from them.
 ## Build
 
 ```
-./gradlew test                              # 220 tests; 18 skip without the local fixture
+./gradlew test                              # 221 tests; 18 skip without the local fixture
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```

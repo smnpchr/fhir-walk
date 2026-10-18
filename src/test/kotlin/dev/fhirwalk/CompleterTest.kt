@@ -340,6 +340,21 @@ class CompleterTest {
     }
 
     @Test
+    fun `what the pool holds is listed before what the schema allows`() {
+        val order = FhirWalkLineReader(TerminalBuilder.builder().dumb(true).build()).groupComparator
+        fun menu(line: String) = candidates(line).map { it.group() }.distinct().sortedWith(order)
+        // Resource types, once a letter is typed: the pool's before the rest, so
+        // Patient before PaymentNotice.
+        assertEquals(listOf("in pool", "all resource types"), menu("P"))
+        // After a dot: populated elements and observed extensions, then the schema's
+        // remaining elements, then functions.
+        assertEquals(
+            listOf("elements (in pool)", "extension() — observed here", "elements", "functions"),
+            menu("Patient."),
+        )
+    }
+
+    @Test
     fun `view lists saved views first, then names, then recorded expressions`() {
         val recorded = (1..60).map { "Patient.id.where(\$this != 'x$it')" }
         val named = mapOf("family" to "Patient.name.family", "born" to "Patient.birthDate")
