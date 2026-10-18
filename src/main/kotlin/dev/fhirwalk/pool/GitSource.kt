@@ -51,10 +51,15 @@ class GitSource private constructor(
         return commit(id)
     }
 
-    fun commit(id: ObjectId): Commit = RevWalk(repository).use { walk ->
-        val commit = walk.parseCommit(id)
-        Commit(commit, Instant.ofEpochSecond(commit.commitTime.toLong()), commit.shortMessage, commit.parents.firstOrNull())
-    }
+    fun commit(id: ObjectId): Commit = RevWalk(repository).use { walk -> commitOf(walk.parseCommit(id)) }
+
+    /**
+     * Plain ids, not the walk's [RevCommit]s: those keep their message and every
+     * parent they reached, which would keep the walked history alive for as long as
+     * the pool sits at the commit.
+     */
+    private fun commitOf(commit: RevCommit) =
+        Commit(commit.copy(), Instant.ofEpochSecond(commit.commitTime.toLong()), commit.shortMessage, commit.parents.firstOrNull()?.copy())
 
     /** Whether [revision] is a branch, which `:step` can walk towards the tip of. */
     fun isBranch(revision: String): Boolean {
@@ -122,7 +127,7 @@ class GitSource private constructor(
         buildList {
             var current: RevCommit? = walk.parseCommit(from.id)
             while (current != null && size < limit) {
-                add(Commit(current, Instant.ofEpochSecond(current.commitTime.toLong()), current.shortMessage, current.parents.firstOrNull()))
+                add(commitOf(current))
                 current = current.parents.firstOrNull()?.let { walk.parseCommit(it) }
             }
         }
@@ -141,11 +146,11 @@ class GitSource private constructor(
 
         /**
          * `~/fp/registry/in/import@branch/out` as its path and revision, or null when
-         * it names no revision. The last `@` splits, so a path may contain one.
+         * it names no revision. The last `@` splits, so a path may contain one -- except
+         * an `@{` git itself writes in a revision: `branch/out@{1}`, `HEAD@{yesterday}`.
          */
         fun split(spec: String): Pair<String, String>? {
-            val at = spec.lastIndexOf('@')
-            if (at <= 0 || at == spec.length - 1) return null
+            val at = (spec.length - 2 downTo 1).firstOrNull { spec[it] == '@' && spec[it + 1] != '{' } ?: return null
             return spec.substring(0, at) to spec.substring(at + 1)
         }
 

@@ -1301,9 +1301,17 @@ class Repl(
             return false
         }
         val git = GitPool(source, line, session.importer, session.pool)
+        // Attached only once loaded: a pool whose revision could not be read must not
+        // look like a git pool to the prompt or to the saved state.
+        val report = try {
+            git.load(start)
+        } catch (e: Exception) {
+            source.close()
+            out.println(style.error("! cannot read ${source.path} at ${start.short}: ${e.message ?: e.javaClass.simpleName}"))
+            return false
+        }
         session.current.git = git
         session.current.unavailable = null
-        val report = git.load(start)
         git.deltaScope = deltaScope
         val header = "${poolName()} at ${revision(git)}: ${report.summary()}"
         if (report.problems.isEmpty()) out.println(header) else emit(out, header, report.problems.map { "  " + style.error("! $it") })
@@ -1364,7 +1372,7 @@ class Repl(
         val git = gitPool(out) ?: return
         val by = when {
             argument.isBlank() -> -1
-            Regex("[+-]\\d+").matches(argument) -> argument.removePrefix("+").toInt()
+            Regex("[+-]\\d{1,6}").matches(argument) -> argument.removePrefix("+").toInt()
             else -> {
                 out.println("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.line}")
                 return
@@ -1384,6 +1392,7 @@ class Repl(
     private fun moved(git: GitPool, move: GitPool.Move, out: PrintWriter) {
         when (move) {
             is GitPool.Move.Refused -> out.println(move.message)
+            is GitPool.Move.Failed -> out.println(style.error("! ${move.message}"))
             is GitPool.Move.Moved -> {
                 val steps = focusSteps(session.focus)
                 session.focus = null
@@ -1583,7 +1592,11 @@ class Repl(
                 session.switchTo(pool.name)
                 session.current.unavailable = pool.unavailable
                 val git = pool.git ?: continue
-                openGit(git.spec, git.commit.id.name, git.deltaScope, out)
+                if (!openGit(git.spec, git.commit.id.name, git.deltaScope, out)) {
+                    // Kept, as at startup: saved again rather than lost, to open once it can.
+                    session.current.unavailable =
+                        SavedPool(pool.name, source = git.spec, at = git.commit.id.name, deltaScope = git.deltaScope)
+                }
             }
             session.switchTo(old.current.name)
             old.close()

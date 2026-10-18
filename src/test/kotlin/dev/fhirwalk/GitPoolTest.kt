@@ -199,4 +199,43 @@ class GitPoolTest {
         assertEquals(28, git.parsedBlobs)
         git.source.close()
     }
+
+    /** Deletes the loose tree object for [dir] at [commit], as a damaged repository would lack it. */
+    private fun breakTree(commit: org.eclipse.jgit.revwalk.RevCommit, dir: String) {
+        org.eclipse.jgit.storage.file.FileRepositoryBuilder().setGitDir(registry.root.resolve(".git").toFile()).build().use { repo ->
+            val id = org.eclipse.jgit.treewalk.TreeWalk.forPath(repo, dir, commit.tree).use { it.getObjectId(0) }
+            val name = id.name
+            Files.delete(registry.root.resolve(".git/objects/${name.take(2)}/${name.drop(2)}"))
+        }
+    }
+
+    @Test
+    fun `a revision that cannot be read leaves no half-open pool`() {
+        breakTree(registry.out4, "import/Specimen")
+        val session = Run()
+        assertContains(session.run(":open spec ${registry.spec}"), "!")
+        // Nothing half-open remains to break the next command.
+        val pools = session.run(":pools")
+        assertContains(pools, "* pool")
+        assertFalse(pools.contains("spec"), pools)
+    }
+
+    @Test
+    fun `a step into a revision that cannot be read stays where it was`() {
+        breakTree(registry.out2, "import/Specimen")
+        val session = opened()
+        assertContains(session.run(":step -2"), "!")
+        assertContains(session.run(":pool"), "at ${registry.out4.short} on branch/out: 24 resource(s)")
+        assertContains(session.run(":delta"), "- Patient/9999")
+    }
+
+    @Test
+    fun `a git pool that cannot be read again in another version stays saved`() {
+        val session = opened()
+        registry.root.toFile().deleteRecursively()
+        session.run(":fhir r5")
+        assertContains(session.run(":pools"), "unavailable: ")
+        val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
+        assertTrue(state.any { it.startsWith("source\t") }, state.toString())
+    }
 }
