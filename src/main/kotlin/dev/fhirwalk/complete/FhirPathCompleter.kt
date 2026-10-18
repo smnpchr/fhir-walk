@@ -312,7 +312,7 @@ class FhirPathCompleter(
                 // trailing resolve() step comes off before the lookup.
                 val basePath = rebase(context.basePath)
                 val observed = census.referenceTargetsAt(nav.censusPath(withoutTrailingResolve(basePath)))
-                observed.forEach { candidates += cand(it.value, it.value, "observed", "${it.count} ×") }
+                observed.forEach { candidates += cand(it.value, it.value, MenuGroups.TYPES_REFERENCED, "${it.count} ×") }
                 // When the corpus has an answer, trust it rather than dumping 146
                 // resource types the user would have to page through.
                 resourceTypes(nav, candidates, all = observed.isEmpty() && context.partial.isNotEmpty())
@@ -469,16 +469,16 @@ class FhirPathCompleter(
             "extension" -> {
                 val scoped = census.extensionsAt(censusPath)
                 scoped.forEach {
-                    candidates += stringCand(it.value, "observed on ${context.basePath}", detail(it))
+                    candidates += stringCand(it.value, MenuGroups.observedOn(context.basePath), detail(it))
                 }
                 if (scoped.isEmpty()) {
                     census.allExtensions().take(MAX_ROWS).forEach {
-                        candidates += stringCand(it.value, "observed elsewhere in pool", detail(it))
+                        candidates += stringCand(it.value, MenuGroups.OBSERVED_ELSEWHERE, detail(it))
                     }
                 }
             }
             "conformsTo" -> pool().types().flatMap { census.profilesFor(it) }
-                .forEach { candidates += stringCand(it.value, "profiles in pool", "${it.count} ×") }
+                .forEach { candidates += stringCand(it.value, MenuGroups.PROFILES, "${it.count} ×") }
             else -> {
                 // The right of a comparison: the coded values observed on the left
                 // operand. Those are the answer whenever there are any; code systems
@@ -486,7 +486,7 @@ class FhirPathCompleter(
                 val values = context.comparedPath?.let { census.valuesAt(nav.censusPath(it)) }.orEmpty()
                 if (values.isNotEmpty()) {
                     values.take(MAX_ROWS).forEach {
-                        candidates += stringCand(it.value, "observed values", "${it.count} ×")
+                        candidates += stringCand(it.value, MenuGroups.OBSERVED_VALUES, "${it.count} ×")
                     }
                     return
                 }
@@ -495,7 +495,7 @@ class FhirPathCompleter(
                 val systems = census.codeSystemsAt(censusPath)
                     .ifEmpty { census.codeSystemsAt(censusPath.substringBeforeLast('.')) }
                 systems.take(MAX_ROWS).forEach {
-                    candidates += stringCand(it.value, "systems in pool", "${it.count} ×")
+                    candidates += stringCand(it.value, MenuGroups.SYSTEMS, "${it.count} ×")
                 }
             }
         }
