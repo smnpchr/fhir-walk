@@ -8,6 +8,7 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.eval.PromptLine
 import dev.fhirwalk.model.ModelNavigator
 import dev.fhirwalk.pool.Census
+import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.ResourcePool
 import org.jline.reader.Candidate
 import org.jline.reader.Completer
@@ -38,6 +39,8 @@ class FhirPathCompleter(
     private val workspaces: () -> List<String> = { emptyList() },
     private val pools: () -> List<String> = { emptyList() },
     private val revisions: () -> List<String> = { emptyList() },
+    /** The branches and tags of the repository a directory is in, for `:open name dir@`. */
+    private val revisionsAt: (String) -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -125,8 +128,19 @@ class FhirPathCompleter(
                 candidates += commandCand("delta", "delta", "scope", "what this revision changed")
                 candidates += commandCand("all", "all", "scope", "the whole pool")
             }
-            // The name is new, so there is nothing to offer for it; then a path.
-            ":open" -> if (arguments.size == 2) completePath(lastToken, candidates)
+            // The name is new, so there is nothing to offer for it; then a path, or past
+            // its @ the revisions of the repository it is in.
+            ":open" -> if (arguments.size == 2) {
+                val split = GitSource.split(lastToken)
+                if (split == null) {
+                    completePath(lastToken, candidates)
+                } else {
+                    val (dir, partial) = split
+                    revisionsAt(dir).filter { it.startsWith(partial) }.take(MAX_ROWS).forEach {
+                        candidates += commandCand("$dir@$it", it, "revisions", null)
+                    }
+                }
+            }
             ":workspace" -> if (arguments.size == 1) {
                 workspaces().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "workspaces", null)

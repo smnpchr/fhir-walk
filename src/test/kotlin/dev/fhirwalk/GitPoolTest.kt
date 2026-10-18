@@ -275,4 +275,40 @@ class GitPoolTest {
         assertContains(log, "what 2 commit(s) changed cannot be read")
         assertContains(log, "* ${registry.out4.short}")
     }
+
+    @Test
+    fun `a trailing at sign opens the branch HEAD is on, and saves that branch`() {
+        // The fixture is left with branch/out checked out.
+        val session = Run()
+        assertContains(session.run(":open spec ${registry.import}@"), "pool spec at ${registry.out4.short} on branch/out")
+        assertContains(session.run(":step +1"), "already at the tip of branch/out")
+        val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
+        assertTrue("source\t${registry.import.toRealPath()}@branch/out" in state, state.toString())
+    }
+
+    @Test
+    fun `a directory inside a repository loads from disk and points at its history`() {
+        val inside = Run().run(":open plain ${registry.import}")
+        assertContains(inside, "loaded 24 resource(s)")
+        assertContains(inside, "in a git repository on branch/out — :open <name> ${registry.import}@ opens its history")
+        val outside = Files.createTempDirectory("not-a-repo")
+        Files.writeString(outside.resolve("p.json"), """{"resourceType":"Patient","id":"p"}""")
+        assertFalse(Run().run(":open plain $outside").contains("git repository"))
+    }
+
+    @Test
+    fun `revisions complete after the at sign`() {
+        val terminal = org.jline.terminal.TerminalBuilder.builder().dumb(true).build()
+        val reader = org.jline.reader.LineReaderBuilder.builder().terminal(terminal).build()
+        val session = Session(FhirVersion.R4)
+        val completer = dev.fhirwalk.complete.FhirPathCompleter(
+            { session.navigator }, { session.pool }, { emptyList() },
+            revisionsAt = { GitSource.refNamesAt(java.nio.file.Paths.get(it)) },
+        )
+        fun values(line: String) = mutableListOf<org.jline.reader.Candidate>().also {
+            completer.complete(reader, dev.fhirwalk.repl.FhirPathParser().parse(line, line.length, org.jline.reader.Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+        assertEquals(setOf("${registry.import}@branch/out", "${registry.import}@master"), values(":open spec ${registry.import}@").toSet())
+        assertEquals(listOf("${registry.import}@master"), values(":open spec ${registry.import}@ma"))
+    }
 }

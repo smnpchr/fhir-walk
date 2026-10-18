@@ -67,6 +67,16 @@ class GitSource private constructor(
         return ref.name.startsWith(Constants.R_HEADS) || ref.name.startsWith(Constants.R_REMOTES)
     }
 
+    /**
+     * What `dir@` with nothing after the `@` follows: the branch HEAD is on, or HEAD's
+     * commit when it is detached. Null in a repository with no commits yet.
+     */
+    fun headLine(): String? {
+        val full = runCatching { repository.fullBranch }.getOrNull() ?: return null
+        if (full.startsWith(Constants.R_HEADS)) return full.removePrefix(Constants.R_HEADS)
+        return runCatching { repository.resolve(Constants.HEAD)?.name }.getOrNull()
+    }
+
     /** Local branches, then tags, as they would be typed after `:at`. */
     fun refNames(): List<String> = runCatching {
         val refs = repository.refDatabase
@@ -148,11 +158,24 @@ class GitSource private constructor(
          * `~/fp/registry/in/import@branch/out` as its path and revision, or null when
          * it names no revision. The last `@` splits, so a path may contain one -- except
          * an `@{` git itself writes in a revision: `branch/out@{1}`, `HEAD@{yesterday}`.
+         * A trailing `@` gives an empty revision: whatever branch HEAD is on.
          */
         fun split(spec: String): Pair<String, String>? {
-            val at = (spec.length - 2 downTo 1).firstOrNull { spec[it] == '@' && spec[it + 1] != '{' } ?: return null
+            val at = (spec.length - 1 downTo 1).firstOrNull { spec[it] == '@' && spec.getOrNull(it + 1) != '{' }
+                ?: return null
             return spec.substring(0, at) to spec.substring(at + 1)
         }
+
+        /**
+         * The branch HEAD is on in the repository [directory] is inside, or null when
+         * it is in none. For the hint that a directory has a history to open.
+         */
+        fun headLineAt(directory: Path): String? =
+            runCatching { open(directory).use { it.headLine() } }.getOrNull()
+
+        /** The branches and tags of the repository [directory] is inside, for completing `dir@`. */
+        fun refNamesAt(directory: Path): List<String> =
+            runCatching { open(directory).use { it.refNames() } }.getOrDefault(emptyList())
 
         /** The repository is found by walking up from [directory], as `git` itself does. */
         fun open(directory: Path): GitSource {
