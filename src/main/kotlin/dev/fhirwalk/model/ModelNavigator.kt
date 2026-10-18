@@ -79,7 +79,10 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
                 FhirPathFunction.TypeEffect.FROM_ARGUMENT -> {
                     if (current is RuntimeResourceDefinition) censusPath = current.name
                 }
+                // A closed repeat() stays where it started: the census has no spelling
+                // for "any depth", and the first level's counts are the nearest.
                 FhirPathFunction.TypeEffect.PRESERVES -> {}
+                FhirPathFunction.TypeEffect.CLOSURE -> if (current == null) censusPath = null
                 // select(), children(), primitives: the census has no spelling for that.
                 else -> censusPath = null
             }
@@ -188,8 +191,30 @@ class ModelNavigator(private val ctx: FhirContext, private val census: Census? =
                 val observed = pathSoFar?.let { census?.referenceTargetsAt(it) }.orEmpty()
                 observed.singleOrNull()?.let { resourceOrElement(it.value) }
             }
+            FhirPathFunction.TypeEffect.CLOSURE -> closure(segment, current, pathSoFar)
             else -> null
         }
+    }
+
+    /**
+     * `repeat(p)` yields p applied to its input, then to what that returned, and so
+     * on. When p maps the input's type to itself -- `parent.resolve()` on a Specimen,
+     * `item` on a Questionnaire item -- every round is that type, and so is the union.
+     * Anything else is left unknown: the rounds could each be a different type.
+     *
+     * The projection is typed where the input stands, by walking it on from the
+     * census path, which is how `resolve()` inside it finds its observed targets.
+     */
+    private fun closure(
+        segment: FhirPathTokenizer.Segment,
+        current: BaseRuntimeElementDefinition<*>?,
+        pathSoFar: String?,
+    ): BaseRuntimeElementDefinition<*>? {
+        val input = current ?: return null
+        val projection = segment.argText?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val from = pathSoFar ?: input.name
+        val projected = walk("$from.$projection")?.type ?: return null
+        return input.takeIf { projected.implementingClass == it.implementingClass }
     }
 
     /**
