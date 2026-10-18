@@ -87,7 +87,7 @@ class Repl(
         FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@[rev]]", "add a pool and switch to it: path loads, dir@rev is a git revision, dir@ its current branch"),
         FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
         FhirPathCompleter.CommandInfo(":log", "[n]", "a git pool's line, newest first, with what each commit changed"),
-        FhirPathCompleter.CommandInfo(":at", "<rev>", "move a git pool to a revision: a branch, tag, id or branch~2"),
+        FhirPathCompleter.CommandInfo(":at", "<rev>", "move a git pool to a revision: a branch, tag, id or branch~2; TAB lists commits by date"),
         FhirPathCompleter.CommandInfo(":step", "[-n|+n]", "move a git pool along its line; alone, one commit back"),
         FhirPathCompleter.CommandInfo(":delta", "", "what this revision added, modified and deleted"),
         FhirPathCompleter.CommandInfo(":scope", "[delta|all]", "run pool-wide over the delta only, or over everything"),
@@ -183,6 +183,7 @@ class Repl(
                 { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
                 { dir -> runCatching { GitSource.refNamesAt(Paths.get(expandHome(dir))) }.getOrDefault(emptyList()) },
                 ::gitSpecOf,
+                ::commitChoices,
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
@@ -1282,6 +1283,20 @@ class Repl(
         out.println(style.hint("  in a git repository, $where — :open <name> ${path.trimEnd('/')}@ opens its history; TAB after the @ lists revisions"))
     }
 
+    /**
+     * The current git pool's line, newest first, for TAB after `:at`: date and short
+     * id, the commit it sits at marked as `:log` marks it, the subject alongside.
+     * Internal so tests can check what the menu would offer.
+     */
+    internal fun commitChoices(): List<FhirPathCompleter.CommitChoice> {
+        val git = session.current.git ?: return emptyList()
+        val commits = runCatching { git.history(MAX_CHOICES) }.getOrDefault(emptyList())
+        return commits.map { commit ->
+            val marker = if (commit.id == git.commit.id) "*" else " "
+            FhirPathCompleter.CommitChoice(commit.short, "$marker ${COMMIT_TIME.format(commit.time)}  ${commit.short}", commit.subject)
+        }
+    }
+
     /** How `:open` and its completion read a path argument; see [GitSource.revisionSpec]. */
     private fun gitSpecOf(token: String): Pair<String, String>? =
         GitSource.revisionSpec(token) { Files.exists(Paths.get(expandHome(it))) }
@@ -1689,6 +1704,7 @@ class Repl(
         out.println("A pool can be a directory in a git repository at a revision, read")
         out.println("without checking anything out: :open in registry/in/import@branch/out.")
         out.println("A bare @ opens the branch HEAD is on; TAB after the @ lists revisions.")
+        out.println("TAB after :at lists the line's commits by date, newest first.")
         out.println(":log lists its line, :step -1 and :step +1 move along it, :at <rev>")
         out.println("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
         out.println(":view run over what that commit changed, while resolve() still sees")
@@ -1736,6 +1752,8 @@ class Repl(
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100
         const val DEFAULT_LOG = 20
+        /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
+        const val MAX_CHOICES = 2000
         const val LOG_INDENT = 38
 
         val COMMIT_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())

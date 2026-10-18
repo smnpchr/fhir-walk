@@ -370,4 +370,44 @@ class GitPoolTest {
         assertContains(session.run(":step +1"), "already at the tip of ${registry.out2.short}")
         assertContains(Run().run(":open plain ${registry.import}"), "in a git repository, HEAD detached at ${registry.out2.short}")
     }
+
+    @Test
+    fun `at offers the line's commits by date, newest first, the current one marked`() {
+        val session = opened()
+        val choices = session.repl.commitChoices()
+        assertEquals(
+            listOf(registry.out4, registry.out3, registry.out2, registry.out1, registry.m1).map { it.short },
+            choices.map { it.id },
+        )
+        assertTrue(choices.first().shown.startsWith("* 2026-10-01 "), choices.first().shown)
+        assertTrue(choices.first().shown.endsWith(registry.out4.short), choices.first().shown)
+        assertEquals("remove dummy patient", choices.first().subject)
+        // The mark follows the pool.
+        session.run(":step -2")
+        assertEquals(listOf(registry.out2.short), session.repl.commitChoices().filter { it.shown.startsWith("*") }.map { it.id })
+        // No git pool, no commits.
+        session.run(":open plain")
+        assertTrue(session.repl.commitChoices().isEmpty())
+    }
+
+    @Test
+    fun `at lists commits ahead of branches, and an id prefix narrows them`() {
+        val session = opened()
+        val pool = Session(FhirVersion.R4)
+        val completer = dev.fhirwalk.complete.FhirPathCompleter(
+            { pool.navigator }, { pool.pool }, { emptyList() },
+            revisions = { listOf("branch/out", "master") },
+            commits = { session.repl.commitChoices() },
+        )
+        val terminal = org.jline.terminal.TerminalBuilder.builder().dumb(true).build()
+        val reader = org.jline.reader.LineReaderBuilder.builder().terminal(terminal).build()
+        fun offered(line: String) = mutableListOf<org.jline.reader.Candidate>().also {
+            completer.complete(reader, dev.fhirwalk.repl.FhirPathParser().parse(line, line.length, org.jline.reader.Parser.ParseContext.COMPLETE), it)
+        }
+        val all = offered(":at ")
+        val order = dev.fhirwalk.repl.FhirWalkLineReader(terminal).groupComparator
+        assertEquals(listOf("commits", "branches and tags"), all.map { it.group() }.distinct().sortedWith(order))
+        assertEquals(registry.out4.short, all.filter { it.group() == "commits" }.sorted().first().value())
+        assertEquals(listOf(registry.out2.short), offered(":at ${registry.out2.name.take(5)}").map { it.value() })
+    }
 }
