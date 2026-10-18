@@ -4,6 +4,7 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.ExpressionLog
 import dev.fhirwalk.repl.NameStore
 import dev.fhirwalk.repl.Repl
+import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
 import java.io.StringWriter
 import kotlin.test.Test
@@ -19,9 +20,9 @@ import kotlin.test.assertTrue
  */
 class ReplTest {
 
-    private val log = ExpressionLog(null)
-    private val names = NameStore(null)
-    private val repl = Repl(FhirVersion.R4, emptyList(), log, names)
+    private val repl = Repl(FhirVersion.R4, emptyList(), Workspaces(null))
+    private val log: ExpressionLog get() = repl.currentWorkspace.log
+    private val names: NameStore get() = repl.currentWorkspace.names
 
     init {
         run(":load samples/basic")

@@ -26,21 +26,32 @@ class ViewBuilder(
 ) {
 
     /**
-     * @param ref how the column was asked for: `#3`, a number in the expression log,
-     *   or a name.
+     * One column, and how it was asked for -- which is what titles it.
+     *
+     * @param number its number in the expression log, if it was asked for by one or
+     *   has one now; null for a saved view's column whose expression is no longer in
+     *   the log.
+     * @param name the name it was asked for by, which then is its title.
      */
-    data class Column(val ref: String, val expression: String) {
-        private val named: Boolean get() = !ref.startsWith("#")
+    data class Column(val expression: String, val number: Int? = null, val name: String? = null) {
+        /** How a message refers to it: the name, else the number, else the expression. */
+        val ref: String get() = name ?: number?.let { "#$it" } ?: expression
 
         /**
-         * A name is its own title. A number is followed by the expression without its
-         * resource-type root, which every column shares.
+         * A name is its own title. Otherwise the number, if any, and the expression
+         * without its resource-type root, which every column shares.
          */
         fun title(type: String): String =
-            if (named) ref else "$ref ${expression.removePrefix("$type.").ifBlank { expression }}"
+            name ?: listOfNotNull(number?.let { "#$it" }, expression.removePrefix("$type.").ifBlank { expression })
+                .joinToString(" ")
 
         /** For messages: the reference with the expression it stands for. */
-        val described: String get() = if (named) "$ref ($expression)" else "$ref $expression"
+        val described: String
+            get() = when {
+                name != null -> "$name ($expression)"
+                number != null -> "#$number $expression"
+                else -> expression
+            }
     }
 
     data class Row(val resource: PooledResource, val cells: List<String>)
@@ -60,7 +71,7 @@ class ViewBuilder(
     fun build(columns: List<Column>): Result {
         if (columns.isEmpty()) return Result.Refused("a view needs at least one column")
         columns.forEach { column ->
-            evaluator.validate(column.expression)?.let { return Result.Refused("${column.ref}: $it") }
+            evaluator.validate(column.expression)?.let { return Result.Refused("${column.described}: $it") }
         }
 
         val roots = columns.map { it to rootType(it.expression) }
@@ -101,7 +112,7 @@ class ViewBuilder(
                     }
                     is Outcome.Failure -> {
                         errors++
-                        if (firstError == null) firstError = "${column.ref}: ${outcome.message}"
+                        if (firstError == null) firstError = "${column.described}: ${outcome.message}"
                         ERROR_CELL
                     }
                 }

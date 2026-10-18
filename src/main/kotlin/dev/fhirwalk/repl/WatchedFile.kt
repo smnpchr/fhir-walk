@@ -118,9 +118,4 @@ class WatchedFile(private val path: Path?) {
             return last.get(0) != '\n'.code.toByte()
         }
     }
-
-    companion object {
-        /** `~/.fhir-walk/<name>`. */
-        fun inHome(name: String): Path = Paths.get(System.getProperty("user.home"), ".fhir-walk", name)
-    }
 }

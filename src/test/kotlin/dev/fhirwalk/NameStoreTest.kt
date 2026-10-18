@@ -71,4 +71,22 @@ class NameStoreTest {
         b.set("cc", "Patient.birthDate")
         assertEquals(setOf("aa", "bb", "cc"), NameStore(file).all().keys)
     }
+
+    @Test
+    fun `a tab inside an expression is part of it`() {
+        Files.createDirectories(file.parent)
+        Files.writeString(file, "fam\tPatient.name.where(family = 'a\tb')\n")
+        assertEquals("Patient.name.where(family = 'a\tb')", NameStore(file).get("fam"))
+    }
+
+    @Test
+    fun `a line that does not parse survives a rewrite`() {
+        Files.createDirectories(file.parent)
+        Files.writeString(file, "2bad\tPatient.id\nfamily\tPatient.name.family\n")
+        NameStore(file).set("born", "Patient.birthDate")
+        assertEquals(
+            listOf("family\tPatient.name.family", "born\tPatient.birthDate", "2bad\tPatient.id"),
+            Files.readAllLines(file),
+        )
+    }
 }
