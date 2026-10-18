@@ -303,6 +303,13 @@ A pool can be a directory inside a git repository, at a revision: `dir@rev`. It 
 read straight from the object database. Nothing is checked out, the working tree is
 never touched, and nothing is fetched or pushed.
 
+- **`dir@` with nothing after it** opens the branch HEAD is on. That branch is saved,
+  so the pool keeps following it even after HEAD moves elsewhere.
+- **TAB after the `@`** lists the repository's branches and tags.
+- **A plain `dir` inside a repository** still loads the working tree from disk,
+  uncommitted changes included. `:open` says when the directory has a history to open
+  instead.
+
 ```
 r4:pool(0)> :open in registry/in/import@branch/out
 pool in at 4844b16 on branch/out, 2026-10-18 09:06 sync2: 3 resource(s) from 3 file(s)
@@ -539,7 +546,7 @@ repositories and reads trees, blobs and diffs from them.
 ## Build
 
 ```
-./gradlew test                              # 210 tests; 18 skip without the local fixture
+./gradlew test                              # 218 tests; 18 skip without the local fixture
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```

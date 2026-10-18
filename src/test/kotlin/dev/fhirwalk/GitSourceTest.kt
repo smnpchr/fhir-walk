@@ -19,7 +19,13 @@ class GitSourceTest {
     @Test
     fun `a spec without a revision does not split`() {
         assertNull(GitSource.split("reg/import"))
-        assertNull(GitSource.split("reg/import@"))
         assertNull(GitSource.split("@master"))
+        assertNull(GitSource.split("@"))
+    }
+
+    @Test
+    fun `a trailing at sign asks for the branch HEAD is on`() {
+        assertEquals("reg/import" to "", GitSource.split("reg/import@"))
+        assertEquals("me@host/import" to "", GitSource.split("me@host/import@"))
     }
 }

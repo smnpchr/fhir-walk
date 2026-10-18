@@ -67,6 +67,24 @@ class GitSource private constructor(
         return ref.name.startsWith(Constants.R_HEADS) || ref.name.startsWith(Constants.R_REMOTES)
     }
 
+    /**
+     * What `dir@` with nothing after the `@` follows: the branch HEAD is on, or HEAD's
+     * full commit id when it is detached. Null in a repository with no commits yet,
+     * whose HEAD names a branch that does not exist.
+     */
+    fun headLine(): String? {
+        val head = runCatching { repository.resolve(Constants.HEAD) }.getOrNull() ?: return null
+        val full = runCatching { repository.fullBranch }.getOrNull()
+        return if (full != null && full.startsWith(Constants.R_HEADS)) full.removePrefix(Constants.R_HEADS) else head.name
+    }
+
+    /** Whether HEAD's tree holds this directory: whether it has a history to open at all. */
+    fun hasHistory(): Boolean {
+        val head = runCatching { repository.resolve("${Constants.HEAD}^{tree}") }.getOrNull() ?: return false
+        if (subpath.isEmpty()) return true
+        return runCatching { TreeWalk.forPath(repository, subpath, head)?.use { true } ?: false }.getOrDefault(false)
+    }
+
     /** Local branches, then tags, as they would be typed after `:at`. */
     fun refNames(): List<String> = runCatching {
         val refs = repository.refDatabase
@@ -148,11 +166,42 @@ class GitSource private constructor(
          * `~/fp/registry/in/import@branch/out` as its path and revision, or null when
          * it names no revision. The last `@` splits, so a path may contain one -- except
          * an `@{` git itself writes in a revision: `branch/out@{1}`, `HEAD@{yesterday}`.
+         * A trailing `@` gives an empty revision: whatever branch HEAD is on.
          */
         fun split(spec: String): Pair<String, String>? {
-            val at = (spec.length - 2 downTo 1).firstOrNull { spec[it] == '@' && spec[it + 1] != '{' } ?: return null
+            val at = (spec.length - 1 downTo 1).firstOrNull { spec[it] == '@' && spec.getOrNull(it + 1) != '{' }
+                ?: return null
             return spec.substring(0, at) to spec.substring(at + 1)
         }
+
+        /**
+         * For the hint that a directory has a history to open: where HEAD is in the
+         * repository [directory] is inside -- its branch, or `HEAD detached at 3f2a1c0`
+         * -- or null when there is no history of this directory to open: outside any
+         * repository, before the first commit, or a directory no commit holds
+         * (untracked or ignored).
+         */
+        fun historyAt(directory: Path): String? = runCatching {
+            open(directory).use { source ->
+                val line = source.headLine()?.takeIf { source.hasHistory() } ?: return@use null
+                if (source.isBranch(line)) line else "HEAD detached at ${line.take(SHORT)}"
+            }
+        }.getOrNull()
+
+        /**
+         * A token as `:open` and its completion both read it: a path that exists as
+         * written is a path, even with an `@` in it; otherwise [split].
+         */
+        fun revisionSpec(token: String, exists: (String) -> Boolean): Pair<String, String>? =
+            if (runCatching { exists(token) }.getOrDefault(false)) null else split(token)
+
+        /** A full commit id as the short one, anything else (a branch, a tag) as it is. */
+        fun label(revision: String): String =
+            if (revision.length == 40 && revision.all { it in '0'..'9' || it in 'a'..'f' }) revision.take(SHORT) else revision
+
+        /** The branches and tags of the repository [directory] is inside, for completing `dir@`. */
+        fun refNamesAt(directory: Path): List<String> =
+            runCatching { open(directory).use { it.refNames() } }.getOrDefault(emptyList())
 
         /** The repository is found by walking up from [directory], as `git` itself does. */
         fun open(directory: Path): GitSource {

@@ -84,7 +84,7 @@ class Repl(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
         FhirPathCompleter.CommandInfo(":pool", "[name]", "switch pool; alone, what is in the current one"),
         FhirPathCompleter.CommandInfo(":pools", "", "the open pools, their sizes and paths"),
-        FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@rev]", "add a pool and switch to it: path loads, dir@rev is a git revision"),
+        FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@[rev]]", "add a pool and switch to it: path loads, dir@rev is a git revision, dir@ its current branch"),
         FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
         FhirPathCompleter.CommandInfo(":log", "[n]", "a git pool's line, newest first, with what each commit changed"),
         FhirPathCompleter.CommandInfo(":at", "<rev>", "move a git pool to a revision: a branch, tag, id or branch~2"),
@@ -181,6 +181,8 @@ class Repl(
                 { session.navigator }, { session.pool }, { commands }, { session.focus },
                 { log.entries() }, { names.all() }, { views.all().keys }, { workspaces.available() },
                 { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
+                { dir -> runCatching { GitSource.refNamesAt(Paths.get(expandHome(dir))) }.getOrDefault(emptyList()) },
+                ::gitSpecOf,
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
@@ -1139,7 +1141,7 @@ class Repl(
 
     private fun load(path: String, out: PrintWriter) {
         session.current.git?.let {
-            out.println("${poolName()} is ${it.spec} — :at <rev> moves it; :open another pool to load files")
+            out.println("${poolName()} is ${it.source.path}@${it.lineLabel} — :at <rev> moves it; :open another pool to load files")
             return
         }
         val report = session.importer.load(Paths.get(expandHome(path)))
@@ -1164,7 +1166,7 @@ class Repl(
         val git = session.current.git
         val which = listOfNotNull(
             "pool ${session.current.name}".takeIf { session.pools.size > 1 },
-            git?.let { "at ${it.commit.short} on ${it.line}" },
+            git?.let { "at ${it.commit.short} on ${it.lineLabel}" },
         ).joinToString(" ").let { if (it.isEmpty()) "" else "$it: " }
         val scoped = if (git?.deltaScope == true) "; scope: the delta's ${session.pool.inScope().size}" else ""
         emit(
@@ -1239,13 +1241,15 @@ class Repl(
                 lastPicks = null
                 when {
                     path.isEmpty() -> out.println("pool $name — empty, :load <path> to import")
-                    // A path that exists as written is a path, even with an @ in it.
-                    GitSource.split(path) != null && !Files.exists(Paths.get(expandHome(path))) ->
+                    gitSpecOf(path) != null ->
                         if (!openGit(path, null, false, out)) {
                             session.close(name)
                             session.switchTo(before)
                         }
-                    else -> load(path, out)
+                    else -> {
+                        load(path, out)
+                        gitHint(path, out)
+                    }
                 }
             }
         }
@@ -1265,8 +1269,25 @@ class Repl(
         }
     }
 
+    /**
+     * A directory loads from disk as it is, uncommitted changes included, even inside a
+     * repository: switching to git silently would change what the pool holds. So the
+     * history is only pointed out.
+     */
+    private fun gitHint(path: String, out: PrintWriter) {
+        val dir = runCatching { Paths.get(expandHome(path)) }.getOrNull() ?: return
+        if (!Files.isDirectory(dir)) return
+        val head = GitSource.historyAt(dir) ?: return
+        val where = if (head.startsWith("HEAD ")) head else "on $head"
+        out.println(style.hint("  in a git repository, $where — :open <name> ${path.trimEnd('/')}@ opens its history; TAB after the @ lists revisions"))
+    }
+
+    /** How `:open` and its completion read a path argument; see [GitSource.revisionSpec]. */
+    private fun gitSpecOf(token: String): Pair<String, String>? =
+        GitSource.revisionSpec(token) { Files.exists(Paths.get(expandHome(it))) }
+
     private fun sourceOf(pool: Pool): String {
-        pool.git?.let { return "${it.spec} at ${it.commit.short}" }
+        pool.git?.let { return "${it.source.path}@${it.lineLabel} at ${it.commit.short}" }
         pool.unavailable?.let { return "unavailable: ${it.source}" }
         return pool.loadedPaths.joinToString(", ").ifEmpty { "nothing loaded" }
     }
@@ -1278,7 +1299,7 @@ class Repl(
      * @return false when it could not be opened; what went wrong has been said.
      */
     private fun openGit(spec: String, at: String?, deltaScope: Boolean, out: PrintWriter): Boolean {
-        val (path, line) = GitSource.split(spec) ?: run {
+        val (path, revision) = GitSource.split(spec) ?: run {
             out.println(style.error("! $spec names no revision — dir@rev, e.g. registry/in/import@branch/out"))
             return false
         }
@@ -1287,6 +1308,20 @@ class Repl(
         } catch (e: GitSourceException) {
             out.println(style.error("! ${e.message}"))
             return false
+        }
+        // `dir@` follows whatever branch HEAD is on; the line saved is that branch, so
+        // the pool keeps following it even after HEAD moves elsewhere.
+        val line = revision.ifEmpty {
+            source.headLine()?.also { head ->
+                // A detached HEAD has no branch to follow, so the pool stays at its commit.
+                if (!source.isBranch(head)) {
+                    out.println(style.hint("  HEAD is detached — pinned at ${GitSource.label(head)}; :at <branch> to follow one"))
+                }
+            } ?: run {
+                source.close()
+                out.println(style.error("! ${source.path} is in a repository with no commits yet"))
+                return false
+            }
         }
         val left = at?.let { id ->
             source.resolve(id) ?: null.also {
@@ -1318,7 +1353,7 @@ class Repl(
 
     /** `3f2a1c0 on branch/out, 2026-10-17 14:02 sync`. */
     private fun revision(git: GitPool): String =
-        "${git.commit.short} on ${git.line}, ${COMMIT_TIME.format(git.commit.time)} ${git.commit.subject}"
+        "${git.commit.short} on ${git.lineLabel}, ${COMMIT_TIME.format(git.commit.time)} ${git.commit.subject}"
 
     /** `Δ12: 2 added, 10 modified`. */
     private fun deltaSummary(git: GitPool): String {
@@ -1350,13 +1385,13 @@ class Repl(
             return
         }
         if (commits.isEmpty()) {
-            out.println("${git.line} names no commit any more")
+            out.println("${git.lineLabel} names no commit any more")
             return
         }
         var unreadable = 0
         emit(
             out,
-            header = "${git.line} in ${git.source.path}, newest first",
+            header = "${git.lineLabel} in ${git.source.path}, newest first",
             preview = commits.map { commit ->
                 val marker = if (commit.id == git.commit.id) "*" else " "
                 val count = runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
@@ -1385,7 +1420,7 @@ class Repl(
             argument.isBlank() -> -1
             Regex("[+-]\\d{1,6}").matches(argument) -> argument.removePrefix("+").toInt()
             else -> {
-                out.println("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.line}")
+                out.println("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.lineLabel}")
                 return
             }
         }
@@ -1653,6 +1688,7 @@ class Repl(
         out.println()
         out.println("A pool can be a directory in a git repository at a revision, read")
         out.println("without checking anything out: :open in registry/in/import@branch/out.")
+        out.println("A bare @ opens the branch HEAD is on; TAB after the @ lists revisions.")
         out.println(":log lists its line, :step -1 and :step +1 move along it, :at <rev>")
         out.println("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
         out.println(":view run over what that commit changed, while resolve() still sees")
