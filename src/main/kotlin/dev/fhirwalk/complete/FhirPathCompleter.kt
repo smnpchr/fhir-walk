@@ -100,7 +100,9 @@ class FhirPathCompleter(
                 // threshold. On an empty word the views are offered too; once a
                 // letter is typed, `@family` could never match it.
                 var room = MAX_MENU
-                if (lastToken.isEmpty()) room -= views("", "@", minOf(MAX_ROWS, room), candidates)
+                // Views come first in the menu, so on an empty word they get a third of
+                // the room at most: many saved views must not crowd out the names.
+                if (lastToken.isEmpty()) room -= views("", "@", minOf(MAX_ROWS, room / 3), candidates)
                 room -= names(lastToken, taken, minOf(MAX_ROWS, room), candidates)
                 recordedColumns(lastToken, taken, minOf(MAX_ROWS, room), candidates)
             }
@@ -156,7 +158,7 @@ class FhirPathCompleter(
             // JLine orders by value unless told otherwise, which puts #10 before #2.
             .forEachIndexed { rank, (idx, expression) ->
                 val number = "$hash${idx + 1}"
-                candidates += Candidate(number, "#${idx + 1}  $expression", "recorded expressions", null, null, null, true, rank)
+                candidates += Candidate(number, "#${idx + 1}  $expression", MenuGroups.RECORDED, null, null, null, true, rank)
             }
     }
 
@@ -171,7 +173,7 @@ class FhirPathCompleter(
         val matching = named().entries
             .filter { (name, expression) -> name.startsWith(partial) && expression !in taken }
             .take(limit)
-        matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", "named expressions", null) }
+        matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", MenuGroups.NAMED, null) }
         return matching.size
     }
 
@@ -184,7 +186,7 @@ class FhirPathCompleter(
      */
     private fun views(partial: String, prefix: String, limit: Int, candidates: MutableList<Candidate>): Int {
         val matching = savedViews().filter { it.startsWith(partial) }.take(limit)
-        matching.forEach { candidates += commandCand("$prefix$it", "@$it", "saved views", null) }
+        matching.forEach { candidates += commandCand("$prefix$it", "@$it", MenuGroups.SAVED_VIEWS, null) }
         return matching.size
     }
 
@@ -490,6 +492,7 @@ class FhirPathCompleter(
         Candidate(value, display, group, descr, null, null, true)
 
     private companion object {
+
         const val MAX_ROWS = 60
         /** Past 100 matching candidates JLine asks "see all N possibilities?". */
         const val MAX_MENU = 99
