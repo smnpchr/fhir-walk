@@ -30,6 +30,23 @@ across registries.
 Comparing `master` with `branch/out` at one point, to see what a transformation did,
 matters less: `git diff` already covers most of it.
 
+### Why a rule needs to choose its context
+
+The transformation is not word for word. A local aliquot of type `PL1`, plasma
+single spun, is `EDTA` in the central NUM vocabulary when its master was drawn into
+an EDTA tube, and `CIT` when it was a citrate tube. The aliquot does not record its
+tube: the master does, two parents up. So the rule has to look at
+`Specimen.parent.resolve().parent.resolve()`, a context it chooses.
+
+In IQVIA's Groovy export DSL, a mapping works from the context the export hands it,
+and cannot freely choose its own. Cases like this one are why fhir-pipes
+moved its rules to FHIRPath over a registry, where a rule can `resolve()` anywhere in
+a context-complete pool. They are also why fhir-walk matters for writing those rules:
+the expression is built and checked against the pool it will run on.
+`samples/hdrp` and the registry built from it in the tests reproduce the case,
+including a first sync that maps every `PL1` aliquot to `EDTA` and a re-applied rule
+that changes only the citrate ones.
+
 ## Staying generic
 
 fhir-walk learns git revisions, deltas and several named pools. It never learns

@@ -33,6 +33,10 @@ class GitPoolTest {
         return text.toString()
     }
 
+    private companion object {
+        const val EXT = "https://fhir.centraxx.de/extension"
+    }
+
     private fun assertContains(output: String, expected: String) =
         assertTrue(output.contains(expected), "expected \"$expected\" in:\n$output")
 
@@ -43,7 +47,7 @@ class GitPoolTest {
     fun `a git pool opens at the tip, reading only FHIR files under its directory`() {
         val output = Run().run(":open spec ${registry.spec}")
         assertContains(output, "pool spec at ${registry.out4.short} on branch/out")
-        assertContains(output, "4 resource(s) from 4 file(s)")
+        assertContains(output, "24 resource(s) from 24 file(s)")
     }
 
     @Test
@@ -52,9 +56,11 @@ class GitPoolTest {
         assertContains(log[0], "branch/out in ")
         assertContains(log[1], "* ${registry.out4.short}")
         assertContains(log[1], "Δ1")
-        assertContains(log[3], "Δ2")
+        assertContains(log[2], "Δ3")
+        assertContains(log[3], "Δ13")
+        assertContains(log[4], "Δ11")
         assertContains(log[5], registry.m1.short)
-        assertContains(log[5], "Δ3")
+        assertContains(log[5], "Δ12")
         assertEquals(6, log.count { it.isNotBlank() }, log.joinToString("\n"))
     }
 
@@ -62,22 +68,28 @@ class GitPoolTest {
     fun `stepping back scopes to the delta, and resolve still sees everything`() {
         val session = opened()
         assertContains(session.run(":step"), "at ${registry.out3.short} on branch/out")
-        assertContains(session.run(":delta"), "Δ1: 1 modified")
-        assertContains(session.run("Specimen.type.coding.code"), "1 of 1 resource(s) matched")
-        // The patient did not change in out3, but the changed specimen still reaches it.
-        assertContains(session.run("Specimen.subject.resolve().name.family"), "F-p1")
+        // The fixed rule re-applied: only the citrate plasma changed.
+        assertContains(session.run(":delta"), "Δ3: 3 modified")
+        val types = session.run("Specimen.type.coding.code")
+        assertContains(types, "3 of 3 resource(s) matched")
+        assertFalse(types.contains("EDTA"), types)
+        // Their masters did not change in out3, but the changed aliquots still reach them.
+        val container = "Specimen.parent.resolve().parent.resolve()" +
+            ".extension('$EXT/sprec').extension('$EXT/sprec/primarySampleContainer').value.code"
+        assertContains(session.run(container), "2 of 3 resource(s) matched")
+        assertContains(session.run("Specimen.subject.resolve().name.family"), "Muster")
         session.run(":name family")
-        assertContains(session.run(":view family"), "1 Specimen row(s)")
+        assertContains(session.run(":view family"), "3 Specimen row(s)")
     }
 
     @Test
     fun `scope all goes back to the whole revision`() {
         val session = opened()
         session.run(":step")
-        assertContains(session.run(":scope"), "the delta, 1 of 5 resource(s)")
-        assertContains(session.run(":scope all"), "all 5 resource(s)")
-        assertContains(session.run("Specimen.type.coding.code"), "3 of 5 resource(s) matched")
-        assertContains(session.run(":scope delta"), "the delta, 1 resource(s)")
+        assertContains(session.run(":scope"), "the delta, 3 of 25 resource(s)")
+        assertContains(session.run(":scope all"), "all 25 resource(s)")
+        assertContains(session.run("Specimen.type.coding.code"), "22 of 25 resource(s) matched")
+        assertContains(session.run(":scope delta"), "the delta, 3 resource(s)")
     }
 
     @Test
@@ -85,7 +97,7 @@ class GitPoolTest {
         val session = opened()
         val delta = session.run(":delta")
         assertContains(delta, "against ${registry.out3.short}")
-        assertContains(delta, "- Patient/dummy")
+        assertContains(delta, "- Patient/9999")
     }
 
     @Test
@@ -93,7 +105,7 @@ class GitPoolTest {
         val session = opened()
         assertContains(session.run(":step +1"), "already at the tip of branch/out")
         assertContains(session.run(":step -4"), "at ${registry.m1.short}")
-        assertContains(session.run(":delta"), "against nothing: the first commit — Δ3: 3 added")
+        assertContains(session.run(":delta"), "against nothing: the first commit — Δ12: 12 added")
         assertContains(session.run(":step -1"), "is the first commit")
         assertContains(session.run(":step +2"), "at ${registry.out2.short}")
         assertContains(session.run(":step +5"), "only 2 commit(s) after")
@@ -104,7 +116,7 @@ class GitPoolTest {
     fun `at a branch makes it the line`() {
         val session = opened()
         assertContains(session.run(":at master"), "at ${registry.m2.short} on master")
-        assertContains(session.run(":delta"), "Δ2: 2 added")
+        assertContains(session.run(":delta"), "Δ13: 13 added")
         val log = session.run(":log")
         assertContains(log, "master in ")
         assertFalse(log.contains(registry.out1.short), log)
@@ -117,10 +129,12 @@ class GitPoolTest {
     @Test
     fun `the focus is found again after a step`() {
         val session = opened()
-        session.run(":focus Specimen/s2")
+        session.run(":focus Specimen/30012")
+        assertContains(session.run("type.coding.code"), "CIT")
+        // Back before the fixed rule, the same aliquot was mapped to EDTA plasma.
         val stepped = session.run(":step -2")
-        assertContains(stepped, "focus Specimen/s2")
-        assertContains(session.run("note.text"), "{} empty")
+        assertContains(stepped, "focus Specimen/30012")
+        assertContains(session.run("type.coding.code"), "EDTA")
     }
 
     @Test
@@ -179,15 +193,15 @@ class GitPoolTest {
         val session = Session(FhirVersion.R4)
         val git = GitPool(GitSource.open(registry.import), "branch/out", session.importer, session.pool)
         git.load(git.source.resolve("branch/out")!!)
-        // The four files at the tip, and the deleted patient, to label it.
-        assertEquals(5, git.parsedBlobs)
+        // The 24 files at the tip, and the deleted patient, to label it.
+        assertEquals(25, git.parsedBlobs)
         git.step(-1)
-        assertEquals(5, git.parsedBlobs)
-        // out2 has the stool sample before the rule changed.
+        assertEquals(25, git.parsedBlobs)
+        // out2 has the three citrate samples before the rule was fixed.
         git.step(-1)
-        assertEquals(6, git.parsedBlobs)
+        assertEquals(28, git.parsedBlobs)
         git.step(+1)
-        assertEquals(6, git.parsedBlobs)
+        assertEquals(28, git.parsedBlobs)
         git.source.close()
     }
 }

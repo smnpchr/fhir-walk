@@ -1,0 +1,85 @@
+{
+  "resourceType": "Observation",
+  "id": "40002",
+  "status": "unknown",
+  "code": {
+    "coding": [
+      {
+        "system": "urn:centraxx",
+        "code": "MATCHAR"
+      }
+    ]
+  },
+  "subject": {
+    "reference": "Patient/2001"
+  },
+  "specimen": {
+    "reference": "Specimen/30003"
+  },
+  "effectiveDateTime": "2026-03-02T12:05:00+01:00",
+  "method": {
+    "coding": [
+      {
+        "system": "urn:centraxx",
+        "version": "3",
+        "code": "MATCHAR_VISUAL"
+      }
+    ]
+  },
+  "component": [
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "urn:centraxx",
+            "code": "LIPAEMIC"
+          }
+        ]
+      },
+      "valueCodeableConcept": {
+        "coding": [
+          {
+            "system": "urn:centraxx:CodeSystem/ValueList-412",
+            "code": "0"
+          }
+        ]
+      }
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "urn:centraxx",
+            "code": "ICTERIC"
+          }
+        ]
+      },
+      "valueCodeableConcept": {
+        "coding": [
+          {
+            "system": "urn:centraxx:CodeSystem/ValueList-412",
+            "code": "0"
+          }
+        ]
+      }
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "urn:centraxx",
+            "code": "HAEMOLYTIC"
+          }
+        ]
+      },
+      "valueCodeableConcept": {
+        "coding": [
+          {
+            "system": "urn:centraxx:CodeSystem/ValueList-412",
+            "code": "2+"
+          }
+        ]
+      }
+    }
+  ]
+}

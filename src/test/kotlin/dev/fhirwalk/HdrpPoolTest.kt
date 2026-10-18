@@ -14,59 +14,48 @@ import org.jline.reader.Candidate
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
 import org.jline.terminal.TerminalBuilder
-import org.junit.jupiter.api.Assumptions.assumeTrue
-import org.junit.jupiter.api.BeforeEach
 import java.nio.file.Paths
-import kotlin.io.path.isDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The real-world shape: a native stool sample aliquoted through *aliquot groups*
- * into direct aliquots and swabs, each swab aliquoted again into pathogen- and
- * genetics-analysis sets. Aliquots never reference their primary directly -- the
- * group sits in between, so navigating the lineage means chaining resolve().
+ * The real-world shape, from `samples/hdrp`: a local HDRP (CentraXX) export. Masters
+ * are aliquoted through *aliquot groups*, and PBMC isolated from a master is
+ * aliquoted again, so a pellet is four `resolve()` hops from its master:
  *
  * ```
- * spec-master-stool                       ST-2026-0001
- * ├── ag-stool-direct                     (aliquot group)
- * │   └── al-stool-001..003
- * └── ag-stool-swab                       (aliquot group)
- *     └── swab-001, swab-002
- *         ├── ag-sw00N-patho              (aliquot group)
- *         │   └── al-pa-00N-1, al-pa-00N-2
- *         └── ag-sw00N-gen                (aliquot group)
- *             └── al-ge-00N-1, al-ge-00N-2
+ * 30040  MASTER        BLD in a PED (EDTA) tube
+ * └── 30041  ALIQUOTGROUP  ZZZ(pbm)
+ *     └── 30042  DERIVED   ZZZ(pbm), PBMC isolate
+ *         └── 30043  ALIQUOTGROUP  ZZZ(ppm)
+ *             └── 30044, 30045  DERIVED  ZZZ(ppm), pellets
  * ```
+ *
+ * Only a master records its primary container and organisation unit, as the
+ * local-to-central mappings expect: an aliquot has to reach its master for them.
  */
-class BiobankPoolTest {
+class HdrpPoolTest {
 
     private val ctx = FhirVersion.R4.create()
     private val pool = ResourcePool(ctx)
     private val evaluator = Evaluator(ctx, pool)
-    private val ext = "https://biobank.example.org/StructureDefinition"
 
     init {
         Importer(ctx, pool).load(FIXTURE)
     }
 
-    /**
-     * The fixture is deliberately not published, so these tests skip rather than fail
-     * on a clone that does not have it. A missing optional fixture should not read as
-     * a broken build.
-     */
-    @BeforeEach
-    fun requireFixture() {
-        assumeTrue(
-            FIXTURE.isDirectory(),
-            "$FIXTURE is a local-only fixture and is not published; see CLAUDE.md",
-        )
-    }
-
     private companion object {
-        val FIXTURE = Paths.get("samples/biobank")
+        val FIXTURE = Paths.get("samples/hdrp")
+        const val EXT = "https://fhir.centraxx.de/extension"
+        const val DAR = "http://hl7.org/fhir/StructureDefinition/data-absent-reason"
+        const val SAMPLE_ID = "identifier.where(type.coding.code = 'SAMPLEID').value"
+        val LOCATION_PARTS = setOf(
+            "$EXT/sample/sampleLocationPath",
+            "$EXT/sample/xPosition",
+            "$EXT/sample/yPosition",
+        )
     }
 
     private fun strings(id: String, expression: String): List<String> {
@@ -79,112 +68,104 @@ class BiobankPoolTest {
 
     @Test
     fun `all three import paths contribute to one pool`() {
-        // bundle (2) + 6 aliquot-group files + 13 NDJSON aliquots + 1 XML observation
-        assertEquals(22, pool.size)
-        assertEquals(20, pool.ofType("Specimen").size)
-        assertEquals(1, pool.ofType("Observation").size)
-        assertEquals(1, pool.ofType("Patient").size)
+        // bundle (2 patients, 5 masters) + 6 aliquot-group files + 11 NDJSON
+        // aliquots + an XML and a JSON observation
+        assertEquals(26, pool.size)
+        assertEquals(22, pool.ofType("Specimen").size)
+        assertEquals(2, pool.ofType("Observation").size)
+        assertEquals(2, pool.ofType("Patient").size)
     }
 
     @Test
     fun `lineage is walked by chaining resolve through the aliquot groups`() {
-        val leaf = "Specimen/al-pa-001-1"
-        assertEquals(listOf("AL-PA-001-1"), strings(leaf, "Specimen.identifier.value"))
+        val leaf = "Specimen/30044"
+        assertEquals(listOf("LIMS-30044"), strings(leaf, "Specimen.$SAMPLE_ID"))
 
-        // One hop reaches the group, not the swab -- the group is the intermediate.
+        // One hop reaches the group, not the isolate -- the group is the intermediate.
+        assertEquals(listOf("LIMS-30043"), strings(leaf, "Specimen.parent.resolve().$SAMPLE_ID"))
+        assertEquals(listOf("LIMS-30042"), strings(leaf, "Specimen.parent.resolve().parent.resolve().$SAMPLE_ID"))
+        // Four hops from a pellet back to the master sample.
         assertEquals(
-            listOf("AG-2026-0110"),
-            strings(leaf, "Specimen.parent.resolve().identifier.value"),
-        )
-        assertEquals(
-            listOf("AL-SW-001"),
-            strings(leaf, "Specimen.parent.resolve().parent.resolve().identifier.value"),
-        )
-        // Four hops from a terminal aliquot back to the master sample.
-        assertEquals(
-            listOf("ST-2026-0001"),
-            strings(
-                leaf,
-                "Specimen.parent.resolve().parent.resolve()" +
-                    ".parent.resolve().parent.resolve().identifier.value",
-            ),
+            listOf("LIMS-30040"),
+            strings(leaf, "Specimen.parent.resolve().parent.resolve().parent.resolve().parent.resolve().$SAMPLE_ID"),
         )
     }
 
     @Test
-    fun `aliquot groups are identifiable by role and carry their purpose`() {
-        val roles = evaluator.evaluateAll(
-            "Specimen.type.coding.where(system = " +
-                "'https://biobank.example.org/CodeSystem/specimen-role').code",
+    fun `an aliquot's central type depends on its master's primary container`() {
+        // PL1 under an EDTA tube is EDTA plasma, under a citrate tube citrate plasma;
+        // the aliquots themselves cannot tell, only their master two hops up can.
+        val container = "Specimen.parent.resolve().parent.resolve()" +
+            ".extension('$EXT/sprec').extension('$EXT/sprec/primarySampleContainer').value.code"
+        assertEquals(listOf("PED"), strings("Specimen/30003", container))
+        assertEquals(listOf("SCI"), strings("Specimen/30012", container))
+        assertEquals(listOf("PL1"), strings("Specimen/30012", "Specimen.type.coding.code"))
+        val citrate = evaluator.evaluateAll(
+            "Specimen.where(type.coding.code = 'PL1' and extension('$EXT/sampleCategory').value.code = 'DERIVED')" +
+                ".where($container = 'SCI')",
         )
-        assertEquals(20, roles.hits.size)
-
-        val purposes = evaluator.evaluateAll(
-            "Specimen.extension('$ext/aliquot-group-purpose').value.coding.code",
-        )
-        // Exactly the six aliquot groups carry a purpose.
-        assertEquals(6, purposes.hits.size)
-        assertEquals(
-            setOf("storage", "swabbing", "pathogen", "genetics"),
-            purposes.hits.flatMap { hit -> hit.values.map { (it as IPrimitiveType<*>).valueAsString } }.toSet(),
-        )
+        assertEquals(setOf("Specimen/30012", "Specimen/30013"), citrate.hits.map { it.resource.label }.toSet())
     }
 
     @Test
-    fun `nested storage extension is navigable and censused by sub-url`() {
+    fun `aliquot groups are identifiable by category`() {
+        val categories = evaluator.evaluateAll("Specimen.extension('$EXT/sampleCategory').value.code")
+        assertEquals(22, categories.hits.size)
+        val byCategory = categories.hits.groupingBy { (it.values.single() as IPrimitiveType<*>).valueAsString }.eachCount()
+        assertEquals(mapOf("MASTER" to 5, "ALIQUOTGROUP" to 6, "DERIVED" to 11), byCategory)
+    }
+
+    @Test
+    fun `nested location extension is navigable and censused by sub-url`() {
         assertEquals(
-            listOf("-80"),
+            listOf("2"),
             strings(
-                "Specimen/al-pa-001-1",
-                "Specimen.extension('$ext/specimen-storage').extension('temperature').value.value",
+                "Specimen/30044",
+                "Specimen.extension('$EXT/sample/sampleLocation').extension('$EXT/sample/xPosition').value",
             ),
         )
-        val nested = pool.census.extensionsAt("Specimen.extension('$ext/specimen-storage')").map { it.value }
-        assertEquals(setOf("temperature", "freezer", "position"), nested.toSet())
+        val nested = pool.census.extensionsAt("Specimen.extension('$EXT/sample/sampleLocation')").map { it.value }
+        assertEquals(LOCATION_PARTS, nested.toSet())
     }
 
     @Test
     fun `extensions on sub-elements are censused at their own path`() {
-        assertEquals(
-            listOf("$ext/container-lot-number"),
-            pool.census.extensionsAt("Specimen.container").map { it.value },
-        )
-        assertEquals(
-            listOf("$ext/collection-ambient-temperature"),
-            pool.census.extensionsAt("Specimen.collection").map { it.value },
-        )
+        // The saliva sample's receipt time is unknown: HDRP says so on the primitive.
+        assertEquals(listOf(DAR), pool.census.extensionsAt("Specimen.receivedTime").map { it.value })
+        assertEquals(listOf("unknown"), strings("Specimen/30030", "Specimen.receivedTime.extension('$DAR').value"))
         // ... and not confused with the ones on the Specimen root.
         val onRoot = pool.census.extensionsAt("Specimen").map { it.value }
-        assertTrue(onRoot.none { it.endsWith("container-lot-number") }, "got $onRoot")
-        assertTrue(onRoot.any { it.endsWith("specimen-freezing-time") }, "got $onRoot")
+        assertTrue(onRoot.none { it == DAR }, "got $onRoot")
+        assertTrue(onRoot.any { it.endsWith("/sample/repositionDate") }, "got $onRoot")
     }
 
     @Test
     fun `partial coverage is reported rather than hidden`() {
-        val result = evaluator.evaluateAll("Specimen.extension('$ext/specimen-freezing-time').value")
-        assertEquals(12, result.hits.size)
-        assertEquals(10, result.misses) // 8 specimens without one, plus Patient and Observation
+        val result = evaluator.evaluateAll("Specimen.extension('$EXT/sample/repositionDate').value")
+        assertEquals(8, result.hits.size)
+        // 3 aliquots not stored yet, 11 masters and groups, 2 patients, 2 observations
+        assertEquals(18, result.misses)
         assertEquals(0, result.errors)
     }
 
     @Test
     fun `why distinguishes a data gap from a wrong expression`() {
-        // swab-002 has no freezing time, but twelve other specimens do: the
-        // expression is right and the data is incomplete.
-        val swab = assertNotNull(pool.find("Specimen/swab-002"))
+        // 30005 is not stored yet, but eight other aliquots are: the expression is
+        // right and the data is incomplete.
+        val unstored = assertNotNull(pool.find("Specimen/30005"))
         val missingExtension = PrefixWalker(evaluator, pool)
-            .diagnose(swab.resource, "Specimen.extension('$ext/specimen-freezing-time').value")
+            .diagnose(unstored.resource, "Specimen.extension('$EXT/sample/repositionDate').value")
         assertEquals(1, missingExtension.firstEmpty)
         val extCoverage = assertNotNull(missingExtension.poolCoverage)
-        assertEquals(12, extCoverage.matching)
-        assertEquals(20, extCoverage.considered)
+        assertEquals(8, extCoverage.matching)
+        assertEquals(22, extCoverage.considered)
 
-        // Specimen.collection, by contrast, is only ever populated on the master
-        // sample -- one hit out of twenty says "wrong level", not "missing data".
+        // Specimen.collection, by contrast, is only ever populated on a master --
+        // five out of twenty-two says "wrong level", not "missing data".
         val collection = PrefixWalker(evaluator, pool)
-            .diagnose(swab.resource, "Specimen.collection.collectedDateTime")
+            .diagnose(unstored.resource, "Specimen.collection.collectedDateTime")
         assertEquals(1, collection.firstEmpty)
-        assertEquals(1, assertNotNull(collection.poolCoverage).matching)
+        assertEquals(5, assertNotNull(collection.poolCoverage).matching)
     }
 
     @Test
@@ -215,8 +196,8 @@ class BiobankPoolTest {
 
     @Test
     fun `diagnosis picks a resource of the expression's own root type`() {
-        // The pool's first resource is the donor Patient; diagnosing a Specimen
-        // expression against it would report "empty at step one" and teach nothing.
+        // The pool's first resource is a Patient; diagnosing a Specimen expression
+        // against it would report "empty at step one" and teach nothing.
         assertEquals("Patient", pool.all().first().type)
 
         val target = assertNotNull(PrefixWalker(evaluator, pool).diagnosisTarget("Specimen.subject.id"))
@@ -250,7 +231,7 @@ class BiobankPoolTest {
     }
 
     @Test
-    fun `completion offers the biobank extension urls scoped to their element`() {
+    fun `completion offers the HDRP extension urls scoped to their element`() {
         val terminal = TerminalBuilder.builder().dumb(true).build()
         val reader = LineReaderBuilder.builder().terminal(terminal).build()
         val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { emptyList() })
@@ -265,24 +246,19 @@ class BiobankPoolTest {
 
         fun displays(expression: String) = offered(expression).map { it.displ() }
 
-        val onContainer = displays("Specimen.container.extension('")
-        assertEquals(listOf("$ext/container-lot-number"), onContainer)
+        assertEquals(listOf(DAR), displays("Specimen.receivedTime.extension('"))
 
         val onRoot = displays("Specimen.extension('")
-        assertTrue(onRoot.any { it.endsWith("specimen-freezing-time") }, "got $onRoot")
-        assertTrue(onRoot.none { it.endsWith("container-lot-number") }, "got $onRoot")
+        assertTrue(onRoot.any { it.endsWith("/sample/repositionDate") }, "got $onRoot")
+        assertTrue(onRoot.none { it == DAR }, "got $onRoot")
 
-        // Inside the nested storage extension, only its three sub-urls.
-        val nested = displays("Specimen.extension('$ext/specimen-storage').extension('")
-        assertEquals(setOf("temperature", "freezer", "position"), nested.toSet())
+        // Inside the nested location extension, only its three sub-urls.
+        assertEquals(LOCATION_PARTS, displays("Specimen.extension('$EXT/sample/sampleLocation').extension('").toSet())
 
         // At a member position the whole extension() step is offered, parens and
         // quotes included, so picking one needs no further typing.
         val steps = offered("Specimen.").map { it.value() }
-        assertTrue(steps.contains("extension('$ext/specimen-freezing-time')"), "got $steps")
-        assertTrue(
-            offered("Specimen.container.").map { it.value() }
-                .contains("extension('$ext/container-lot-number')"),
-        )
+        assertTrue(steps.contains("extension('$EXT/sampleCategory')"), "got $steps")
+        assertTrue(offered("Specimen.receivedTime.").map { it.value() }.contains("extension('$DAR')"))
     }
 }
