@@ -335,6 +335,25 @@ class CompleterTest {
         assertTrue(found.size < 100, "got ${found.size}")
     }
 
+    @Test
+    fun `view lists saved views first, then names, then recorded expressions`() {
+        val recorded = (1..60).map { "Patient.id.where(\$this != 'x$it')" }
+        val named = mapOf("family" to "Patient.name.family", "born" to "Patient.birthDate")
+        val views = setOf("people", "births")
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null }, { recorded }, { named }, { views },
+        )
+        val line = ":view "
+        val offered = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        // JLine orders the menu's groups by name, case-insensitively, whatever the
+        // candidates' sort keys (LineReaderImpl.getGroupComparator).
+        val groups = offered.map { it.group() }.distinct().sortedBy { it.lowercase() }
+        assertEquals(listOf("@views", "named expressions", "recorded expressions"), groups)
+        assertEquals(setOf("@births", "@people"), offered.filter { it.group() == "@views" }.map { it.value() }.toSet())
+    }
+
     /** A completer whose focus is the result of [expression] on [label]. */
     private fun focusedOn(label: String, expression: String? = null): FhirPathCompleter {
         val nav = ModelNavigator(ctx, pool.census)

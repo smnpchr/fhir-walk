@@ -184,7 +184,7 @@ class FhirPathCompleter(
      */
     private fun views(partial: String, prefix: String, limit: Int, candidates: MutableList<Candidate>): Int {
         val matching = savedViews().filter { it.startsWith(partial) }.take(limit)
-        matching.forEach { candidates += commandCand("$prefix$it", "@$it", "saved views", null) }
+        matching.forEach { candidates += commandCand("$prefix$it", "@$it", VIEWS_GROUP, null) }
         return matching.size
     }
 
@@ -490,6 +490,14 @@ class FhirPathCompleter(
         Candidate(value, display, group, descr, null, null, true)
 
     private companion object {
+        /**
+         * JLine orders a menu's groups by name, case-insensitively, whatever the
+         * candidates' sort keys (`LineReaderImpl.getGroupComparator`). `@` sorts before
+         * any letter, so after `:view` the few saved views come ahead of the names and
+         * a long list of recorded expressions -- and it is how a view is typed.
+         */
+        const val VIEWS_GROUP = "@views"
+
         const val MAX_ROWS = 60
         /** Past 100 matching candidates JLine asks "see all N possibilities?". */
         const val MAX_MENU = 99
