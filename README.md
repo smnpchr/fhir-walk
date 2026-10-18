@@ -332,6 +332,8 @@ and `:why` still see the whole revision, so a changed Specimen still reaches the
 Patient that did not change. `:delta` lists it, deletions included by label, and
 `:scope all` goes back to the whole pool.
 
+TAB after `:at` lists the line's commits newest first, by date and short id with
+their subject, the current one marked; picking one moves there. Branches and tags follow.
 `:step -1` follows the first parent. `:step +1` walks towards the tip of the pool's
 line, the branch it was opened on, or the last branch it was moved to with `:at`.
 Nothing about this is specific to a branch name: a pool on `master` steps the same
@@ -546,7 +548,7 @@ repositories and reads trees, blobs and diffs from them.
 ## Build
 
 ```
-./gradlew test                              # 218 tests; 18 skip without the local fixture
+./gradlew test                              # 220 tests; 18 skip without the local fixture
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```

@@ -43,9 +43,17 @@ class FhirPathCompleter(
     private val revisionsAt: (String) -> List<String> = { emptyList() },
     /** How `:open` reads its path argument: a git `dir@rev`, or null for a plain path. */
     private val gitSpec: (String) -> Pair<String, String>? = { GitSource.split(it) },
+    /** The current git pool's commits, newest first, for `:at`. */
+    private val commits: () -> List<CommitChoice> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
+
+    /**
+     * A commit to step to: [id] is what goes into the line, [shown] what the menu
+     * shows (date first, since that is what you look for), [subject] its description.
+     */
+    data class CommitChoice(val id: String, val shown: String, val subject: String)
 
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
@@ -121,10 +129,16 @@ class FhirPathCompleter(
                     candidates += commandCand(it, it, "pools", null)
                 }
             }
+            // The commits are what you step to, newest first; the branches and tags
+            // follow, a few, to switch the line.
             ":at" -> if (arguments.size == 1) {
-                revisions().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
-                    candidates += commandCand(it, it, "branches and tags", null)
-                }
+                val refs = revisions().filter { it.startsWith(lastToken) }.take(MAX_REFS)
+                commits().filter { it.id.startsWith(lastToken, ignoreCase = true) }
+                    .take(minOf(MAX_ROWS, MAX_MENU - refs.size))
+                    .forEachIndexed { rank, commit ->
+                        candidates += Candidate(commit.id, commit.shown, MenuGroups.COMMITS, commit.subject, null, null, true, rank)
+                    }
+                refs.forEach { candidates += commandCand(it, it, MenuGroups.BRANCHES, null) }
             }
             ":scope" -> if (arguments.size == 1) {
                 candidates += commandCand("delta", "delta", "scope", "what this revision changed")
@@ -514,5 +528,7 @@ class FhirPathCompleter(
         /** Past 100 matching candidates JLine asks "see all N possibilities?". */
         const val MAX_MENU = 99
         const val MAX_EXTENSION_STEPS = 24
+        /** Branches and tags offered after `:at`, so the commits keep most of the menu. */
+        const val MAX_REFS = 20
     }
 }
