@@ -142,13 +142,14 @@ produces confusing results that look like product bugs.
   repository cannot be committed inside this one; `GitPoolTest` runs against it.
   `samples/references` is a second published one for `resolve()` typing: urn-linked
   references, a multi-target path, and a target that only arrives in a later load.
-  `samples/hdrp` is the deep, domain-specific one: a synthetic local HDRP (CentraXX)
-  export with aliquot groups, multi-hop lineage, nested extensions and uneven
-  coverage, backing `HdrpPoolTest` and `RenderTest`. Its shape comes from IQVIA's
-  public Apache-2.0 mapping examples; its README says which part comes from where and
-  what is invented. Edit `generate.py` and regenerate rather than editing the JSON.
-  `RegistryFixture` builds its registry from the same files.
-  `samples/biobank/` is still gitignored for anyone's local copy, but no test reads it.
+  `HdrpPoolTest` and `RenderTest` use a deeper, domain-specific fixture under
+  `samples/hdrp/` that is **gitignored and deliberately not published**, and so not
+  reproducible from a clone; it is regenerated with its own `generate.py`. Those tests
+  call `assumeTrue` on its presence, so they skip rather than fail when it is absent;
+  keep that guard on anything new that uses it, and don't name the systems or sites
+  it is modelled on in anything published. `RegistryFixture` writes its own neutral
+  resources so `GitPoolTest` runs everywhere. Tests that must run everywhere belong
+  in `PoolTest` or `CompleterTest` against `samples/basic`.
 - **`samples/` is not a declared input of the `test` task**, so editing, adding or
   removing sample data does not invalidate it. Gradle reports `BUILD SUCCESSFUL` in
   well under a second and the result XML is left over from the previous run — which

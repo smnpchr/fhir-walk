@@ -1,27 +1,19 @@
 package dev.fhirwalk
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ArrayNode
-import com.fasterxml.jackson.databind.node.ObjectNode
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.revwalk.RevCommit
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.time.Instant
 import java.util.TimeZone
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.readLines
 
 /**
- * A specimen pipe's registry, built in a temp directory from `samples/hdrp`: a git
- * repository can't be committed inside this one. Resources live one per file under
- * `import/<Type>/<id>.json`, as fhir-pipes writes them.
+ * A sync registry, built in a temp directory: a git repository can't be committed
+ * inside this one. Resources live one per file under `import/<Type>/<id>.json`.
  *
- * `master` holds the local HDRP export as imported; `branch/out` what the rules made
- * of it for the central system, in the NUM vocabulary:
+ * `master` holds a local LIMS export as imported; `branch/out` what the rules made of
+ * it for the central system:
  *
  * ```
  * master      m1 import ──────────── m2 import (serum, saliva, PBMC, a dummy patient)
@@ -30,19 +22,44 @@ import kotlin.io.path.readLines
  *                 11 mapped    + 13         ~ 3 citrate    - dummy
  * ```
  *
- * out1 and out2 map every `PL1` aliquot to EDTA plasma, as a rule that sees only the
- * aliquot must. out3 re-applies the fixed rule, which looks two parents up to the
- * master's primary container: only the three citrate samples change, to CIT.
+ * Masters are aliquoted through aliquot groups, and only a master records the tube
+ * its blood was drawn into. out1 and out2 map every `PLASMA` aliquot to
+ * `EDTA_PLASMA`, as a rule that sees only the aliquot must. out3 re-applies the fixed
+ * rule, which looks two parents up to the master's tube: only the three samples from
+ * the citrate tube change, to `CITRATE_PLASMA`.
  */
 class RegistryFixture(val root: Path = Files.createTempDirectory("registry")) {
 
     val import: Path = root.resolve("import")
     private val git = Git.init().setDirectory(root.toFile()).setInitialBranch("master").call()
     private var clock = Instant.parse("2026-10-01T08:00:00Z")
-    private val json = ObjectMapper()
 
-    /** The local export, by `Type/id`. */
-    private val local: Map<String, ObjectNode> = readLocal(Paths.get("samples/hdrp"))
+    private class Sample(val id: String, val category: String, val type: String, val patient: String, val parent: String?, val tube: String?)
+
+    private val samples: Map<String, Sample> = listOf(
+        master("30001", "BLOOD", "2001", "EDTA"),
+        group("30002", "PLASMA", "2001", "30001"),
+        aliquot("30003", "PLASMA", "2001", "30002"),
+        aliquot("30004", "PLASMA", "2001", "30002"),
+        aliquot("30005", "PLASMA", "2001", "30002"),
+        group("30006", "BUFFY", "2001", "30001"),
+        aliquot("30007", "BUFFY", "2001", "30006"),
+        master("30010", "BLOOD", "2001", "CITRATE"),
+        group("30011", "PLASMA", "2001", "30010"),
+        aliquot("30012", "PLASMA", "2001", "30011"),
+        aliquot("30013", "PLASMA", "2001", "30011"),
+        master("30020", "BLOOD", "2001", "SERUM"),
+        group("30021", "SERUM", "2001", "30020"),
+        aliquot("30022", "SERUM", "2001", "30021"),
+        aliquot("30023", "SERUM", "2001", "30021"),
+        master("30030", "SALIVA", "2001", null),
+        master("30040", "BLOOD", "2002", "EDTA"),
+        group("30041", "PBMC", "2002", "30040"),
+        aliquot("30042", "PBMC", "2002", "30041"),
+        group("30043", "PBMC_PELLET", "2002", "30042"),
+        aliquot("30044", "PBMC_PELLET", "2002", "30043"),
+        aliquot("30045", "PBMC_PELLET", "2002", "30043"),
+    ).associateBy { it.id }
 
     val m1: RevCommit
     val m2: RevCommit
@@ -54,24 +71,27 @@ class RegistryFixture(val root: Path = Files.createTempDirectory("registry")) {
     init {
         write("README.md", "not FHIR, and not under import/")
         write("import/notes.txt", "not FHIR either")
-        FIRST.forEach { writeResource(local.getValue(it)) }
+        writePatient("2001", "Muster")
+        FIRST.forEach { writeSpecimen(it, central = null) }
         m1 = commit("import")
 
         git.branchCreate().setName("branch/out").call()
         git.checkout().setName("branch/out").call()
-        FIRST.forEach { writeResource(central(it, contextAware = false)) }
+        FIRST.forEach { writeSpecimen(it, central = false) }
         out1 = commit("sync")
 
         git.checkout().setName("master").call()
-        SECOND.forEach { writeResource(local.getValue(it)) }
-        writeResource(DUMMY)
+        writePatient("2002", "Beispiel")
+        writePatient("9999", "Dummy")
+        SECOND.forEach { writeSpecimen(it, central = null) }
         m2 = commit("import")
 
         git.checkout().setName("branch/out").call()
-        SECOND.forEach { writeResource(central(it, contextAware = false)) }
-        writeResource(DUMMY)
+        writePatient("2002", "Beispiel")
+        writePatient("9999", "Dummy")
+        SECOND.forEach { writeSpecimen(it, central = false) }
         out2 = commit("sync")
-        (FIRST + SECOND).forEach { writeResource(central(it, contextAware = true)) }
+        (FIRST + SECOND).forEach { writeSpecimen(it, central = true) }
         out3 = commit("sync")
         git.rm().addFilepattern("import/Patient/9999.json").call()
         out4 = commit("remove dummy patient")
@@ -83,94 +103,51 @@ class RegistryFixture(val root: Path = Files.createTempDirectory("registry")) {
     // ------------------------------------------------------------------- mapping
 
     /**
-     * The local sample [key] as the central system wants it, after the HUB-to-DZHK
-     * mapping in kairos-fhir-dsl-mapping-example: NUM sample types, the NUM
-     * organisation unit, the NAPKON id as the sample id, NUM receptacles and
-     * processing. A patient goes over as it is.
+     * The central type for [sample].
      *
-     * @param contextAware whether the type rule may look past the sample itself. The
-     *   primary container is recorded on the master only, so without it every PL1
-     *   aliquot becomes EDTA plasma, citrate ones included.
+     * @param contextAware whether the rule may look past the sample itself. The tube
+     *   is recorded on the master only, so without it every plasma aliquot becomes
+     *   EDTA plasma, citrate ones included.
      */
-    private fun central(key: String, contextAware: Boolean): ObjectNode {
-        val resource = local.getValue(key).deepCopy()
-        if (resource["resourceType"].asText() != "Specimen") return resource
-        val category = extension(resource, "$EXT/sampleCategory")!!["valueCoding"]["code"].asText()
-        val coding = resource["type"]["coding"][0] as ObjectNode
-        val type = coding["code"].asText()
-        val receptacle = resource["container"][0]["identifier"][0]["value"].asText()
-        val container = if (category == "MASTER" || contextAware) primaryContainer(masterOf(resource)) else null
-        coding.put("code", numType(type, receptacle, container))
-        coding.remove("display")
-        (resource["container"][0]["identifier"][0] as ObjectNode)
-            .put("value", if (category == "MASTER") "ORG" else "NUMCryoAliquot500")
-        extension(resource, "$EXT/sample/organizationUnit")?.let {
-            (it["valueReference"]["identifier"] as ObjectNode).put("value", "NUM_Hannover")
-        }
-        extension(resource, "$EXT/sprec")?.get("extension")?.forEach { sub ->
-            if (sub["url"].asText() == "$EXT/sprec/stockProcessing") {
-                (sub["valueCoding"] as ObjectNode).put("code", numProcessing(sub["valueCoding"]["code"].asText()))
+    private fun centralType(sample: Sample, contextAware: Boolean): String {
+        val tube = if (sample.category == "MASTER" || contextAware) masterOf(sample).tube else null
+        return when (sample.type) {
+            "BLOOD" -> when (tube) {
+                "EDTA" -> "EDTA_WHOLE_BLOOD"
+                "CITRATE" -> "CITRATE_WHOLE_BLOOD"
+                else -> "SERUM_WHOLE_BLOOD"
             }
-        }
-        // The NAPKON id is the central sample id; the local one becomes external.
-        if (category == "MASTER") {
-            resource["identifier"].forEach { id ->
-                val typeCoding = id["type"]["coding"][0] as ObjectNode
-                typeCoding.put("code", if (typeCoding["code"].asText() == "SAMPLEID") "EXTSAMPLEID" else "SAMPLEID")
-            }
-        }
-        return resource
-    }
-
-    /** As `toDzhkType` has it, for the types in the fixture. */
-    private fun numType(type: String, receptacle: String, primaryContainer: String?): String = when {
-        type == "BLD" && primaryContainer == "SST" -> "SER"
-        type == "BLD" && primaryContainer == "PED" -> "EDTAWB"
-        type == "BLD" && primaryContainer == "SCI" -> "CIT"
-        type == "SAL" && receptacle == "StSali001" -> "NUM_speichel"
-        type == "ZZZ(pbm)" -> "NUM_pbmc_edta"
-        type == "SER" -> "SER"
-        type == "PL1" && primaryContainer == "SCI" -> "CIT"
-        type == "PL1" -> "EDTA"
-        type == "BFF" -> "EDTABUF"
-        type == "ZZZ(ppm)" -> "NUM_PBMC_C"
-        else -> "Unbekannt (XXX)"
-    }
-
-    private fun numProcessing(code: String): String = if (code == "B(15)") "NUM_RT15min2000g" else "Sprec-X"
-
-    private fun masterOf(specimen: ObjectNode): ObjectNode {
-        var current = specimen
-        while (true) {
-            val parent = current["parent"]?.get(0)?.get("reference")?.asText() ?: return current
-            current = local.getValue(parent)
+            "PLASMA" -> if (tube == "CITRATE") "CITRATE_PLASMA" else "EDTA_PLASMA"
+            "BUFFY" -> "BUFFY_COAT"
+            else -> sample.type
         }
     }
 
-    private fun primaryContainer(master: ObjectNode): String? =
-        extension(master, "$EXT/sprec")?.get("extension")
-            ?.firstOrNull { it["url"].asText() == "$EXT/sprec/primarySampleContainer" }
-            ?.get("valueCoding")?.get("code")?.asText()
-
-    private fun extension(resource: JsonNode, url: String): JsonNode? =
-        resource["extension"]?.firstOrNull { it["url"].asText() == url }
+    private fun masterOf(sample: Sample): Sample =
+        generateSequence(sample) { s -> s.parent?.let { samples.getValue(it) } }.last()
 
     // ------------------------------------------------------------------ the files
 
-    private fun readLocal(dir: Path): Map<String, ObjectNode> {
-        val bundle = json.readTree(dir.resolve("00-bundle.json").toFile())["entry"] as ArrayNode
-        val resources = bundle.map { it["resource"] as ObjectNode } +
-            dir.resolve("aliquot-groups").listDirectoryEntries("*.json").map { json.readTree(it.toFile()) as ObjectNode } +
-            dir.resolve("aliquots.ndjson").readLines().filter { it.isNotBlank() }.map { json.readTree(it) as ObjectNode }
-        return resources.associateBy { "${it["resourceType"].asText()}/${it["id"].asText()}" }
-    }
-
-    private fun writeResource(resource: JsonNode) {
+    /** @param central null for the local export; else whether the type rule is context-aware. */
+    private fun writeSpecimen(id: String, central: Boolean?) {
+        val sample = samples.getValue(id)
+        val type = if (central == null) sample.type else centralType(sample, central)
+        val system = if (central == null) LOCAL else CENTRAL
+        val extensions = listOfNotNull(
+            """{"url":"$EXT/sample-category","valueCode":"${sample.category}"}""",
+            sample.tube?.let { """{"url":"$EXT/primary-container","valueCode":"$it"}""" },
+        )
+        val parent = sample.parent?.let { ""","parent":[{"reference":"Specimen/$it"}]""" }.orEmpty()
         write(
-            "import/${resource["resourceType"].asText()}/${resource["id"].asText()}.json",
-            json.writerWithDefaultPrettyPrinter().writeValueAsString(resource) + "\n",
+            "import/Specimen/$id.json",
+            """{"resourceType":"Specimen","id":"$id","extension":[${extensions.joinToString(",")}],""" +
+                """"type":{"coding":[{"system":"$system","code":"$type"}]},""" +
+                """"subject":{"reference":"Patient/${sample.patient}"}$parent}""" + "\n",
         )
     }
+
+    private fun writePatient(id: String, family: String) =
+        write("import/Patient/$id.json", """{"resourceType":"Patient","id":"$id","name":[{"family":"$family"}]}""" + "\n")
 
     private fun write(path: String, text: String) {
         val file = root.resolve(path)
@@ -185,23 +162,23 @@ class RegistryFixture(val root: Path = Files.createTempDirectory("registry")) {
         return git.commit().setMessage(message).setAuthor(who).setCommitter(who).call()
     }
 
-    private companion object {
-        const val EXT = "https://fhir.centraxx.de/extension"
+    private fun master(id: String, type: String, patient: String, tube: String?) = Sample(id, "MASTER", type, patient, null, tube)
+
+    private fun group(id: String, type: String, patient: String, parent: String) = Sample(id, "ALIQUOTGROUP", type, patient, parent, null)
+
+    private fun aliquot(id: String, type: String, patient: String, parent: String) = Sample(id, "DERIVED", type, patient, parent, null)
+
+    companion object {
+        /** Extension URLs; the tube is a master's `primary-container`. */
+        const val EXT = "http://example.org/fhir/StructureDefinition"
+        const val LOCAL = "http://example.org/fhir/CodeSystem/local-sample-type"
+        const val CENTRAL = "http://example.org/fhir/CodeSystem/central-sample-type"
 
         /** Patient 2001's EDTA and citrate blood, and everything aliquoted from it. */
-        val FIRST = listOf("Patient/2001") +
-            listOf("30001", "30002", "30003", "30004", "30005", "30006", "30007", "30010", "30011", "30012", "30013")
-                .map { "Specimen/$it" }
+        private val FIRST = listOf("30001", "30002", "30003", "30004", "30005", "30006", "30007", "30010", "30011", "30012", "30013")
 
         /** The serum and saliva, and patient 2002 with the PBMC chain. */
-        val SECOND = listOf("Patient/2002") +
-            listOf("30020", "30021", "30022", "30023", "30030", "30040", "30041", "30042", "30043", "30044", "30045")
-                .map { "Specimen/$it" }
-
-        /** Fetched by mistake, and removed by hand. */
-        val DUMMY: ObjectNode = ObjectMapper().readTree(
-            """{"resourceType":"Patient","id":"9999","name":[{"family":"Dummy","given":["Test"]}]}""",
-        ) as ObjectNode
+        private val SECOND = listOf("30020", "30021", "30022", "30023", "30030", "30040", "30041", "30042", "30043", "30044", "30045")
     }
 }
 
