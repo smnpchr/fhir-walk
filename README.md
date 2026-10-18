@@ -400,3 +400,7 @@ Requires JDK 21.
 TTY, so JLine falls back to a dumb terminal and TAB completion is silently disabled
 (it warns about this on startup). `gradle run` is still useful for piping a script of
 commands in; interactive work wants `installDist`.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
