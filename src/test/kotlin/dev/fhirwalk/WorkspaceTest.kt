@@ -81,7 +81,7 @@ class WorkspaceTest {
         assertContains(session.out, "/no/such/dir is missing")
         assertContains(session.out, "loaded 6 resource(s)")
         session.run(":limit 7")
-        assertEquals(listOf("fhir\tr4", "load\t/no/such/dir", "load\t$basic", "limit\t7"), Files.readAllLines(stateFile()))
+        assertEquals(listOf("fhir\tr4", "limit\t7", "load\t/no/such/dir", "load\t$basic"), Files.readAllLines(stateFile()))
     }
 
     @Test
@@ -253,5 +253,49 @@ class WorkspaceTest {
         session.run(":save v")
         Files.writeString(log, "Patient.name.family\nPatient.birthDate\n")
         assertContains(session.run(":view @v").lines()[1], "#2 birthDate")
+    }
+
+    @Test
+    fun `pools come back with their paths and focus, and the current one`() {
+        Session().apply {
+            run(":load samples/basic")
+            run(":focus Patient/pat1")
+            run(":open tree samples/basic/tree")
+            run(":focus Observation/obs2")
+            run(":open empty")
+            run(":pool tree")
+        }
+        assertEquals(
+            listOf(
+                "fhir\tr4",
+                "load\t$basic", "focus\tPatient/pat1",
+                "pool\ttree", "load\t$basic/tree", "focus\tObservation/obs2",
+                "pool\tempty",
+                "current\ttree",
+            ),
+            Files.readAllLines(stateFile()),
+        )
+        val next = Session()
+        assertContains(next.out, "pool tree now 3")
+        assertContains(next.out, "focus Observation/obs2 (pool tree)")
+        assertContains(next.run(":pool"), "pool tree: 3 resource(s)")
+        assertContains(next.run(":pool pool"), "focus Patient/pat1")
+        assertContains(next.run(":pools"), "empty")
+    }
+
+    @Test
+    fun `a closed default pool stays closed, and an empty one stays open`() {
+        Session().apply {
+            run(":open tree samples/basic/tree")
+            run(":open other")
+        }
+        // Empty, with pools after it: only its line keeps it.
+        assertEquals("pool\tpool", Files.readAllLines(stateFile())[1])
+        assertContains(Session().run(":pools"), "  pool")
+        Session().run(":close pool")
+        val listed = Session().run(":pools")
+        assertFalse(listed.contains("  pool "), listed)
+        assertContains(listed, "  tree")
+        assertContains(listed, "* other")
     }
 }

@@ -79,10 +79,10 @@ class Evaluator(private val ctx: FhirContext, private val pool: ResourcePool) {
     }
 
     /**
-     * The pool-wide fan-out: one expression, every resource. Only non-empty answers
+     * The pool-wide fan-out: one expression, every resource in scope. Only non-empty answers
      * come back as hits; [misses] counts the rest so callers can report coverage.
      */
-    fun evaluateAll(expression: String, candidates: List<PooledResource> = pool.all()): PoolResult {
+    fun evaluateAll(expression: String, candidates: List<PooledResource> = pool.inScope()): PoolResult {
         val hits = mutableListOf<Hit>()
         var misses = 0
         var firstError: String? = null

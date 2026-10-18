@@ -1,0 +1,95 @@
+{
+  "resourceType": "Specimen",
+  "id": "30041",
+  "extension": [
+    {
+      "url": "https://fhir.centraxx.de/extension/sampleCategory",
+      "valueCoding": {
+        "system": "urn:centraxx",
+        "code": "ALIQUOTGROUP"
+      }
+    },
+    {
+      "url": "https://fhir.centraxx.de/extension/sample/derivalDate",
+      "valueDateTime": "2026-03-02T10:30:00+01:00"
+    },
+    {
+      "url": "https://fhir.centraxx.de/extension/sprec",
+      "extension": [
+        {
+          "url": "https://fhir.centraxx.de/extension/sprec/useSprec",
+          "valueBoolean": true
+        },
+        {
+          "url": "https://fhir.centraxx.de/extension/sprec/stockProcessing",
+          "valueCoding": {
+            "system": "urn:centraxx",
+            "code": "B(15)"
+          }
+        }
+      ]
+    }
+  ],
+  "identifier": [
+    {
+      "type": {
+        "coding": [
+          {
+            "system": "urn:centraxx",
+            "code": "SAMPLEID"
+          }
+        ]
+      },
+      "value": "LIMS-30041"
+    }
+  ],
+  "status": "unavailable",
+  "type": {
+    "coding": [
+      {
+        "system": "urn:centraxx",
+        "code": "ZZZ(pbm)",
+        "display": "Cells, blood mononuclear (PBMC), viable [ZZZ(pbm)]"
+      }
+    ]
+  },
+  "subject": {
+    "reference": "Patient/2002",
+    "identifier": {
+      "type": {
+        "coding": [
+          {
+            "system": "urn:centraxx",
+            "code": "SID"
+          }
+        ]
+      },
+      "value": "SID-0002002"
+    }
+  },
+  "parent": [
+    {
+      "reference": "Specimen/30040"
+    }
+  ],
+  "container": [
+    {
+      "identifier": [
+        {
+          "system": "urn:centraxx",
+          "value": "Ma2D010ScT"
+        }
+      ],
+      "capacity": {
+        "value": 0.5,
+        "unit": "ml",
+        "system": "urn:centraxx"
+      },
+      "specimenQuantity": {
+        "value": 0,
+        "unit": "ml",
+        "system": "urn:centraxx"
+      }
+    }
+  ]
+}

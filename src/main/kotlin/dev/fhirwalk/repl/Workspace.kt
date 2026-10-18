@@ -11,20 +11,41 @@ import java.nio.file.Paths
  * `:fhir` and `:focus` breaks as soon as a file moves or an expression changes,
  * while each part of this can be restored, or reported as gone, on its own.
  *
- * @param loads absolute paths, in the order they were loaded.
  * @param limit rows per listing, when set with `:limit`; 0 is off.
- * @param focus the `:focus` arguments that reach the focus, outermost first.
+ * @param pools in the order they were opened.
+ * @param current the pool that was current.
  */
 data class SavedState(
     val fhir: String? = null,
-    val loads: List<String> = emptyList(),
     val limit: Int? = null,
+    val pools: List<SavedPool> = emptyList(),
+    val current: String? = null,
+)
+
+/**
+ * @param loads absolute paths, in the order they were loaded.
+ * @param focus the `:focus` arguments that reach the focus, outermost first.
+ * @param source for a git pool, its directory and line: `/abs/import@branch/out`.
+ * @param at the commit a git pool was left at, which it restores at rather than the
+ *   line's tip: what you were looking at, not what has arrived since.
+ * @param deltaScope whether a git pool's evaluation ran over its delta only.
+ */
+data class SavedPool(
+    val name: String,
+    val loads: List<String> = emptyList(),
     val focus: List<String> = emptyList(),
+    val source: String? = null,
+    val at: String? = null,
+    val deltaScope: Boolean = false,
 )
 
 /**
  * [SavedState] as `key<TAB>value` lines. Unknown keys are skipped, so a state file
  * written by a later version still restores what this one understands.
+ *
+ * A `pool` line starts a pool, and the `load` and `focus` lines after it are that
+ * pool's. Lines before any `pool` line belong to the pool called
+ * [Pool.DEFAULT]: a file from before there were several pools reads as one.
  */
 class StateFile(file: Path?) {
 
@@ -39,28 +60,66 @@ class StateFile(file: Path?) {
             val value = line.substringAfter('\t', "").trim()
             (key to value).takeIf { key.isNotEmpty() && value.isNotEmpty() }
         }
-        fun all(key: String) = entries.filter { it.first == key }.map { it.second }
+        fun last(key: String) = entries.lastOrNull { it.first == key }?.second
+        // Each pool's lines, under its name, in the order the pools first appear.
+        val sections = LinkedHashMap<String, MutableList<Pair<String, String>>>()
+        var section = Pool.DEFAULT
+        for ((key, value) in entries) {
+            when (key) {
+                POOL -> section = value.also { sections.getOrPut(it) { mutableListOf() } }
+                LOAD, FOCUS, SOURCE, AT, SCOPE -> sections.getOrPut(section) { mutableListOf() } += key to value
+            }
+        }
+        val pools = sections.map { (name, lines) ->
+            SavedPool(
+                name,
+                loads = lines.filter { it.first == LOAD }.map { it.second }.distinct(),
+                focus = lines.filter { it.first == FOCUS }.map { it.second },
+                source = lines.lastOrNull { it.first == SOURCE }?.second,
+                at = lines.lastOrNull { it.first == AT }?.second,
+                deltaScope = lines.lastOrNull { it.first == SCOPE }?.second == DELTA,
+            )
+        }
         return SavedState(
-            fhir = all(FHIR).lastOrNull(),
-            loads = all(LOAD).distinct(),
-            limit = all(LIMIT).lastOrNull()?.toIntOrNull()?.takeIf { it >= 0 },
-            focus = all(FOCUS),
+            fhir = last(FHIR),
+            limit = last(LIMIT)?.toIntOrNull()?.takeIf { it >= 0 },
+            pools = pools,
+            current = last(CURRENT)?.takeIf { name -> pools.any { it.name == name } },
         )
     }
 
+    /**
+     * The default pool, first, goes without a `pool` line, so a session that never
+     * opens another pool writes what it always did -- unless it is empty and others
+     * follow, when only the line keeps it.
+     */
     fun write(state: SavedState) {
         val lines = listOfNotNull(state.fhir?.let { "$FHIR\t$it" }) +
-            state.loads.map { "$LOAD\t$it" } +
             listOfNotNull(state.limit?.let { "$LIMIT\t$it" }) +
-            state.focus.map { "$FOCUS\t$it" }
+            state.pools.flatMapIndexed { idx, pool ->
+                val body = listOfNotNull(
+                    pool.source?.let { "$SOURCE\t$it" },
+                    pool.at?.let { "$AT\t$it" },
+                    "$SCOPE\t$DELTA".takeIf { pool.deltaScope },
+                ) + pool.loads.map { "$LOAD\t$it" } + pool.focus.map { "$FOCUS\t$it" }
+                val implied = idx == 0 && pool.name == Pool.DEFAULT && (body.isNotEmpty() || state.pools.size == 1)
+                (if (implied) emptyList() else listOf("$POOL\t${pool.name}")) + body
+            } +
+            listOfNotNull(state.current?.takeIf { it != state.pools.firstOrNull()?.name }?.let { "$CURRENT\t$it" })
         file.replace(lines.joinToString("") { "$it\n" })
     }
 
     private companion object {
         const val FHIR = "fhir"
-        const val LOAD = "load"
         const val LIMIT = "limit"
+        const val POOL = "pool"
+        const val LOAD = "load"
         const val FOCUS = "focus"
+        const val CURRENT = "current"
+        const val SOURCE = "source"
+        const val AT = "at"
+        const val SCOPE = "scope"
+        const val DELTA = "delta"
     }
 }
 

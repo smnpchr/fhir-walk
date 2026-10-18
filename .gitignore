@@ -3,6 +3,6 @@ build/
 *.log
 .idea/
 
-# Local-only fixture: a domain-specific sample hierarchy that is deliberately
-# not published. The tests that use it skip when it is absent.
+# A former local-only fixture, kept out of the repository for anyone who still has
+# a copy. No test reads it any more: samples/hdrp replaced it.
 samples/biobank/

@@ -96,8 +96,13 @@ r4:pool(6)> :ext
   Encounter          1 ×  http://example.org/StructureDefinition/encounter-ward          string
 ```
 
-Point `:load` at your own data for anything beyond that. Some tests additionally use a
-deeper, domain-specific fixture that is not published; they skip when it is absent.
+`samples/hdrp` is a deeper one: a synthetic local LIMS export in the shape IQVIA HDRP
+(formerly CentraXX) writes. It has masters aliquoted through aliquot groups, a
+pellet four `resolve()` hops from its master, nested extensions, and plasma aliquots
+whose central type depends on a container recorded only on their master. Its
+[README](samples/hdrp/README.md) says where each part of its shape comes from.
+
+Point `:load` at your own data for anything beyond that.
 
 ## Commands
 
@@ -106,7 +111,15 @@ Type a FHIRPath expression, or:
 | command | effect |
 |---|---|
 | `:load <path>` | import a file, bundle, NDJSON, or directory tree |
-| `:pool` | what is in the pool |
+| `:pool [name]` | switch pool; alone, what is in the current one |
+| `:pools` | the open pools, their sizes and paths |
+| `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
+| `:close <name>` | drop a pool |
+| `:log [n]` | a git pool's line, newest first, with what each commit changed |
+| `:at <rev>` | move a git pool to a revision: a branch, tag, id or `branch~2` |
+| `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
+| `:delta` | what this revision added, modified and deleted |
+| `:scope [delta\|all]` | run pool-wide over the delta only, or over everything |
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
@@ -263,11 +276,79 @@ column asked for by name follows the name, so rebinding `family` changes what th
 view computes along with its title; once the name is forgotten, the column keeps the
 expression it was saved with.
 
+### Several pools
+
+A session can hold several pools, each with its own census and its own focus.
+Completion offers what is in the current pool, and `resolve()` stays inside it:
+
+```
+r4:pool(6)> :open tree samples/basic/tree
+loaded 3 resource(s) from 2 file(s); pool tree now 3
+r4:tree(3)> Observation.subject.resolve()
+0 of 3 resource(s) matched
+  nothing matched — :why
+r4:tree(3)> :pool pool
+pool pool: 6 resource(s)
+r4:pool(6)> :pools
+* pool       6  /home/me/fhir-walk/samples/basic
+  tree       3  /home/me/fhir-walk/samples/basic/tree
+```
+
+The Patients those Observations reference are in the bundle, which only the first
+pool holds. A session starts with one pool called `pool`, and nothing changes for
+anyone who never opens another. Once there are several, the prompt names the pool
+before a focus: `r4:tree:Observation/obs2>`.
+
+Recorded expressions, names and saved views belong to the workspace, not to a pool,
+so `:view @people` runs in any of them. `:fhir` keeps the pools and empties them all.
+
+### Pools from git revisions
+
+A pool can be a directory inside a git repository, at a revision: `dir@rev`. It is
+read straight from the object database. Nothing is checked out, the working tree is
+never touched, and nothing is fetched or pushed.
+
+```
+r4:pool(0)> :open in registry/in/import@branch/out
+pool in at 4844b16 on branch/out, 2026-10-18 09:06 sync2: 3 resource(s) from 3 file(s)
+r4:in@4844b16(3)> :log
+branch/out in /home/me/registry/in/import, newest first
+* 4844b16  2026-10-18 09:06      Δ1  sync2
+  e6d2df0  2026-10-18 09:06      Δ1  sync
+  551f93e  2026-10-18 09:06      Δ2  import
+r4:in@4844b16(3)> :step
+pool in at e6d2df0 on branch/out, 2026-10-18 09:06 sync — Δ1: 1 modified
+r4:in@e6d2df0 Δ1> Specimen.type.coding.code
+1 of 1 resource(s) matched
+  Specimen/s1                  EDTA_PLASMA
+```
+
+A commit's **delta** is what it added, modified and deleted against its first parent.
+Moving with `:step` or `:at` sets the scope to the delta, so pool-wide expressions,
+`:all` and `:view` run over just what that commit changed. `resolve()`, completion
+and `:why` still see the whole revision, so a changed Specimen still reaches the
+Patient that did not change. `:delta` lists it, deletions included by label, and
+`:scope all` goes back to the whole pool.
+
+`:step -1` follows the first parent. `:step +1` walks towards the tip of the pool's
+line, the branch it was opened on, or the last branch it was moved to with `:at`.
+Nothing about this is specific to a branch name: a pool on `master` steps the same
+way.
+
+A workspace saves each git pool's source, the commit it was left at and its scope.
+The next start restores it at that commit rather than the branch tip, and `:at
+branch/out` catches up. A source that has gone is reported and stays saved.
+Moving to a neighbouring revision parses only the files whose content differs.
+
+The motivating case, a sync tool's registries, and the design are in
+[docs/pools.md](docs/pools.md).
+
 ### Workspaces
 
 Everything that outlives a session belongs to a workspace: the expression log, names,
 saved views, the up-arrow history, and the state the session was left in — FHIR
-version, loaded paths, `:limit` and focus. Starting in a workspace restores that state:
+version, the pools with their paths and focus, which pool was current, and `:limit`.
+Starting in a workspace restores that state:
 
 ```
 $ fhir-walk --workspace basic samples/basic
@@ -295,7 +376,7 @@ The state is a description rather than a replay of commands, so each part is res
 or reported, on its own. A loaded path that has gone is reported and kept, to load
 again once it is back. The focus is saved as the chain of `:focus` steps that reached
 it, so `:focus ..` still steps back up; one that no longer resolves ends the focus as
-far as it got. `:fhir` resets the pool and forgets its paths.
+far as it got. `:fhir` empties the pools and forgets their paths.
 
 On the command line, `--fhir` wins over the version the workspace was left on, and
 paths load on top of the restored ones. A pool is one version, so a session on another
@@ -385,6 +466,7 @@ model/     FhirVersion -> FhirContext        <-- the only version-aware code
            ModelNavigator                   schema axis of completion
            FhirPathFunctions                static signature + type-effect table
 pool/      ResourcePool, PooledResource     pool + resolve() indexes
+           GitSource, RevisionLoader        a directory in git, at a revision
            Importer                         bundle | dirtree | ndjson loaders
            Census, CensusWalker             corpus axis of completion
 eval/      PoolEvaluationContext            pool-backed resolve()
@@ -394,7 +476,9 @@ eval/      PoolEvaluationContext            pool-backed resolve()
            PrefixWalker                     powers :why
            ViewBuilder                      powers :view
 complete/  FhirPathCompleter                merges both axes into JLine candidates
-repl/      Repl, Session, FhirPathParser, Render
+repl/      Repl, FhirPathParser, Render
+           Session, Pool                    per version; per pool, several
+           GitPool                          a pool's revision, line and scope
            Workspace, SavedState            what outlives a session
            ExpressionLog, NameStore,        its files, on WatchedFile /
            ViewStore, KeyedStore            KeyedStore
@@ -447,10 +531,13 @@ HAPI-2200), and `hapi-fhir-validation-resources-*`, without which `ofType()`/`as
 fail with HAPI-0255. The Kotlin plugin must stay at or above the stdlib HAPI pulls in
 transitively via okhttp.
 
+JGit reads git pools. It ships transport code, but fhir-walk only opens local
+repositories and reads trees, blobs and diffs from them.
+
 ## Build
 
 ```
-./gradlew test                              # 171 tests
+./gradlew test                              # 197 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```

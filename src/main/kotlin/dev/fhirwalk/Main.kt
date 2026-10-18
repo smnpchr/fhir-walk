@@ -15,7 +15,7 @@ usage: fhir-walk [--workspace <name>] [--fresh] [--fhir <version>] [path ...]
   --workspace <name> keep this session's expressions, names, views and state
   -w <name>          apart, in ~/.fhir-walk/workspaces/<name> (default: ~/.fhir-walk)
   --fresh            start with an empty pool and no focus; the workspace's saved
-                     pool and focus stay as they are until something changes
+                     pools and focus stay as they are until something changes
   --fhir <version>   FHIR version for this session (default: the one the workspace
                      was left on, else r4). Available: %s
   path ...           files, bundles, NDJSON or directory trees to import at startup,
