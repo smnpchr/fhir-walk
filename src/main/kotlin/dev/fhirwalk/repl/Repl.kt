@@ -13,7 +13,6 @@ import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.GitSourceException
 import org.jline.reader.EndOfFileException
 import org.jline.reader.LineReader
-import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Reference
 import org.jline.reader.UserInterruptException
 import org.hl7.fhir.instance.model.api.IBase
@@ -174,28 +173,27 @@ class Repl(
     fun run() {
         val terminal: Terminal = TerminalBuilder.builder().dumb(true).build()
         val out = terminal.writer()
-        val reader = LineReaderBuilder.builder()
-            .terminal(terminal)
-            .parser(FhirPathParser())
-            .completer(
-                FhirPathCompleter(
-                    { session.navigator }, { session.pool }, { commands }, { session.focus },
-                    { log.entries() }, { names.all() }, { views.all().keys }, { workspaces.available() },
-                    { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
-                ),
+        // Built directly rather than through LineReaderBuilder, which can only make a
+        // plain LineReaderImpl: the menu's group order needs the subclass.
+        val reader = FhirWalkLineReader(terminal).apply {
+            parser = FhirPathParser()
+            completer = FhirPathCompleter(
+                { session.navigator }, { session.pool }, { commands }, { session.focus },
+                { log.entries() }, { names.all() }, { views.all().keys }, { workspaces.available() },
+                { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
             // passive list and you get command history instead of the next candidate.
             // The menu shows the same grouped list and does accept arrows, so skip
             // the passive stage and let the first TAB open the menu.
-            .option(LineReader.Option.AUTO_LIST, false)
-            .option(LineReader.Option.AUTO_MENU, true)
-            .option(LineReader.Option.AUTO_GROUP, true)
-            .option(LineReader.Option.GROUP_PERSIST, true)
-            .option(LineReader.Option.CASE_INSENSITIVE, true)
-            .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
-            .build()
+            option(LineReader.Option.AUTO_LIST, false)
+            option(LineReader.Option.AUTO_MENU, true)
+            option(LineReader.Option.AUTO_GROUP, true)
+            option(LineReader.Option.GROUP_PERSIST, true)
+            option(LineReader.Option.CASE_INSENSITIVE, true)
+            option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
+        }
         this.reader = reader
         useLineHistory(reader, out)
         bindArrowKeys(reader)

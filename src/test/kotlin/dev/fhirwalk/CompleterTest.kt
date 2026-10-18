@@ -7,6 +7,7 @@ import dev.fhirwalk.model.ModelNavigator
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.ResourcePool
 import dev.fhirwalk.repl.FhirPathParser
+import dev.fhirwalk.repl.FhirWalkLineReader
 import org.jline.reader.Candidate
 import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
@@ -333,6 +334,9 @@ class CompleterTest {
             completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
         }
         assertTrue(found.size < 100, "got ${found.size}")
+        // Views come first, but take a third of the room at most: every name still fits.
+        assertEquals(50, found.count { it.group() == "named expressions" })
+        assertEquals(33, found.count { it.group() == "saved views" })
     }
 
     @Test
@@ -347,11 +351,13 @@ class CompleterTest {
         val offered = mutableListOf<Candidate>().also {
             completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
         }
-        // JLine orders the menu's groups by name, case-insensitively, whatever the
-        // candidates' sort keys (LineReaderImpl.getGroupComparator).
-        val groups = offered.map { it.group() }.distinct().sortedBy { it.lowercase() }
-        assertEquals(listOf("@views", "named expressions", "recorded expressions"), groups)
-        assertEquals(setOf("@births", "@people"), offered.filter { it.group() == "@views" }.map { it.value() }.toSet())
+        // Ordered as the menu orders them: with the comparator the REPL's reader hands JLine.
+        val order = FhirWalkLineReader(TerminalBuilder.builder().dumb(true).build()).groupComparator
+        val groups = offered.map { it.group() }.distinct().sortedWith(order)
+        assertEquals(listOf("saved views", "named expressions", "recorded expressions"), groups)
+        assertEquals(setOf("@births", "@people"), offered.filter { it.group() == "saved views" }.map { it.value() }.toSet())
+        // Any other menu keeps JLine's order by name.
+        assertEquals(listOf("elements", "Functions", "pools"), listOf("pools", "Functions", "elements").sortedWith(order))
     }
 
     /** A completer whose focus is the result of [expression] on [label]. */
