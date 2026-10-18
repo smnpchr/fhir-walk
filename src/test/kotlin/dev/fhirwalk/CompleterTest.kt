@@ -127,14 +127,14 @@ class CompleterTest {
     @Test
     fun `resource types in the pool are separated from the full schema`() {
         val byName = candidates("Pat").associateBy { it.value() }
-        assertEquals("in pool", byName.getValue("Patient").group())
+        assertEquals("resource types (in pool)", byName.getValue("Patient").group())
         assertEquals("all resource types", byName.getValue("Practitioner").group())
     }
 
     @Test
     fun `ofType after resolve offers the types actually referenced`() {
         val candidates = candidates("Observation.subject.resolve().ofType(")
-        val observed = candidates.filter { it.group() == "observed" }.map { it.value() }
+        val observed = candidates.filter { it.group() == "types referenced here" }.map { it.value() }
         assertEquals(listOf("Patient"), observed)
     }
 
@@ -162,8 +162,8 @@ class CompleterTest {
     @Test
     fun `an empty prompt offers the resource types the pool actually holds`() {
         val byName = candidates("").associateBy { it.value() }
-        assertEquals("in pool", byName.getValue("Patient").group())
-        assertEquals("in pool", byName.getValue("Observation").group())
+        assertEquals("resource types (in pool)", byName.getValue("Patient").group())
+        assertEquals("resource types (in pool)", byName.getValue("Observation").group())
         // The full 146-type schema stays out of the way until a prefix is typed.
         assertTrue(byName.keys.none { it == "Practitioner" }, "got ${byName.keys}")
     }
@@ -340,6 +340,35 @@ class CompleterTest {
     }
 
     @Test
+    fun `what the pool holds is listed before what the schema allows`() {
+        val order = FhirWalkLineReader(TerminalBuilder.builder().dumb(true).build()).groupComparator
+        fun menu(line: String) = candidates(line).map { it.group() }.distinct().sortedWith(order)
+        // Resource types, once a letter is typed: the pool's before the rest, so
+        // Patient before PaymentNotice.
+        assertEquals(listOf("resource types (in pool)", "all resource types"), menu("P"))
+        // After a dot: populated elements and observed extensions, then the schema's
+        // remaining elements, then functions.
+        assertEquals(
+            listOf("elements (in pool)", "extension() — observed here", "elements", "functions"),
+            menu("Patient."),
+        )
+        // In ofType(, the types referenced right here before every type in the pool.
+        assertEquals("types referenced here", menu("Observation.subject.resolve().ofType(").first())
+    }
+
+    @Test
+    fun `with a resource in focus, its elements come before the resource types`() {
+        val order = FhirWalkLineReader(TerminalBuilder.builder().dumb(true).build()).groupComparator
+        val completer = focusedOn("Patient/pat1")
+        val groups = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse("", 0, Parser.ParseContext.COMPLETE), it)
+        }.map { it.group() }.distinct().sortedWith(order)
+        assertTrue("resource types (in pool)" in groups, "got $groups")
+        assertEquals("elements (in pool)", groups.first(), "got $groups")
+        assertTrue(groups.indexOf("elements") < groups.indexOf("resource types (in pool)"), "got $groups")
+    }
+
+    @Test
     fun `view lists saved views first, then names, then recorded expressions`() {
         val recorded = (1..60).map { "Patient.id.where(\$this != 'x$it')" }
         val named = mapOf("family" to "Patient.name.family", "born" to "Patient.birthDate")
@@ -356,8 +385,8 @@ class CompleterTest {
         val groups = offered.map { it.group() }.distinct().sortedWith(order)
         assertEquals(listOf("saved views", "named expressions", "recorded expressions"), groups)
         assertEquals(setOf("@births", "@people"), offered.filter { it.group() == "saved views" }.map { it.value() }.toSet())
-        // Any other menu keeps JLine's order by name.
-        assertEquals(listOf("elements", "Functions", "pools"), listOf("pools", "Functions", "elements").sortedWith(order))
+        // Groups not in MenuGroups.FIRST keep JLine's order by name, case-insensitively.
+        assertEquals(listOf("commands", "Files", "pools"), listOf("pools", "Files", "commands").sortedWith(order))
     }
 
     /** A completer whose focus is the result of [expression] on [label]. */
