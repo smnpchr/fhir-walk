@@ -9,6 +9,8 @@ import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.eval.ViewBuilder
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
+import dev.fhirwalk.pool.GitSource
+import dev.fhirwalk.pool.GitSourceException
 import org.jline.reader.EndOfFileException
 import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
@@ -21,6 +23,8 @@ import java.io.PrintWriter
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * @param explicitVersion the version asked for on the command line, which wins over
@@ -81,8 +85,13 @@ class Repl(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
         FhirPathCompleter.CommandInfo(":pool", "[name]", "switch pool; alone, what is in the current one"),
         FhirPathCompleter.CommandInfo(":pools", "", "the open pools, their sizes and paths"),
-        FhirPathCompleter.CommandInfo(":open", "<name> [path]", "add a pool, switch to it, and load path into it"),
+        FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@rev]", "add a pool and switch to it: path loads, dir@rev is a git revision"),
         FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
+        FhirPathCompleter.CommandInfo(":log", "[n]", "a git pool's line, newest first, with what each commit changed"),
+        FhirPathCompleter.CommandInfo(":at", "<rev>", "move a git pool to a revision: a branch, tag, id or branch~2"),
+        FhirPathCompleter.CommandInfo(":step", "[-n|+n]", "move a git pool along its line; alone, one commit back"),
+        FhirPathCompleter.CommandInfo(":delta", "", "what this revision added, modified and deleted"),
+        FhirPathCompleter.CommandInfo(":scope", "[delta|all]", "run pool-wide over the delta only, or over everything"),
         FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|[n]|..]", "evaluate against one resource or element"),
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
@@ -172,7 +181,7 @@ class Repl(
                 FhirPathCompleter(
                     { session.navigator }, { session.pool }, { commands }, { session.focus },
                     { log.entries() }, { names.all() }, { views.all().keys }, { workspaces.available() },
-                    { session.pools.map { it.name } },
+                    { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
                 ),
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
@@ -245,12 +254,19 @@ class Repl(
         saveState(out)
     }
 
-    /** The pool's name goes before a focus only once there are several to tell apart. */
+    /**
+     * The pool's name goes before a focus once there are several to tell apart, or
+     * when it is a git pool, whose revision always shows. With the scope on the
+     * delta, the delta's size stands where the pool's would.
+     */
     private fun prompt(): String {
+        val git = session.current.git
+        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty()
         val focus = session.focus?.label?.let { abbreviate(it, PROMPT_WIDTH) }
         val scope = when {
-            focus == null -> "${session.current.name}(${session.pool.size})"
-            session.pools.size > 1 -> "${session.current.name}:$focus"
+            focus == null && git?.deltaScope == true -> "$where Δ${git.delta.size}"
+            focus == null -> "$where(${session.pool.size})"
+            session.pools.size > 1 || git != null -> "$where:$focus"
             else -> focus
         }
         return "${session.version.id}:$scope> "
@@ -298,6 +314,11 @@ class Repl(
             ":pools" -> listPools(out)
             ":open" -> openPool(argument, out)
             ":close" -> closePool(argument, out)
+            ":log" -> gitLog(argument, out)
+            ":at" -> if (argument.isBlank()) out.println("usage: :at <rev>") else at(argument, out)
+            ":step" -> step(argument, out)
+            ":delta" -> delta(out)
+            ":scope" -> scope(argument, out)
             ":focus" -> focus(argument, out)
             ":all" -> if (argument.isBlank()) {
                 out.println("usage: :all <expr>")
@@ -928,6 +949,15 @@ class Repl(
         if (state.pools.isNotEmpty() && state.pools.none { it.name == Pool.DEFAULT }) session.close(Pool.DEFAULT)
         for (pool in state.pools) {
             session.switchTo(pool.name)
+            if (pool.source != null) {
+                if (openGit(pool.source, pool.at, pool.deltaScope, out)) {
+                    restoreFocus(pool.focus, out)
+                } else {
+                    session.current.unavailable = pool
+                    out.println(style.error("  kept in the workspace, to open once it is back"))
+                }
+                continue
+            }
             for (path in pool.loads) {
                 if (path !in session.current.loadedPaths) session.current.loadedPaths += path
                 if (Files.exists(Paths.get(path))) {
@@ -990,7 +1020,17 @@ class Repl(
         SavedState(
             session.version.id,
             limitSet,
-            session.pools.map { SavedPool(it.name, it.loadedPaths.toList(), focusSteps(it.focus)) },
+            session.pools.map { pool ->
+                val git = pool.git
+                pool.unavailable ?: SavedPool(
+                    pool.name,
+                    pool.loadedPaths.toList(),
+                    focusSteps(pool.focus),
+                    source = git?.spec,
+                    at = git?.commit?.id?.name,
+                    deltaScope = git?.deltaScope == true,
+                )
+            },
             session.current.name,
         )
 
@@ -1078,6 +1118,7 @@ class Repl(
         // The old workspace's state was saved after the last command that changed it.
         reader?.history?.save()
         workspace = next
+        session.close()
         session = nextSession
         lastPicks = null
         nameable = null
@@ -1099,6 +1140,10 @@ class Repl(
     // ---------------------------------------------------------------------- pool
 
     private fun load(path: String, out: PrintWriter) {
+        session.current.git?.let {
+            out.println("${poolName()} is ${it.spec} — :at <rev> moves it; :open another pool to load files")
+            return
+        }
         val report = session.importer.load(Paths.get(expandHome(path)))
         // Absolute, so the next session finds it from wherever it is started.
         val absolute = Paths.get(expandHome(path)).toAbsolutePath().normalize().toString()
@@ -1118,10 +1163,15 @@ class Repl(
             return
         }
         val census = session.pool.census
-        val which = if (session.pools.size > 1) "pool ${session.current.name}: " else ""
+        val git = session.current.git
+        val which = listOfNotNull(
+            "pool ${session.current.name}".takeIf { session.pools.size > 1 },
+            git?.let { "at ${it.commit.short} on ${it.line}" },
+        ).joinToString(" ").let { if (it.isEmpty()) "" else "$it: " }
+        val scoped = if (git?.deltaScope == true) "; scope: the delta's ${session.pool.inScope().size}" else ""
         emit(
             out,
-            "$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}",
+            "$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}$scoped",
             session.pool.typeCounts().map { (type, count) ->
                 "  ${style.type(type.padEnd(LABEL_WIDTH))} ${style.count(count.toString())}"
             } +
@@ -1148,14 +1198,14 @@ class Repl(
             preview = session.pools.map { pool ->
                 val marker = if (pool === session.current) "*" else " "
                 val focus = pool.focus?.let { style.hint("  focus ${abbreviate(it.label, PROMPT_WIDTH)}") }.orEmpty()
-                val paths = pool.loadedPaths.joinToString(", ").ifEmpty { "nothing loaded" }
+                val paths = sourceOf(pool)
                 "$marker ${style.label(pool.name.padEnd(width))}  ${style.count(pool.pool.size.toString().padStart(6))}  " +
                     abbreviate(paths, valueWidth(width + 12)) + focus
             },
             full = session.pools.flatMap { pool ->
                 val marker = if (pool === session.current) "*" else " "
                 listOf("$marker ${style.label(pool.name)}  ${style.count(pool.pool.size.toString())} resource(s)") +
-                    pool.loadedPaths.map { "      $it" } +
+                    (if (pool.git != null || pool.unavailable != null) listOf("      ${sourceOf(pool)}") else pool.loadedPaths.map { "      $it" }) +
                     listOfNotNull(pool.focus?.let { "      focus ${it.label}" })
             },
         )
@@ -1185,13 +1235,19 @@ class Repl(
             !KeyedStore.valid(name) -> out.println("not a valid pool name: $name — ${KeyedStore.RULE}")
             session.pool(name) != null -> out.println("pool $name is already open — :pool $name switches to it")
             else -> {
+                val before = session.current.name
                 session.open(name)
                 session.switchTo(name)
                 lastPicks = null
-                if (path.isEmpty()) {
-                    out.println("pool $name — empty, :load <path> to import")
-                } else {
-                    load(path, out)
+                when {
+                    path.isEmpty() -> out.println("pool $name — empty, :load <path> to import")
+                    // A path that exists as written is a path, even with an @ in it.
+                    GitSource.split(path) != null && !Files.exists(Paths.get(expandHome(path))) ->
+                        if (!openGit(path, null, false, out)) {
+                            session.close(name)
+                            session.switchTo(before)
+                        }
+                    else -> load(path, out)
                 }
             }
         }
@@ -1208,6 +1264,179 @@ class Repl(
                 if (wasCurrent) lastPicks = null
                 out.println("closed pool $name" + if (wasCurrent) " — now in pool ${session.current.name}" else "")
             }
+        }
+    }
+
+    private fun sourceOf(pool: Pool): String {
+        pool.git?.let { return "${it.spec} at ${it.commit.short}" }
+        pool.unavailable?.let { return "unavailable: ${it.source}" }
+        return pool.loadedPaths.joinToString(", ").ifEmpty { "nothing loaded" }
+    }
+
+    /**
+     * Makes the current pool [spec]'s directory at a revision: [at] when it still
+     * exists, else the tip of the line [spec] names.
+     *
+     * @return false when it could not be opened; what went wrong has been said.
+     */
+    private fun openGit(spec: String, at: String?, deltaScope: Boolean, out: PrintWriter): Boolean {
+        val (path, line) = GitSource.split(spec) ?: run {
+            out.println(style.error("! $spec names no revision — dir@rev, e.g. registry/in/import@branch/out"))
+            return false
+        }
+        val source = try {
+            GitSource.open(Paths.get(expandHome(path)).toAbsolutePath().normalize())
+        } catch (e: GitSourceException) {
+            out.println(style.error("! ${e.message}"))
+            return false
+        }
+        val left = at?.let { id ->
+            source.resolve(id) ?: null.also {
+                out.println(style.error("! ${id.take(7)} is gone from ${source.path} — opening the tip of $line instead"))
+            }
+        }
+        val start = left ?: source.resolve(line) ?: run {
+            source.close()
+            out.println(style.error("! no commit $line in ${source.path}"))
+            return false
+        }
+        val git = GitPool(source, line, session.importer, session.pool)
+        session.current.git = git
+        session.current.unavailable = null
+        val report = git.load(start)
+        git.deltaScope = deltaScope
+        val header = "${poolName()} at ${revision(git)}: ${report.summary()}"
+        if (report.problems.isEmpty()) out.println(header) else emit(out, header, report.problems.map { "  " + style.error("! $it") })
+        return true
+    }
+
+    /** `3f2a1c0 on branch/out, 2026-10-17 14:02 sync`. */
+    private fun revision(git: GitPool): String =
+        "${git.commit.short} on ${git.line}, ${COMMIT_TIME.format(git.commit.time)} ${git.commit.subject}"
+
+    /** `Δ12: 2 added, 10 modified`. */
+    private fun deltaSummary(git: GitPool): String {
+        val delta = git.delta
+        val parts = listOf(delta.added.size to "added", delta.modified.size to "modified", delta.deleted.size to "deleted")
+            .filter { it.first > 0 }
+            .joinToString(", ") { (count, what) -> "$count $what" }
+        return "Δ${delta.size}" + if (parts.isEmpty()) ": nothing changed here" else ": $parts"
+    }
+
+    /** The current pool's git side, or null after saying why there is none. */
+    private fun gitPool(out: PrintWriter): GitPool? = session.current.git ?: run {
+        out.println("${poolName()} is not a git pool — :open <name> <dir>@<rev> opens one")
+        null
+    }
+
+    private fun gitLog(argument: String, out: PrintWriter) {
+        val git = gitPool(out) ?: return
+        val limit = if (argument.isBlank()) DEFAULT_LOG else argument.toIntOrNull()?.takeIf { it > 0 } ?: run {
+            out.println("usage: :log [n]")
+            return
+        }
+        val commits = git.history(limit)
+        if (commits.isEmpty()) {
+            out.println("${git.line} names no commit any more")
+            return
+        }
+        emit(
+            out,
+            header = "${git.line} in ${git.source.path}, newest first",
+            preview = commits.map { commit ->
+                val marker = if (commit.id == git.commit.id) "*" else " "
+                val changed = "Δ${git.changedFiles(commit, session.importer::reads)}"
+                "$marker ${style.index(commit.short)}  ${COMMIT_TIME.format(commit.time)}  " +
+                    "${style.count(changed.padStart(6))}  ${abbreviate(commit.subject, valueWidth(LOG_INDENT))}"
+            },
+        )
+        if (commits.none { it.id == git.commit.id }) {
+            out.println(style.hint("  (at ${git.commit.short}, which is not among these)"))
+        }
+    }
+
+    private fun at(revision: String, out: PrintWriter) {
+        val git = gitPool(out) ?: return
+        moved(git, git.at(revision), out)
+    }
+
+    private fun step(argument: String, out: PrintWriter) {
+        val git = gitPool(out) ?: return
+        val by = when {
+            argument.isBlank() -> -1
+            Regex("[+-]\\d+").matches(argument) -> argument.removePrefix("+").toInt()
+            else -> {
+                out.println("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.line}")
+                return
+            }
+        }
+        if (by == 0) {
+            out.println("at ${git.commit.short}")
+            return
+        }
+        moved(git, git.step(by), out)
+    }
+
+    /**
+     * Moving is how you ask what a run changed, so the scope goes to the delta. The
+     * focus is found again in the new revision by the steps that reached it.
+     */
+    private fun moved(git: GitPool, move: GitPool.Move, out: PrintWriter) {
+        when (move) {
+            is GitPool.Move.Refused -> out.println(move.message)
+            is GitPool.Move.Moved -> {
+                val steps = focusSteps(session.focus)
+                session.focus = null
+                lastPicks = null
+                git.deltaScope = true
+                val header = "${poolName()} at ${revision(git)} — ${deltaSummary(git)}"
+                val problems = move.report.problems
+                if (problems.isEmpty()) out.println(header) else emit(out, header, problems.map { "  " + style.error("! $it") })
+                restoreFocus(steps, out)
+            }
+        }
+    }
+
+    private fun delta(out: PrintWriter) {
+        val git = gitPool(out) ?: return
+        val delta = git.delta
+        val against = delta.parent?.let { "against ${it.short}" } ?: "against nothing: the first commit"
+        val header = "${git.commit.short} $against — ${deltaSummary(git)}"
+        if (delta.size == 0) {
+            out.println(header)
+            return
+        }
+        fun row(sign: String, label: String, origin: String?) =
+            "  $sign ${style.label(label.padEnd(LABEL_WIDTH))}" + origin?.let { " " + style.hint("($it)") }.orEmpty()
+        emit(
+            out,
+            header,
+            delta.added.map { row("+", it.label, it.origin) } +
+                delta.modified.map { row("~", it.label, it.origin) } +
+                delta.deleted.map { row("-", it, null) },
+        )
+    }
+
+    private fun scope(argument: String, out: PrintWriter) {
+        val git = session.current.git
+        when (argument.lowercase()) {
+            "" -> out.println(
+                if (git?.deltaScope == true) {
+                    "scope: the delta, ${session.pool.inScope().size} of ${session.pool.size} resource(s) — :scope all for everything"
+                } else {
+                    "scope: all ${session.pool.size} resource(s)" + if (git != null) " — :scope delta for what ${git.commit.short} changed" else ""
+                },
+            )
+            "delta" -> {
+                val pool = gitPool(out) ?: return
+                pool.deltaScope = true
+                out.println("scope: the delta, ${session.pool.inScope().size} resource(s) — ${deltaSummary(pool)}")
+            }
+            "all" -> {
+                git?.deltaScope = false
+                out.println("scope: all ${session.pool.size} resource(s)")
+            }
+            else -> out.println("usage: :scope [delta|all]")
         }
     }
 
@@ -1339,12 +1568,25 @@ class Repl(
         try {
             // The pools keep their names and lose their contents, and with them the
             // paths the workspace would load.
-            val current = session.current.name
-            session = Session(version, session.pools.map { it.name }).apply { switchTo(current) }
+            val old = session
+            session = Session(version, old.pools.map { it.name })
             // Rows from the old pool; a pool-wide pick would otherwise still look valid.
             lastPicks = null
-            val reset = if (session.pools.size > 1) "${session.pools.size} pools emptied" else "pool reset"
+            val reset = when {
+                old.pools.none { it.git != null } && session.pools.size > 1 -> "${session.pools.size} pools emptied"
+                old.pools.none { it.git != null } -> "pool reset"
+                else -> "loaded pools emptied, git pools read again"
+            }
             out.println("switched to FHIR ${version.id.uppercase()} — $reset")
+            // A git pool's contents are its revision, so it reads that again in the new version.
+            for (pool in old.pools) {
+                session.switchTo(pool.name)
+                session.current.unavailable = pool.unavailable
+                val git = pool.git ?: continue
+                openGit(git.spec, git.commit.id.name, git.deltaScope, out)
+            }
+            session.switchTo(old.current.name)
+            old.close()
         } catch (e: FhirVersionUnavailable) {
             out.println(style.error("! ${e.message}"))
         }
@@ -1384,6 +1626,13 @@ class Repl(
         out.println("resolve() stays inside the pool. :open specimen <path> adds one and")
         out.println("switches to it, :pool <name> switches, :pools lists them. Recorded")
         out.println("expressions, names and views are shared, so :view @people runs in any.")
+        out.println()
+        out.println("A pool can be a directory in a git repository at a revision, read")
+        out.println("without checking anything out: :open in registry/in/import@branch/out.")
+        out.println(":log lists its line, :step -1 and :step +1 move along it, :at <rev>")
+        out.println("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
+        out.println(":view run over what that commit changed, while resolve() still sees")
+        out.println("everything; :delta lists it, :scope all goes back to the whole pool.")
         out.println()
         out.println("A workspace keeps all of that, the up-arrow history, and where the")
         out.println("session was left: FHIR version, pools, :limit and focus, all")
@@ -1426,6 +1675,10 @@ class Repl(
         /** Used until the terminal reports its size; a dumb terminal never does. */
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100
+        const val DEFAULT_LOG = 20
+        const val LOG_INDENT = 38
+
+        val COMMIT_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
         /**
          * The two encodings an arrow key arrives in, depending on whether

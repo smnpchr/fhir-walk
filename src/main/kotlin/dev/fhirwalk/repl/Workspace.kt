@@ -25,11 +25,18 @@ data class SavedState(
 /**
  * @param loads absolute paths, in the order they were loaded.
  * @param focus the `:focus` arguments that reach the focus, outermost first.
+ * @param source for a git pool, its directory and line: `/abs/import@branch/out`.
+ * @param at the commit a git pool was left at, which it restores at rather than the
+ *   line's tip: what you were looking at, not what has arrived since.
+ * @param deltaScope whether a git pool's evaluation ran over its delta only.
  */
 data class SavedPool(
     val name: String,
     val loads: List<String> = emptyList(),
     val focus: List<String> = emptyList(),
+    val source: String? = null,
+    val at: String? = null,
+    val deltaScope: Boolean = false,
 )
 
 /**
@@ -60,7 +67,7 @@ class StateFile(file: Path?) {
         for ((key, value) in entries) {
             when (key) {
                 POOL -> section = value.also { sections.getOrPut(it) { mutableListOf() } }
-                LOAD, FOCUS -> sections.getOrPut(section) { mutableListOf() } += key to value
+                LOAD, FOCUS, SOURCE, AT, SCOPE -> sections.getOrPut(section) { mutableListOf() } += key to value
             }
         }
         val pools = sections.map { (name, lines) ->
@@ -68,6 +75,9 @@ class StateFile(file: Path?) {
                 name,
                 loads = lines.filter { it.first == LOAD }.map { it.second }.distinct(),
                 focus = lines.filter { it.first == FOCUS }.map { it.second },
+                source = lines.lastOrNull { it.first == SOURCE }?.second,
+                at = lines.lastOrNull { it.first == AT }?.second,
+                deltaScope = lines.lastOrNull { it.first == SCOPE }?.second == DELTA,
             )
         }
         return SavedState(
@@ -87,7 +97,11 @@ class StateFile(file: Path?) {
         val lines = listOfNotNull(state.fhir?.let { "$FHIR\t$it" }) +
             listOfNotNull(state.limit?.let { "$LIMIT\t$it" }) +
             state.pools.flatMapIndexed { idx, pool ->
-                val body = pool.loads.map { "$LOAD\t$it" } + pool.focus.map { "$FOCUS\t$it" }
+                val body = listOfNotNull(
+                    pool.source?.let { "$SOURCE\t$it" },
+                    pool.at?.let { "$AT\t$it" },
+                    "$SCOPE\t$DELTA".takeIf { pool.deltaScope },
+                ) + pool.loads.map { "$LOAD\t$it" } + pool.focus.map { "$FOCUS\t$it" }
                 val implied = idx == 0 && pool.name == Pool.DEFAULT && (body.isNotEmpty() || state.pools.size == 1)
                 (if (implied) emptyList() else listOf("$POOL\t${pool.name}")) + body
             } +
@@ -102,6 +116,10 @@ class StateFile(file: Path?) {
         const val LOAD = "load"
         const val FOCUS = "focus"
         const val CURRENT = "current"
+        const val SOURCE = "source"
+        const val AT = "at"
+        const val SCOPE = "scope"
+        const val DELTA = "delta"
     }
 }
 

@@ -87,8 +87,11 @@ class ViewBuilder(
             return Result.Refused("columns start from different types ($spread) — a view has one row per resource of one type")
         }
         val type = types.single()
-        val resources = pool.ofType(type)
+        val resources = pool.inScope(type)
         if (resources.isEmpty()) {
+            if (pool.scope != null && pool.ofType(type).isNotEmpty()) {
+                return Result.Refused("no $type in the delta — :scope all for the whole pool")
+            }
             return Result.Refused("no $type in the pool — it holds ${pool.types().joinToString(", ")}")
         }
 

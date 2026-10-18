@@ -37,6 +37,7 @@ class FhirPathCompleter(
     private val savedViews: () -> Set<String> = { emptySet() },
     private val workspaces: () -> List<String> = { emptyList() },
     private val pools: () -> List<String> = { emptyList() },
+    private val revisions: () -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -112,6 +113,15 @@ class FhirPathCompleter(
                 pools().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "pools", null)
                 }
+            }
+            ":at" -> if (arguments.size == 1) {
+                revisions().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it, it, "branches and tags", null)
+                }
+            }
+            ":scope" -> if (arguments.size == 1) {
+                candidates += commandCand("delta", "delta", "scope", "what this revision changed")
+                candidates += commandCand("all", "all", "scope", "the whole pool")
             }
             // The name is new, so there is nothing to offer for it; then a path.
             ":open" -> if (arguments.size == 2) completePath(lastToken, candidates)

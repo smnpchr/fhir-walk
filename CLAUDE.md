@@ -11,7 +11,10 @@ relaxing any of them.
 - **Nothing leaves the machine.** No engine endpoint, no package-server fetch, no
   terminology lookup. The base StructureDefinitions are a JAR dependency
   (`hapi-fhir-validation-resources-*`), not a download. Before adding a dependency or
-  a feature, ask what it talks to.
+  a feature, ask what it talks to. JGit is the one that could talk to a network: it
+  ships transport code. `GitSource` only opens a local repository and reads trees,
+  blobs and diffs. Never fetch, push, check out or commit from it; keeping a
+  registry up to date stays with whatever writes it.
 - **No npm.** This ruled out self-hosting fhirpath-lab (a Nuxt app) and any web UI
   whose assets come through npm. It is why the surface is a TUI rather than a browser.
 - **Terminal only, and deliberately narrow.** General-purpose extensibility was traded
@@ -85,6 +88,18 @@ when extending the walker.
 - **The Kotlin plugin has a version floor.** HAPI pulls kotlin-stdlib transitively via
   okhttp; an older compiler cannot read those modules.
 
+## Pools and git revisions
+
+- **The delta scope narrows only pool-wide evaluation**: `ResourcePool.inScope()`,
+  used by `Evaluator.evaluateAll` and `ViewBuilder`. Lookup, `resolve()`, `:why` and
+  the census see the whole snapshot, because a changed resource usually references
+  an unchanged one. New pool-wide features should iterate `inScope()`, not `all()`.
+- **Parsed resources are shared between revisions**, kept by blob id in
+  `RevisionLoader`. Never mutate a resource from the pool; it may belong to the
+  revision you step to next.
+- **A forward step has to be found from the line's tip**: a commit does not know
+  its children. Back follows first parents and always works.
+
 ## FHIRPath behaviours worth remembering
 
 - String literals are **single-quoted**. A double quote delimits an identifier, so
@@ -123,6 +138,8 @@ produces confusing results that look like product bugs.
 ## Conventions
 
 - Tests: `samples/basic` is the published fixture and backs most tests.
+  `RegistryFixture` builds a git registry with JGit in a temp directory, because a
+  repository cannot be committed inside this one; `GitPoolTest` runs against it.
   `samples/references` is a second published one for `resolve()` typing: urn-linked
   references, a multi-target path, and a target that only arrives in a later load.
   `BiobankPoolTest` and `RenderTest` use a deeper, domain-specific fixture under

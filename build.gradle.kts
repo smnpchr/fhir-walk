@@ -46,6 +46,12 @@ dependencies {
     // one HAPI's constraints resolve to.
     implementation("com.fasterxml.jackson.core:jackson-databind")
 
+    // Reads a local registry's history: trees, blobs and diffs from the object
+    // database. It contains transport code, but none of it runs unless called, and
+    // nothing here calls it -- no fetch, push, checkout or commit. Syncing a
+    // registry stays with fhir-pipes and your own git.
+    implementation("org.eclipse.jgit:org.eclipse.jgit:7.4.0.202509020913-r")
+
     implementation("org.jline:jline:3.30.17")
     implementation("org.slf4j:slf4j-simple:2.0.16")
 

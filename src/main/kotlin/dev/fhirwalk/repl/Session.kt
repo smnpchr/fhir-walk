@@ -48,6 +48,9 @@ class Session(val version: FhirVersion, poolNames: List<String> = listOf(Pool.DE
         return Pool(name, ctx, render).also { byName[name] = it }
     }
 
+    /** Closes what the pools hold open, when the session is replaced. */
+    fun close() = byName.values.forEach { it.git?.source?.close() }
+
     /** @return false when there is no such pool. */
     fun switchTo(name: String): Boolean {
         current = byName[name] ?: return false
@@ -60,7 +63,7 @@ class Session(val version: FhirVersion, poolNames: List<String> = listOf(Pool.DE
      */
     fun close(name: String): Boolean {
         if (byName.size == 1 || name !in byName) return false
-        byName.remove(name)
+        byName.remove(name)?.git?.source?.close()
         if (current.name == name) current = byName.values.first()
         return true
     }
@@ -98,6 +101,15 @@ class Pool(val name: String, ctx: FhirContext, render: Render) {
 
     /** Absolute paths loaded into this pool, saved so the next session loads them again. */
     val loadedPaths = mutableListOf<String>()
+
+    /** Set when the pool's contents are a git revision; then nothing is loaded into it. */
+    var git: GitPool? = null
+
+    /**
+     * A git source the workspace names that could not be opened, with the revision
+     * it was at: kept, so it is saved again rather than lost, and opens once it can.
+     */
+    var unavailable: SavedPool? = null
 
     companion object {
         /** The pool a session starts with, and the one everything went into before there were several. */

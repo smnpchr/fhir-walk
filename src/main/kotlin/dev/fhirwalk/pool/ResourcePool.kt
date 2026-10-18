@@ -30,6 +30,18 @@ class ResourcePool(val ctx: FhirContext) {
     fun ofType(type: String): List<PooledResource> =
         items.filter { it.type.equals(type, ignoreCase = true) }
 
+    /**
+     * What pool-wide evaluation runs over, when that is less than everything: a
+     * revision's delta. Lookup, `resolve()` and the census still see the whole pool,
+     * since what changed in a commit usually references what did not.
+     */
+    var scope: Set<PooledResource>? = null
+
+    /** The resources pool-wide evaluation runs over: [scope], or everything. */
+    fun inScope(): List<PooledResource> = scope?.let { s -> items.filter { it in s } } ?: items
+
+    fun inScope(type: String): List<PooledResource> = inScope().filter { it.type.equals(type, ignoreCase = true) }
+
     fun typeCounts(): Map<String, Int> =
         items.groupingBy { it.type }.eachCount().toSortedMap()
 
@@ -103,6 +115,7 @@ class ResourcePool(val ctx: FhirContext) {
     }
 
     fun clear() {
+        scope = null
         items.clear()
         byKey.clear()
         byFullUrl.clear()

@@ -1,6 +1,6 @@
 # Pools: several at once, and stepping through a registry's history
 
-Status: step 1 (several named pools, directories only) is built; steps 2 and 3 are not.
+Status: steps 1 and 2 are built (several named pools; git revisions with stepping). Step 3, comparing two arbitrary revisions, is not.
 
 ## The use case
 
@@ -140,15 +140,20 @@ opens all four: open them once, and every later start brings them back. Each
 Since step 1, the state file has a `pool<TAB>name` line per pool, followed by that
 pool's `load` and `focus` lines, and a `current` line. The default pool's lines go
 first without a `pool` line, so a session that never opens another pool writes
-exactly what it did before. A git pool adds a `source` line:
+exactly what it did before. A git pool has a `source` line, the commit it is `at`,
+and `scope delta` while its scope is the delta:
 
 ```
 pool	in
-source	~/fp/registry/in/import@branch/out
+source	/home/me/fp/registry/in/import@branch/out
+at	9e1d07c4…
 pool	in-imported
-source	~/fp/registry/in/import@master
+source	/home/me/fp/registry/in/import@master
+at	51f0a2b9…
 pool	specimen
-source	~/fp/registry/specimen/import@branch/out
+source	/home/me/fp/registry/specimen/import@branch/out
+at	3f2a1c88…
+scope	delta
 ```
 
 Nothing is specific to `branch/out`. A pool on `master` steps the same way, and its
@@ -205,9 +210,9 @@ repositories in a temp directory.
    point one pool at each registry's working tree.
 2. **Git revisions as a source.** JGit, `:at`, `:step`, `:log`, `:delta`, `:scope`,
    the blob cache. A repository cannot be committed inside this one, so the fixture
-   is built by the tests: a small history on `master` and `branch/out`, built with
-   JGit in a temp directory from `samples/basic`, including a re-application and a
-   deletion.
+   is built by the tests: `RegistryFixture`, a small history on `master` and
+   `branch/out`, built with JGit in a temp directory, including a re-application and
+   a deletion.
 3. **Comparing two revisions** (`master` against `branch/out`, or any two),
    low priority. Generic `:delta <rev> <rev>` with the same scope semantics.
 
