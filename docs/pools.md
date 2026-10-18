@@ -1,6 +1,6 @@
 # Pools: several at once, and stepping through a registry's history
 
-Status: concept, not built.
+Status: step 1 (several named pools, directories only) is built; steps 2 and 3 are not.
 
 ## The use case
 
@@ -92,7 +92,7 @@ Recorded expressions, names and saved views stay workspace-wide, so the same
 |---|---|
 | `:pools` | the pools, their sources and sizes, and which one is current |
 | `:pool [name]` | switch to a pool; alone, what is in the current one (as now) |
-| `:open <name> <source>` | add a pool and switch to it |
+| `:open <name> [source]` | add a pool and switch to it; with no source, an empty one to `:load` into |
 | `:close <name>` | drop a pool |
 | `:log [n]` | the current pool's branch, newest first: commit, date, subject, delta size |
 | `:at <rev>` | move the current pool to a revision (`a1b2c3`, `branch/out~3`, a tag) |
@@ -133,13 +133,22 @@ should only have touched stool samples shows nothing else.
 
 ## Workspaces
 
-A workspace can declare its pools, so `--workspace fhir-pipes` opens all four. Each
-`registry/<pipe>` is a repository of its own, so each pool names its own:
+The pools a workspace holds are part of its saved state, so `--workspace fhir-pipes`
+opens all four: open them once, and every later start brings them back. Each
+`registry/<pipe>` is a repository of its own, so each pool names its own.
+
+Since step 1, the state file has a `pool<TAB>name` line per pool, followed by that
+pool's `load` and `focus` lines, and a `current` line. The default pool's lines go
+first without a `pool` line, so a session that never opens another pool writes
+exactly what it did before. A git pool adds a `source` line:
 
 ```
-pool	in	~/fp/registry/in/import@branch/out
-pool	in-imported	~/fp/registry/in/import@master
-pool	specimen	~/fp/registry/specimen/import@branch/out
+pool	in
+source	~/fp/registry/in/import@branch/out
+pool	in-imported
+source	~/fp/registry/in/import@master
+pool	specimen
+source	~/fp/registry/specimen/import@branch/out
 ```
 
 Nothing is specific to `branch/out`. A pool on `master` steps the same way, and its

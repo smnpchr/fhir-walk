@@ -58,9 +58,6 @@ class Repl(
     /** The workspace in use, for tests. */
     internal val currentWorkspace: Workspace get() = workspace
 
-    /** Absolute paths loaded into this pool, saved so the next session loads them again. */
-    private val loadedPaths = mutableListOf<String>()
-
     /** Set by `:limit`, and saved; null leaves the limit to the window size. */
     private var limitSet: Int? = null
 
@@ -82,7 +79,10 @@ class Repl(
 
     private val commands = listOf(
         FhirPathCompleter.CommandInfo(":load", "<path>", "import a file, bundle, NDJSON or directory tree"),
-        FhirPathCompleter.CommandInfo(":pool", "", "what is in the pool"),
+        FhirPathCompleter.CommandInfo(":pool", "[name]", "switch pool; alone, what is in the current one"),
+        FhirPathCompleter.CommandInfo(":pools", "", "the open pools, their sizes and paths"),
+        FhirPathCompleter.CommandInfo(":open", "<name> [path]", "add a pool, switch to it, and load path into it"),
+        FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
         FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|[n]|..]", "evaluate against one resource or element"),
         FhirPathCompleter.CommandInfo(":all", "<expr>", "evaluate across the whole pool"),
         FhirPathCompleter.CommandInfo(":why", "[expr]", "find the step where the expression goes empty"),
@@ -172,6 +172,7 @@ class Repl(
                 FhirPathCompleter(
                     { session.navigator }, { session.pool }, { commands }, { session.focus },
                     { log.entries() }, { names.all() }, { views.all().keys }, { workspaces.available() },
+                    { session.pools.map { it.name } },
                 ),
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
@@ -244,8 +245,14 @@ class Repl(
         saveState(out)
     }
 
+    /** The pool's name goes before a focus only once there are several to tell apart. */
     private fun prompt(): String {
-        val scope = session.focus?.label?.let { abbreviate(it, PROMPT_WIDTH) } ?: "pool(${session.pool.size})"
+        val focus = session.focus?.label?.let { abbreviate(it, PROMPT_WIDTH) }
+        val scope = when {
+            focus == null -> "${session.current.name}(${session.pool.size})"
+            session.pools.size > 1 -> "${session.current.name}:$focus"
+            else -> focus
+        }
         return "${session.version.id}:$scope> "
     }
 
@@ -287,7 +294,10 @@ class Repl(
             ":quit", ":exit", ":q" -> return false
             ":help", ":?" -> help(out)
             ":load" -> if (argument.isBlank()) out.println("usage: :load <path>") else load(argument, out)
-            ":pool" -> poolSummary(out)
+            ":pool" -> if (argument.isBlank()) poolSummary(out) else switchPool(argument, out)
+            ":pools" -> listPools(out)
+            ":open" -> openPool(argument, out)
+            ":close" -> closePool(argument, out)
             ":focus" -> focus(argument, out)
             ":all" -> if (argument.isBlank()) {
                 out.println("usage: :all <expr>")
@@ -891,20 +901,21 @@ class Repl(
      * longer resolves ends the focus where it got to.
      *
      * A session on another version than the one the workspace was left on gets
-     * neither its paths nor its focus: a pool is one version, so they belong to the
-     * other one, just as `:fhir` resets the pool. They stay saved until something
+     * neither its pools nor its focus: a pool is one version, so they belong to the
+     * other one, just as `:fhir` empties the pools. They stay saved until something
      * changes.
      */
     private fun restore(saved: SavedState, out: PrintWriter) {
         val leftOn = saved.fhir?.takeIf { it != session.version.id }
-        val state = if (leftOn != null && (saved.loads.isNotEmpty() || saved.focus.isNotEmpty())) {
+        val paths = saved.pools.sumOf { it.loads.size }
+        val state = if (leftOn != null && saved.pools.any { it.loads.isNotEmpty() || it.focus.isNotEmpty() }) {
             out.println(
                 style.error(
-                    "! the workspace was left on ${leftOn.uppercase()}, so its ${saved.loads.size} path(s) and focus " +
+                    "! the workspace was left on ${leftOn.uppercase()}, so its $paths path(s) and focus " +
                         "are not restored in ${session.version.id.uppercase()} — saved until something changes",
                 ),
             )
-            saved.copy(loads = emptyList(), focus = emptyList())
+            saved.copy(pools = emptyList(), current = null)
         } else {
             saved
         }
@@ -912,16 +923,23 @@ class Repl(
             limitSet = it
             rowLimit = it
         }
-        for (path in state.loads) {
-            if (path !in loadedPaths) loadedPaths += path
-            if (Files.exists(Paths.get(path))) {
-                load(path, out)
-            } else {
-                val file = workspace.dir?.resolve("state")?.let { " (or drop it from $it)" }.orEmpty()
-                out.println(style.error("! $path is missing — kept in the workspace, to load once it is back$file"))
+        // All of them first, so what each one reports says which pool it is about.
+        state.pools.forEach { session.open(it.name) }
+        if (state.pools.isNotEmpty() && state.pools.none { it.name == Pool.DEFAULT }) session.close(Pool.DEFAULT)
+        for (pool in state.pools) {
+            session.switchTo(pool.name)
+            for (path in pool.loads) {
+                if (path !in session.current.loadedPaths) session.current.loadedPaths += path
+                if (Files.exists(Paths.get(path))) {
+                    load(path, out)
+                } else {
+                    val file = workspace.dir?.resolve("state")?.let { " (or drop it from $it)" }.orEmpty()
+                    out.println(style.error("! $path is missing${inPool()} — kept in the workspace, to load once it is back$file"))
+                }
             }
+            restoreFocus(pool.focus, out)
         }
-        restoreFocus(state.focus, out)
+        session.switchTo(state.current ?: session.pools.first().name)
         // Whatever could not be restored stays saved: nothing is written until something changes.
         lastSaved = stateNow()
     }
@@ -941,7 +959,7 @@ class Repl(
             }
         }
         session.focus = current
-        current?.let { out.println("focus ${it.label}") }
+        current?.let { out.println("focus ${it.label}${inPool()}") }
     }
 
     /**
@@ -969,7 +987,12 @@ class Repl(
         if (label.startsWith("$base.")) label.removePrefix("$base.") else "\$this"
 
     private fun stateNow(): SavedState =
-        SavedState(session.version.id, loadedPaths.toList(), limitSet, focusSteps(session.focus))
+        SavedState(
+            session.version.id,
+            limitSet,
+            session.pools.map { SavedPool(it.name, it.loadedPaths.toList(), focusSteps(it.focus)) },
+            session.current.name,
+        )
 
     /** Writes the state when it has changed since it was last written or restored. */
     private fun saveState(out: PrintWriter) {
@@ -1061,7 +1084,6 @@ class Repl(
         lastListing = null
         lastExpression = null
         lastView = null
-        loadedPaths.clear()
         limitSet = null
         rowLimit = windowRowLimit
         reader?.let { useLineHistory(it, out) }
@@ -1080,8 +1102,9 @@ class Repl(
         val report = session.importer.load(Paths.get(expandHome(path)))
         // Absolute, so the next session finds it from wherever it is started.
         val absolute = Paths.get(expandHome(path)).toAbsolutePath().normalize().toString()
-        if (report.files > 0 && absolute !in loadedPaths) loadedPaths += absolute
-        val header = "loaded ${report.summary()}; pool now ${session.pool.size}"
+        val loaded = session.current.loadedPaths
+        if (report.files > 0 && absolute !in loaded) loaded += absolute
+        val header = "loaded ${report.summary()}; ${poolName()} now ${session.pool.size}"
         if (report.problems.isEmpty()) {
             out.println(header)
             return
@@ -1095,9 +1118,10 @@ class Repl(
             return
         }
         val census = session.pool.census
+        val which = if (session.pools.size > 1) "pool ${session.current.name}: " else ""
         emit(
             out,
-            "${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}",
+            "$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}",
             session.pool.typeCounts().map { (type, count) ->
                 "  ${style.type(type.padEnd(LABEL_WIDTH))} ${style.count(count.toString())}"
             } +
@@ -1106,6 +1130,85 @@ class Repl(
                         "${census.pathCounts.size} populated path(s)",
                 ),
         )
+    }
+
+    /** `pool`, or `pool specimen` once there are several to tell apart. */
+    private fun poolName(): String =
+        if (session.pools.size > 1) "pool ${session.current.name}" else "pool"
+
+    /** ` (pool specimen)`, once there are several pools to tell apart. */
+    private fun inPool(): String =
+        if (session.pools.size > 1) " (pool ${session.current.name})" else ""
+
+    private fun listPools(out: PrintWriter) {
+        val width = session.pools.maxOf { it.name.length }
+        emit(
+            out,
+            header = null,
+            preview = session.pools.map { pool ->
+                val marker = if (pool === session.current) "*" else " "
+                val focus = pool.focus?.let { style.hint("  focus ${abbreviate(it.label, PROMPT_WIDTH)}") }.orEmpty()
+                val paths = pool.loadedPaths.joinToString(", ").ifEmpty { "nothing loaded" }
+                "$marker ${style.label(pool.name.padEnd(width))}  ${style.count(pool.pool.size.toString().padStart(6))}  " +
+                    abbreviate(paths, valueWidth(width + 12)) + focus
+            },
+            full = session.pools.flatMap { pool ->
+                val marker = if (pool === session.current) "*" else " "
+                listOf("$marker ${style.label(pool.name)}  ${style.count(pool.pool.size.toString())} resource(s)") +
+                    pool.loadedPaths.map { "      $it" } +
+                    listOfNotNull(pool.focus?.let { "      focus ${it.label}" })
+            },
+        )
+    }
+
+    /** Rows from another pool cannot be picked here, so a switch forgets them. */
+    private fun switchPool(name: String, out: PrintWriter) {
+        when {
+            session.pool(name) == null ->
+                out.println("no pool $name — :pools lists them, :open $name <path> adds one")
+            name == session.current.name -> out.println("already in pool $name")
+            else -> {
+                session.switchTo(name)
+                lastPicks = null
+                val focus = session.focus?.let { ", focus ${it.label}" }.orEmpty()
+                out.println("pool $name: ${session.pool.size} resource(s)$focus")
+            }
+        }
+    }
+
+    /** `:open specimen` adds an empty pool; `:open specimen <path>` loads into it too. */
+    private fun openPool(argument: String, out: PrintWriter) {
+        val name = argument.substringBefore(' ').trim()
+        val path = argument.substringAfter(' ', "").trim()
+        when {
+            name.isEmpty() -> out.println("usage: :open <name> [path]")
+            !KeyedStore.valid(name) -> out.println("not a valid pool name: $name — ${KeyedStore.RULE}")
+            session.pool(name) != null -> out.println("pool $name is already open — :pool $name switches to it")
+            else -> {
+                session.open(name)
+                session.switchTo(name)
+                lastPicks = null
+                if (path.isEmpty()) {
+                    out.println("pool $name — empty, :load <path> to import")
+                } else {
+                    load(path, out)
+                }
+            }
+        }
+    }
+
+    private fun closePool(name: String, out: PrintWriter) {
+        when {
+            name.isBlank() -> out.println("usage: :close <name>")
+            session.pool(name) == null -> out.println("no pool $name — :pools lists them")
+            session.pools.size == 1 -> out.println("$name is the only pool — there is always one to evaluate against")
+            else -> {
+                val wasCurrent = name == session.current.name
+                session.close(name)
+                if (wasCurrent) lastPicks = null
+                out.println("closed pool $name" + if (wasCurrent) " — now in pool ${session.current.name}" else "")
+            }
+        }
     }
 
     /**
@@ -1234,12 +1337,14 @@ class Repl(
             return
         }
         try {
-            session = Session(version)
+            // The pools keep their names and lose their contents, and with them the
+            // paths the workspace would load.
+            val current = session.current.name
+            session = Session(version, session.pools.map { it.name }).apply { switchTo(current) }
             // Rows from the old pool; a pool-wide pick would otherwise still look valid.
             lastPicks = null
-            // The pool is gone, so the workspace no longer loads its paths either.
-            loadedPaths.clear()
-            out.println("switched to FHIR ${version.id.uppercase()} — pool reset")
+            val reset = if (session.pools.size > 1) "${session.pools.size} pools emptied" else "pool reset"
+            out.println("switched to FHIR ${version.id.uppercase()} — $reset")
         } catch (e: FhirVersionUnavailable) {
             out.println(style.error("! ${e.message}"))
         }
@@ -1275,8 +1380,13 @@ class Repl(
         out.println("titled family. A name holds the expression itself, not its number.")
         out.println(":save people saves the last :view; :view @people reruns it.")
         out.println()
+        out.println("Several pools can be open at once, each with its own census and focus;")
+        out.println("resolve() stays inside the pool. :open specimen <path> adds one and")
+        out.println("switches to it, :pool <name> switches, :pools lists them. Recorded")
+        out.println("expressions, names and views are shared, so :view @people runs in any.")
+        out.println()
         out.println("A workspace keeps all of that, the up-arrow history, and where the")
-        out.println("session was left: FHIR version, loaded paths, :limit and focus, all")
+        out.println("session was left: FHIR version, pools, :limit and focus, all")
         out.println("restored at the next start. The default is ~/.fhir-walk; start with")
         out.println("--workspace <name>, or :workspace <name> to switch. --fresh starts")
         out.println("empty and keeps the saved state until something changes.")

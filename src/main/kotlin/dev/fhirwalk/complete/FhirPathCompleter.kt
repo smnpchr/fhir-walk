@@ -36,6 +36,7 @@ class FhirPathCompleter(
     private val named: () -> Map<String, String> = { emptyMap() },
     private val savedViews: () -> Set<String> = { emptySet() },
     private val workspaces: () -> List<String> = { emptyList() },
+    private val pools: () -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -107,6 +108,13 @@ class FhirPathCompleter(
                 val prefix = if (lastToken.startsWith("@")) "@" else ""
                 views(lastToken.removePrefix("@"), prefix, MAX_ROWS, candidates)
             }
+            ":pool", ":close" -> if (arguments.size == 1) {
+                pools().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it, it, "pools", null)
+                }
+            }
+            // The name is new, so there is nothing to offer for it; then a path.
+            ":open" -> if (arguments.size == 2) completePath(lastToken, candidates)
             ":workspace" -> if (arguments.size == 1) {
                 workspaces().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "workspaces", null)

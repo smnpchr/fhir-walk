@@ -106,7 +106,10 @@ Type a FHIRPath expression, or:
 | command | effect |
 |---|---|
 | `:load <path>` | import a file, bundle, NDJSON, or directory tree |
-| `:pool` | what is in the pool |
+| `:pool [name]` | switch pool; alone, what is in the current one |
+| `:pools` | the open pools, their sizes and paths |
+| `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
+| `:close <name>` | drop a pool |
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
@@ -263,11 +266,40 @@ column asked for by name follows the name, so rebinding `family` changes what th
 view computes along with its title; once the name is forgotten, the column keeps the
 expression it was saved with.
 
+### Several pools
+
+A session can hold several pools, each with its own census and its own focus.
+Completion offers what is in the current pool, and `resolve()` stays inside it:
+
+```
+r4:pool(6)> :open tree samples/basic/tree
+loaded 3 resource(s) from 2 file(s); pool tree now 3
+r4:tree(3)> Observation.subject.resolve()
+0 of 3 resource(s) matched
+  nothing matched — :why
+r4:tree(3)> :pool pool
+pool pool: 6 resource(s)
+r4:pool(6)> :pools
+* pool       6  /home/me/fhir-walk/samples/basic
+  tree       3  /home/me/fhir-walk/samples/basic/tree
+```
+
+The Patients those Observations reference are in the bundle, which only the first
+pool holds. A session starts with one pool called `pool`, and nothing changes for
+anyone who never opens another. Once there are several, the prompt names the pool
+before a focus: `r4:tree:Observation/obs2>`.
+
+Recorded expressions, names and saved views belong to the workspace, not to a pool,
+so `:view @people` runs in any of them. `:fhir` keeps the pools and empties them all.
+The motivating case, and what comes next (pools from git revisions, and stepping
+through a registry's history), is in [docs/pools.md](docs/pools.md).
+
 ### Workspaces
 
 Everything that outlives a session belongs to a workspace: the expression log, names,
 saved views, the up-arrow history, and the state the session was left in — FHIR
-version, loaded paths, `:limit` and focus. Starting in a workspace restores that state:
+version, the pools with their paths and focus, which pool was current, and `:limit`.
+Starting in a workspace restores that state:
 
 ```
 $ fhir-walk --workspace basic samples/basic
@@ -295,7 +327,7 @@ The state is a description rather than a replay of commands, so each part is res
 or reported, on its own. A loaded path that has gone is reported and kept, to load
 again once it is back. The focus is saved as the chain of `:focus` steps that reached
 it, so `:focus ..` still steps back up; one that no longer resolves ends the focus as
-far as it got. `:fhir` resets the pool and forgets its paths.
+far as it got. `:fhir` empties the pools and forgets their paths.
 
 On the command line, `--fhir` wins over the version the workspace was left on, and
 paths load on top of the restored ones. A pool is one version, so a session on another
@@ -394,7 +426,8 @@ eval/      PoolEvaluationContext            pool-backed resolve()
            PrefixWalker                     powers :why
            ViewBuilder                      powers :view
 complete/  FhirPathCompleter                merges both axes into JLine candidates
-repl/      Repl, Session, FhirPathParser, Render
+repl/      Repl, FhirPathParser, Render
+           Session, Pool                    per version; per pool, several
            Workspace, SavedState            what outlives a session
            ExpressionLog, NameStore,        its files, on WatchedFile /
            ViewStore, KeyedStore            KeyedStore
@@ -450,7 +483,7 @@ transitively via okhttp.
 ## Build
 
 ```
-./gradlew test                              # 171 tests
+./gradlew test                              # 182 tests
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
