@@ -34,6 +34,13 @@ data class FhirPathFunction(
         /** Output is whatever the reference points at -- answered from the pool census. */
         RESOLVE,
 
+        /**
+         * Output is the projection applied transitively, e.g. repeat(parent.resolve()).
+         * Typed only when the projection is closed over its input's type: then every
+         * round yields that type, and so does the union.
+         */
+        CLOSURE,
+
         /** Output is a primitive; no further element navigation is meaningful. */
         PRIMITIVE,
 
@@ -66,7 +73,7 @@ object FhirPathFunctions {
         // Filtering and projection
         f("where", "where(criteria)", "members for which criteria is true", TypeEffect.PRESERVES),
         f("select", "select(projection)", "evaluate projection for each member", TypeEffect.UNKNOWN),
-        f("repeat", "repeat(projection)", "transitively apply projection", TypeEffect.UNKNOWN),
+        f("repeat", "repeat(projection)", "transitively apply projection", TypeEffect.CLOSURE),
         f("ofType", "ofType(type)", "members of the given type", TypeEffect.FROM_ARGUMENT),
         f("as", "as(type)", "cast to type, or empty", TypeEffect.FROM_ARGUMENT),
         f("is", "is(type)", "true if the single member is of type", TypeEffect.PRIMITIVE),

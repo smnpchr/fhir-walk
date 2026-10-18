@@ -427,6 +427,13 @@ like any other. On an empty line it lists the pool's resource types; after a `.`
 elements and functions available there, pool-populated ones first; inside
 `extension('…')` the URLs observed on that element.
 
+Types are followed through calls where they can be known. `resolve()` takes the type
+its references were observed to point at. `repeat(…)` keeps its input's type when the
+projection maps that type to itself, which is how hierarchies are walked:
+`Specimen.repeat(parent.resolve()).` completes as a Specimen, and
+`Questionnaire.item.repeat(item).` as an item. A `repeat` whose rounds could be
+different types, such as `repeat(subject.resolve())`, stays untyped.
+
 The first TAB opens the candidate menu: the grouped list appears and the first
 candidate goes into the line. **Up/Down** walk the candidates from there, as do further
 TABs, and Enter takes whichever is shown. That is how you pick a long extension URL
@@ -532,7 +539,7 @@ repositories and reads trees, blobs and diffs from them.
 ## Build
 
 ```
-./gradlew test                              # 206 tests; 18 skip without the local fixture
+./gradlew test                              # 210 tests; 18 skip without the local fixture
 ./gradlew installDist                       # then run the start script:
 build/install/fhir-walk/bin/fhir-walk samples/basic
 ```
