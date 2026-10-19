@@ -444,6 +444,91 @@ class GitPoolTest {
         assertEquals(rows, (session.repl.outputOf(":more").blocks.single() as Output.Whole).listing.rows)
     }
 
+    // ------------------------------------------------------- one resource's history
+
+    /** Each row's short id, and the word or answer after its time. */
+    private fun rowsOf(output: Output) = output.listing!!.rows.map { row ->
+        row.spans.single { it.kind == Output.Kind.INDEX }.text to row.spans.drop(3).joinToString("") { it.text }.trim()
+    }
+
+    @Test
+    fun `log of a label lists only the commits that changed that resource`() {
+        val session = opened()
+        assertEquals(
+            listOf(registry.out3.short to "modified  sync", registry.out1.short to "modified  sync", registry.m1.short to "added     import"),
+            rowsOf(session.repl.outputOf(":log Specimen/30012")),
+        )
+        // out3 rewrote every sample, but an EDTA one came out the same: git saw no change.
+        assertEquals(listOf(registry.out1.short, registry.m1.short), rowsOf(session.repl.outputOf(":log Specimen/30003")).map { it.first })
+        assertEquals(
+            listOf(registry.out4.short to "deleted   remove dummy patient", registry.out2.short to "added     sync"),
+            rowsOf(session.repl.outputOf(":log Patient/9999")),
+        )
+        assertContains(session.run(":log Specimen/99999"), "no commit on branch/out added, changed or deleted Specimen/99999")
+    }
+
+    @Test
+    fun `log of a label pages like the line`() {
+        val session = opened()
+        val page = session.run(":log Specimen/30012 1")
+        assertContains(page, registry.out3.short)
+        assertContains(page, "older: :log Specimen/30012 1 +1")
+        assertContains(session.run(":log Specimen/30012 +3"), "only 3 commit(s) on branch/out touched Specimen/30012")
+    }
+
+    @Test
+    fun `trace shows how an answer changed, and what it was before`() {
+        val session = opened()
+        val output = session.repl.outputOf(":trace Specimen/30012 type.coding.code")
+        assertEquals(
+            listOf(
+                registry.out3.short to "CITRATE_PLASMA  (was EDTA_PLASMA)",
+                registry.out1.short to "EDTA_PLASMA  (was PLASMA)",
+                registry.m1.short to "PLASMA  (added)",
+            ),
+            rowsOf(output),
+        )
+        assertContains(output.lines().first(), "3 change(s) in 3 commit(s) that touched it")
+        // Read from the history: the pool stays where it was.
+        assertContains(session.run(":log 1"), "* ${registry.out4.short}")
+    }
+
+    @Test
+    fun `trace leaves out commits that changed the resource but not the answer`() {
+        val session = opened()
+        val output = session.repl.outputOf(":trace Specimen/30012 subject.reference")
+        assertEquals(listOf(registry.m1.short to "Patient/2001  (added)"), rowsOf(output))
+        assertContains(output.lines().first(), "1 change(s) in 3 commit(s)")
+    }
+
+    @Test
+    fun `trace says when the resource went`() {
+        assertEquals(
+            listOf(registry.out4.short to "deleted  (was Dummy)", registry.out2.short to "Dummy  (added)"),
+            rowsOf(opened().repl.outputOf(":trace Patient/9999 name.family")),
+        )
+    }
+
+    @Test
+    fun `with a focus, trace follows the focused resource or element`() {
+        val session = opened()
+        val expected = rowsOf(session.repl.outputOf(":trace Specimen/30012 type.coding.code"))
+        session.run(":focus Specimen/30012")
+        assertEquals(expected, rowsOf(session.repl.outputOf(":trace type.coding.code")))
+        session.run(":focus type")
+        assertEquals(expected, rowsOf(session.repl.outputOf(":trace coding.code")))
+    }
+
+    @Test
+    fun `trace refuses what it cannot answer`() {
+        val session = opened()
+        assertContains(session.run(":trace type.coding.code"), "usage: :trace <label> <expr>")
+        assertContains(session.run(":trace Specimen/30012"), "usage: :trace <label> <expr>")
+        assertContains(session.run(":trace Specimen/30012 subject.resolve().name"), "resolve() would read the pool at ${registry.out4.short}")
+        assertContains(session.run(":trace Specimen/30012 type.where("), "! ")
+        assertContains(Run("plain").run(":trace Specimen/30012 type"), "is not a git pool")
+    }
+
     // ------------------------------------------------------------- :at a date
 
     /** [commit]'s time to the minute, as `:at` takes it, in the zone `:log` shows. */
@@ -487,9 +572,9 @@ class GitPoolTest {
         assertFalse(last.contains("older"), last)
         assertContains(last, "(at ${registry.out4.short}, which is not among these)")
         assertContains(session.run(":log +9"), "only 5 commit(s) on branch/out")
-        assertContains(session.run(":log x"), "usage: :log [n] [+skip]")
-        assertContains(session.run(":log 0"), "usage: :log [n] [+skip]")
-        assertContains(session.run(":log 2 +2 +4"), "usage: :log [n] [+skip]")
+        assertContains(session.run(":log x"), "x is not a label a history can follow")
+        assertContains(session.run(":log 0"), "usage: :log [label] [n] [+skip]")
+        assertContains(session.run(":log 2 +2 +4"), "usage: :log [label] [n] [+skip]")
         // Past what an Int holds once a page is added: the whole line, nothing older.
         val all = session.run(":log ${Int.MAX_VALUE}")
         assertContains(all, registry.m1.short)

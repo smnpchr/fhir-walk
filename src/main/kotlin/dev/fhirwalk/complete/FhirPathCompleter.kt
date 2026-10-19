@@ -75,11 +75,15 @@ class FhirPathCompleter(
             return
         }
         // `:all` runs across the pool whatever is in focus, so it completes unrebased.
-        val relativeTo = focus().takeIf { slice.command != ":all" }
+        // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
+        val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
+            ?: focus().takeIf { slice.command != ":all" }
         val expression = mutableListOf<Candidate>()
         completeExpression(slice.text, slice.cursor, relativeTo, expression)
         // Labels first in the menu, but sized to the room the expression left.
-        if (slice.command == ":focus") focusLabels(slice, relativeTo, expression, candidates)
+        if (slice.command == ":focus" || (slice.command == ":trace" && slice.subject == null)) {
+            focusLabels(slice, relativeTo, expression, candidates)
+        }
         candidates += expression
     }
 
@@ -142,6 +146,12 @@ class FhirPathCompleter(
             // follow, a few, to switch the line.
             // A commit is typed by its time, or by its id once one is begun; the value
             // is whichever the word matched, since JLine narrows the menu by it.
+            // A label for the history of one resource; numbers and +skip need no help.
+            ":log" -> if (!lastToken.startsWith("+") && lastToken.toIntOrNull() == null) {
+                pool().all().filter { it.label.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it.label, it.label, "pool", it.origin)
+                }
+            }
             ":at" -> if (arguments.size == 1) {
                 val refs = revisions().filter { it.startsWith(lastToken) }.take(MAX_REFS)
                 commits().mapNotNull { commit ->

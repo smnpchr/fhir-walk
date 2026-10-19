@@ -38,7 +38,14 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     }
 
     /** A resource [parse] found, kept so it can be added to a pool more than once. */
-    class Parsed(val resource: IBaseResource, val fullUrl: String?, val origin: String)
+    class Parsed(val resource: IBaseResource, val fullUrl: String?, val origin: String) {
+        /** As [PooledResource.label] would have it, for a resource that is in no pool. */
+        fun label(ctx: FhirContext): String {
+            val type = ctx.getResourceType(resource)
+            val id = resource.idElement?.idPart?.takeIf { it.isNotBlank() }
+            return id?.let { "$type/$it" } ?: fullUrl ?: "$type ($origin)"
+        }
+    }
 
     private val json: IParser by lazy { ctx.newJsonParser() }
     private val xml: IParser by lazy { ctx.newXmlParser() }

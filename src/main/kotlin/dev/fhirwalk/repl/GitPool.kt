@@ -3,6 +3,7 @@ package dev.fhirwalk.repl
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.RevisionLoader
+import dev.fhirwalk.pool.ResourceHistory
 import dev.fhirwalk.pool.ResourcePool
 import org.eclipse.jgit.lib.ObjectId
 import java.time.DateTimeException
@@ -19,14 +20,16 @@ import java.time.Instant
 class GitPool(
     val source: GitSource,
     var line: String,
-    importer: Importer,
+    private val importer: Importer,
     private val pool: ResourcePool,
     private val times: CommitTimes = CommitTimes(),
 ) {
     private val loader = RevisionLoader(source, importer, pool)
 
     /** What each commit changed, by id: a commit never changes, and listings ask often. */
-    private val changed = HashMap<ObjectId, Int>()
+    private val changed = HashMap<ObjectId, List<GitSource.Change>>()
+
+    private val resources = ResourceHistory(source, importer, pool.ctx, ::changes)
 
     val commit: GitSource.Commit get() = checkNotNull(loader.commit) { "not loaded yet" }
 
@@ -122,10 +125,21 @@ class GitPool(
 
     /**
      * How many files [commit] changed, for listing many commits without loading them.
-     * Throws when they cannot be read; only a count is kept, so it is asked again.
+     * Throws when they cannot be read; nothing is kept then, so it is asked again.
      */
-    fun changedFiles(commit: GitSource.Commit, reads: (String) -> Boolean): Int =
-        changed.getOrPut(commit.id) { source.changes(commit, reads).size }
+    fun changedFiles(commit: GitSource.Commit): Int = changes(commit).size
+
+    private fun changes(commit: GitSource.Commit): List<GitSource.Change> =
+        changed.getOrPut(commit.id) { source.changes(commit, importer::reads) }
+
+    /**
+     * The commits of the line that added, changed or deleted [label], newest first,
+     * read as the sequence is: see [ResourceHistory]. Throws as any read does.
+     */
+    fun history(label: String): Sequence<ResourceHistory.Change> {
+        val tip = source.resolve(line) ?: return emptySequence()
+        return resources.of(label, source.history(tip))
+    }
 
     /**
      * A damaged or vanished repository surfaces as whatever JGit throws, from any

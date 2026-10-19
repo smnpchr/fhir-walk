@@ -35,6 +35,18 @@ class PromptLineTest {
     }
 
     @Test
+    fun `trace's label is its subject, not part of its expression`() {
+        assertEquals(
+            PromptLine.Slice("type.co", 7, 22, ":trace", subject = "Specimen/30012"),
+            PromptLine.expressionSlice(":trace Specimen/30012 type.co", 29),
+        )
+        // Still being typed, the label completes alongside expressions.
+        assertEquals(PromptLine.Slice("Specimen/300", 12, 7, ":trace"), PromptLine.expressionSlice(":trace Specimen/300", 19))
+        // With a focus there is no label: the expression starts straight away.
+        assertEquals(PromptLine.Slice("type.co", 7, 7, ":trace"), PromptLine.expressionSlice(":trace type.co", 14))
+    }
+
+    @Test
     fun `focus takes an expression as well as a label`() {
         assertEquals(PromptLine.Slice("code.cod", 8, 7, ":focus"), PromptLine.expressionSlice(":focus code.cod", 15))
     }
