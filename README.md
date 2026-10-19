@@ -267,8 +267,8 @@ what it names; the old spellings, with or without the colon, point to the new on
 A view can be named, which saves it to rerun. `:name-view people` (or `:name-view
 @people`) saves the last `:view`, `:view @people` runs it again, and further columns can
 follow (`:view @people #4`); `:name-view` alone lists the saved views and `:unname-view
-people` forgets one. A saved view holds its columns' expressions rather than their numbers, and its
-titles are renumbered against the log as it stands: a column whose expression has
+people` forgets one. A saved view holds its columns' expressions rather than their
+numbers, and its titles are renumbered against the log as it stands: a column whose expression has
 left the log keeps its place with no number, and gets one back when it returns. A
 column asked for by name follows the name, so rebinding `family` changes what the
 view computes along with its title; once the name is forgotten, the column keeps the
