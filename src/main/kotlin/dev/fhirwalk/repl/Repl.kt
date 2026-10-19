@@ -806,9 +806,9 @@ class Repl(
         val titles = table.columns.map { it.title(table.type) }
         val labelWidth = table.rows.maxOf { it.resource.label.length }
         // In full each column is as wide as its widest cell; the preview shares out
-        // what the window leaves after the labels.
+        // what the window leaves after the labels and gaps.
         val natural = titles.indices.map { idx -> maxOf(titles[idx].length, table.rows.maxOf { it.cells[idx].length }) }
-        val share = ((columns - 2 - labelWidth) / titles.size - COLUMN_GAP).coerceAtLeast(MIN_CELL_WIDTH)
+        val room = columns - 2 - labelWidth - COLUMN_GAP * titles.size
         fun line(label: String, cells: List<String>, widths: List<Int>, styled: Boolean): String {
             val body = cells.zip(widths).joinToString(" ".repeat(COLUMN_GAP)) { (cell, width) ->
                 // Pad after shortening and before colouring, so escape codes do not count.
@@ -819,7 +819,7 @@ class Repl(
             return "  $owner" + " ".repeat(COLUMN_GAP) + body.trimEnd()
         }
         fun rows(widths: List<Int>) = table.rows.map { line(it.resource.label, it.cells, widths, styled = true) }
-        val previewWidths = natural.map { minOf(it, share) }
+        val previewWidths = fitColumns(natural, room, MIN_CELL_WIDTH)
         val summary = "${table.rows.size} ${table.type} row(s)" +
             if (table.errors > 0) style.error("; ${table.errors} error(s): ${table.firstError}") else ""
         fun header(widths: List<Int>) = summary + "\n" + style.hint(line("", titles, widths, styled = false))
