@@ -121,10 +121,10 @@ Type a FHIRPath expression, or:
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
 | `:view #n\|name\|@view …` | a table: one row per resource, a column per recorded expression |
-| `:name [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
-| `:unname <name>` | forget a name |
-| `:save [view]` | save the last `:view`, to rerun as `:view @view`; alone, list the saved views |
-| `:unsave <view>` | forget a saved view |
+| `:name-expr [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
+| `:unname-expr <name>` | forget an expression's name |
+| `:name-view [view]` | name and save the last `:view`, to rerun as `:view @view`; alone, list the saved views |
+| `:unname-view <view>` | forget a saved view |
 | `:workspace [name]` | switch workspace; alone, show it and list the others |
 | `:more` | reprint the last listing in full, nothing shortened |
 | `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
@@ -227,8 +227,8 @@ are joined with `, `. Anything else is refused before a row is printed. `resolve
 `extension('…')` work in a column as anywhere else. TAB after `:view` offers the
 recorded expressions by number.
 
-A column can also be named, and is then asked for and titled by its name. `:name
-family` right after a pool-wide expression names that one; `:name family #1` names one
+A column can also be named, and is then asked for and titled by its name. `:name-expr
+family` right after a pool-wide expression names that one; `:name-expr family #1` names one
 from `:history`:
 
 ```
@@ -237,7 +237,7 @@ r4:pool(6)> Patient.name.family
   Patient/pat1                 Mustermann
   Patient/pat2                 Schmidt
 
-r4:pool(6)> :name family
+r4:pool(6)> :name-expr family
 family  Patient.name.family
 
 r4:pool(6)> :view family #2
@@ -253,19 +253,22 @@ A name holds the expression's text rather than its number, so renumbering the lo
 hand does not change what `family` means. Only expressions that would be recorded can
 be named this way — pool-wide, and matching something — but a name may hold a
 structured one such as `Patient.name`; it is `:view` that asks for primitives.
-`:history` shows each entry's names beside it, `:name` alone lists them all, and `:name family #3` rebinds a name, saying what it
-held before.
+`:history` shows each entry's names beside it, `:name-expr` alone lists them all, and
+`:name-expr family #3` rebinds a name, saying what it held before.
 
 A name starts with a letter, so it never reads as a number, and names are
-case-sensitive. Typing a command without its colon (`view #1`, `name family #1`) still
-gets a hint, unless the word is an element where the expression would run *and* the
-line parses as FHIRPath: a bare `name` is `Patient.name`, not `:name`.
+case-sensitive. Typing a command without its colon (`view #1`, `focus Patient/pat1`)
+still gets a hint, unless the word is an element where the expression would run *and*
+the line parses as FHIRPath: a bare `name` is `Patient.name`, not a command.
 
-A view can be saved and rerun. `:save people` (or `:save @people`) saves the last
-`:view`, `:view @people` runs it again, and further columns can follow
-(`:view @people #4`); `:save` alone lists the saved views and `:unsave people` forgets
-one. A saved view holds its columns' expressions rather than their numbers, and its
-titles are renumbered against the log as it stands: a column whose expression has
+The naming commands used to be `:name`, `:unname`, `:save` and `:unsave`. Each now says
+what it names; the old spellings, with or without the colon, point to the new ones.
+
+A view can be named, which saves it to rerun. `:name-view people` (or `:name-view
+@people`) saves the last `:view`, `:view @people` runs it again, and further columns can
+follow (`:view @people #4`); `:name-view` alone lists the saved views and `:unname-view
+people` forgets one. A saved view holds its columns' expressions rather than their
+numbers, and its titles are renumbered against the log as it stands: a column whose expression has
 left the log keeps its place with no number, and gets one back when it returns. A
 column asked for by name follows the name, so rebinding `family` changes what the
 view computes along with its title; once the name is forgotten, the column keeps the

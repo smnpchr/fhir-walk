@@ -67,7 +67,7 @@ class Repl(
     /** What the state file was last written with, or found holding, so unchanged state is not rewritten. */
     private var lastSaved: SavedState? = null
 
-    /** The columns of the last `:view`, for `:save`. */
+    /** The columns of the last `:view`, for `:name-view`. */
     private var lastView: List<ViewBuilder.Column>? = null
 
     /** Null until [run] has built it; the tests drive [dispatch] without one. */
@@ -97,10 +97,10 @@ class Repl(
         FhirPathCompleter.CommandInfo(":ext", "[path]", "extension URLs observed in the pool"),
         FhirPathCompleter.CommandInfo(":history", "[filter]", "recorded pool-wide expressions, newest first"),
         FhirPathCompleter.CommandInfo(":view", "#n|name|@view …", "a table: one row per resource, a column per recorded expression"),
-        FhirPathCompleter.CommandInfo(":name", "[name [#n]]", "name the expression just run, or #n, for :view; alone, list"),
-        FhirPathCompleter.CommandInfo(":unname", "<name>", "forget a name"),
-        FhirPathCompleter.CommandInfo(":save", "[view]", "save the last :view, to rerun as :view @view; alone, list"),
-        FhirPathCompleter.CommandInfo(":unsave", "<view>", "forget a saved view"),
+        FhirPathCompleter.CommandInfo(":name-expr", "[name [#n]]", "name the expression just run, or #n, for :view; alone, list"),
+        FhirPathCompleter.CommandInfo(":unname-expr", "<name>", "forget an expression's name"),
+        FhirPathCompleter.CommandInfo(":name-view", "[view]", "name and save the last :view, to rerun as :view @view; alone, list"),
+        FhirPathCompleter.CommandInfo(":unname-view", "<view>", "forget a saved view"),
         FhirPathCompleter.CommandInfo(":workspace", "[name]", "switch workspace; alone, show it and list the others"),
         FhirPathCompleter.CommandInfo(":more", "", "reprint the last listing in full, nothing shortened"),
         FhirPathCompleter.CommandInfo(":limit", "[rows|off]", "rows per listing before the rest waits for :more"),
@@ -141,7 +141,7 @@ class Repl(
     private var lastExpression: String? = null
 
     /**
-     * What `:name <name>` with no number names: the expression just run, if it was
+     * What `:name-expr <name>` with no number names: the expression just run, if it was
      * pool-wide and matched -- the ones that are recorded. Every evaluation replaces
      * it, so a focus-relative or empty one in between leaves nothing to name rather
      * than an older expression the user has stopped looking at.
@@ -286,8 +286,9 @@ class Repl(
             // an element where the expression runs: `name` is a command and, far more
             // often, Patient.name.
             val firstWord = input.substringBefore(' ')
-            if (":$firstWord" in commandNames && !(isElementHere(firstWord) && parses(input))) {
-                out.println(style.error("! not a FHIRPath expression — did you mean  :$input"))
+            val command = RENAMED[":$firstWord"] ?: ":$firstWord"
+            if (command in commandNames && !(isElementHere(firstWord) && parses(input))) {
+                out.println(style.error("! not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}"))
                 return true
             }
             lastExpression = input
@@ -331,14 +332,18 @@ class Repl(
             ":ext" -> extensions(argument, out)
             ":history" -> history(argument, out)
             ":view" -> view(argument, out)
-            ":name" -> name(argument, out)
-            ":unname" -> unname(argument, out)
-            ":save" -> saveView(argument, out)
-            ":unsave" -> unsaveView(argument, out)
+            ":name-expr" -> name(argument, out)
+            ":unname-expr" -> unname(argument, out)
+            ":name-view" -> saveView(argument, out)
+            ":unname-view" -> unsaveView(argument, out)
             ":workspace" -> switchWorkspace(argument, out)
             ":more" -> more(out)
             ":limit" -> limit(argument, out)
             ":fhir" -> switchVersion(argument, out)
+            in RENAMED -> {
+                val now = RENAMED.getValue(command)
+                out.println(style.error("! $command is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}"))
+            }
             else -> out.println("unknown command $command — :help for the list")
         }
         return true
@@ -693,8 +698,8 @@ class Repl(
     }
 
     /**
-     * `:name` lists, `:name family` names the expression just run, `:name family #1`
-     * names a recorded one. A name may hold any expression; only `:view` asks for
+     * `:name-expr` lists, `:name-expr family` names the expression just run,
+     * `:name-expr family #1` names a recorded one. A name may hold any expression; only `:view` asks for
      * primitives, and says so when it is used.
      */
     private fun name(argument: String, out: PrintWriter) {
@@ -704,7 +709,7 @@ class Repl(
             0 -> {
                 val all = names.all()
                 if (all.isEmpty()) {
-                    out.println("no names yet — :name <name> #n names a recorded expression")
+                    out.println("no names yet — :name-expr <name> #n names a recorded expression")
                     return
                 }
                 val width = all.keys.maxOf { it.length }
@@ -727,13 +732,13 @@ class Repl(
                     nameable ?: run {
                         out.println(
                             "nothing to name — run a pool-wide expression that matches something first, " +
-                                "or :name $name #n for one from :history",
+                                "or :name-expr $name #n for one from :history",
                         )
                         return
                     }
                 } else {
                     val number = parts[1].removePrefix("#").toIntOrNull() ?: run {
-                        out.println("usage: :name <name> [#n]  —  #n from :history")
+                        out.println("usage: :name-expr <name> [#n]  —  #n from :history")
                         return
                     }
                     log.get(number) ?: run {
@@ -751,32 +756,32 @@ class Repl(
                     },
                 )
             }
-            else -> out.println("usage: :name [name [#n]]")
+            else -> out.println("usage: :name-expr [name [#n]]")
         }
     }
 
     private fun unname(argument: String, out: PrintWriter) {
         if (argument.isBlank()) {
-            out.println("usage: :unname <name>")
+            out.println("usage: :unname-expr <name>")
             return
         }
         val before = names.remove(argument)
         reportStorageProblems(out)
-        out.println(if (before == null) "no name $argument — :name lists them" else "forgot $argument  ($before)")
+        out.println(if (before == null) "no name $argument — :name-expr lists them" else "forgot $argument  ($before)")
     }
 
     /** @param argument recorded expressions by number or name: `#3 family`, `3, 5`. */
     private fun view(argument: String, out: PrintWriter) {
         val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
         if (refs.isEmpty()) {
-            out.println("usage: :view #n|name|@view …  —  numbers from :history, names from :name, views from :save")
+            out.println("usage: :view #n|name|@view …  —  numbers from :history, names from :name-expr, views from :name-view")
             return
         }
         reportStorageProblems(out)
         val picked = refs.flatMap { ref ->
             if (ref.startsWith("@")) {
                 return@flatMap savedColumns(ref.drop(1)) ?: run {
-                    out.println("no saved view ${ref.drop(1)} — :save lists them")
+                    out.println("no saved view ${ref.drop(1)} — :name-view lists them")
                     return
                 }
             }
@@ -789,7 +794,7 @@ class Repl(
                 listOf(ViewBuilder.Column(expression, number = number))
             } else {
                 val expression = names.get(ref) ?: run {
-                    out.println("no :history number or name $ref — see :history and :name")
+                    out.println("no :history number or name $ref — see :history and :name-expr")
                     return
                 }
                 listOf(ViewBuilder.Column(expression, name = ref))
@@ -850,13 +855,13 @@ class Repl(
         }
     }
 
-    /** `:save` lists, `:save patients` saves the last `:view` under that name. */
+    /** `:name-view` lists, `:name-view patients` saves the last `:view` under that name. */
     private fun saveView(argument: String, out: PrintWriter) {
         reportStorageProblems(out)
         if (argument.isBlank()) {
             val all = views.all()
             if (all.isEmpty()) {
-                out.println("no saved views — :save <name> after a :view saves it")
+                out.println("no saved views — :name-view <name> after a :view saves it")
                 return
             }
             val width = all.keys.maxOf { it.length } + 1
@@ -892,12 +897,12 @@ class Repl(
     private fun unsaveView(argument: String, out: PrintWriter) {
         val name = argument.removePrefix("@")
         if (name.isBlank()) {
-            out.println("usage: :unsave <view>")
+            out.println("usage: :unname-view <view>")
             return
         }
         val before = views.remove(name)
         reportStorageProblems(out)
-        out.println(if (before == null) "no saved view $name — :save lists them" else "forgot @$name")
+        out.println(if (before == null) "no saved view $name — :name-view lists them" else "forgot @$name")
     }
 
     // ----------------------------------------------------------------- workspace
@@ -1691,10 +1696,11 @@ class Repl(
         out.println("tabulates them: one row per resource of the type they start from,")
         out.println("one column each. Columns must yield primitives, e.g. name.family")
         out.println("rather than name; several values in one cell are joined with \", \".")
-        out.println(":name family right after a pool-wide expression names it; :name family #1")
-        out.println("names a recorded one. Then :view family birth #3 works and the column is")
-        out.println("titled family. A name holds the expression itself, not its number.")
-        out.println(":save people saves the last :view; :view @people reruns it.")
+        out.println(":name-expr family right after a pool-wide expression names it;")
+        out.println(":name-expr family #1 names a recorded one. Then :view family birth #3")
+        out.println("works and the column is titled family. A name holds the expression")
+        out.println("itself, not its number.")
+        out.println(":name-view people saves the last :view; :view @people reruns it.")
         out.println()
         out.println("Several pools can be open at once, each with its own census and focus;")
         out.println("resolve() stays inside the pool. :open specimen <path> adds one and")
@@ -1755,6 +1761,14 @@ class Repl(
         /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
         const val MAX_CHOICES = 2000
         const val LOG_INDENT = 38
+
+        /** The naming commands' old spellings, before each said what it names (#29). */
+        val RENAMED = mapOf(
+            ":name" to ":name-expr",
+            ":unname" to ":unname-expr",
+            ":save" to ":name-view",
+            ":unsave" to ":unname-view",
+        )
 
         val COMMIT_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 

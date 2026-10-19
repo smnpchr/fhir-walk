@@ -134,10 +134,10 @@ class WorkspaceTest {
         val session = Session()
         session.run(":load samples/basic")
         session.run("Patient.name.family")
-        session.run(":name family")
+        session.run(":name-expr family")
         assertContains(session.run(":workspace w2"), "workspace w2, FHIR R4 — new")
         assertContains(session.run(":history"), "nothing recorded yet")
-        assertContains(session.run(":name"), "no names yet")
+        assertContains(session.run(":name-expr"), "no names yet")
         assertContains(session.run(":pool"), "pool is empty")
         val back = session.run(":workspace w1")
         assertContains(back, "loaded 6 resource(s)")
@@ -162,10 +162,10 @@ class WorkspaceTest {
         session.run(":load samples/basic")
         session.run("Patient.name.family")
         session.run("Patient.birthDate")
-        session.run(":name family #1")
-        assertContains(session.run(":save people"), "nothing to save")
+        session.run(":name-expr family #1")
+        assertContains(session.run(":name-view people"), "nothing to save")
         session.run(":view family #2")
-        assertContains(session.run(":save people"), "saved @people: 2 column(s)")
+        assertContains(session.run(":name-view people"), "saved @people: 2 column(s)")
         val again = Session()
         assertContains(again.run(":view @people"), "#2 birthDate")
         // Prepending an entry by hand renumbers the log; the view follows.
@@ -176,8 +176,8 @@ class WorkspaceTest {
         Files.writeString(log, "Patient.gender\n")
         val titles = again.run(":view @people").lines()[1]
         assertTrue(titles.contains("birthDate") && !titles.contains("#"), titles)
-        assertContains(again.run(":save"), "@people")
-        assertContains(again.run(":unsave people"), "forgot @people")
+        assertContains(again.run(":name-view"), "@people")
+        assertContains(again.run(":unname-view people"), "forgot @people")
         assertContains(again.run(":view @people"), "no saved view people")
     }
 
@@ -226,9 +226,9 @@ class WorkspaceTest {
         session.run(":load samples/basic")
         session.run("Patient.name.family")
         session.run(":view #1")
-        assertContains(session.run(":save @people"), "saved @people: 1 column(s)")
+        assertContains(session.run(":name-view @people"), "saved @people: 1 column(s)")
         assertContains(session.run(":view @people"), "Mustermann")
-        assertContains(session.run(":unsave @people"), "forgot @people")
+        assertContains(session.run(":unname-view @people"), "forgot @people")
     }
 
     @Test
@@ -237,20 +237,20 @@ class WorkspaceTest {
         session.run(":load samples/basic")
         session.run("Patient.name.family")
         session.run("Patient.birthDate")
-        session.run(":name col #1")
+        session.run(":name-expr col #1")
         session.run(":view col #2")
-        session.run(":save v")
+        session.run(":name-view v")
         // The name now means something else: the column computes what its title says.
-        session.run(":name col #2")
+        session.run(":name-expr col #2")
         val rebound = session.run(":view @v")
         assertContains(rebound, "1979-02-28")
         assertFalse(rebound.contains("Schmidt"), rebound)
         // Saved again while #2 is gone from the log, then back: the number returns.
         val log = home.resolve("workspaces/w1/expressions")
         Files.writeString(log, "Patient.name.family\n")
-        session.run(":unname col")
+        session.run(":unname-expr col")
         session.run(":view @v")
-        session.run(":save v")
+        session.run(":name-view v")
         Files.writeString(log, "Patient.name.family\nPatient.birthDate\n")
         assertContains(session.run(":view @v").lines()[1], "#2 birthDate")
     }

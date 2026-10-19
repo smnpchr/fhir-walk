@@ -120,7 +120,7 @@ class FhirPathCompleter(
                 recordedColumns(lastToken, taken, minOf(MAX_ROWS, room), candidates)
             }
             // Either spelling, `people` or `@people`; the candidate keeps the one typed.
-            ":save", ":unsave" -> if (arguments.size == 1) {
+            ":name-view", ":unname-view" -> if (arguments.size == 1) {
                 val prefix = if (lastToken.startsWith("@")) "@" else ""
                 views(lastToken.removePrefix("@"), prefix, MAX_ROWS, candidates)
             }
@@ -164,11 +164,11 @@ class FhirPathCompleter(
                 }
             }
             // The name first, to show or rebind one; then the number it is to hold.
-            ":name" -> when (arguments.size) {
+            ":name-expr" -> when (arguments.size) {
                 1 -> names(lastToken, emptySet(), MAX_ROWS, candidates)
                 2 -> recordedColumns(lastToken, emptySet(), MAX_ROWS, candidates)
             }
-            ":unname" -> if (arguments.size == 1) names(lastToken, emptySet(), MAX_ROWS, candidates)
+            ":unname-expr" -> if (arguments.size == 1) names(lastToken, emptySet(), MAX_ROWS, candidates)
         }
     }
 
@@ -194,7 +194,7 @@ class FhirPathCompleter(
     }
 
     /**
-     * Names from `:name`, narrowed by what is typed before the cap. Case-sensitive,
+     * Names from `:name-expr`, narrowed by what is typed before the cap. Case-sensitive,
      * as names are: offering `family` for `Fam` would complete what `:view Fam…`,
      * typed out, would refuse. A name whose expression is in [taken] is skipped.
      *
@@ -212,7 +212,7 @@ class FhirPathCompleter(
      * Saved views whose name starts with [partial].
      *
      * @param prefix what goes before the name in the inserted value: `@` after
-     *   `:view`, nothing after `:save`.
+     *   `:view`, nothing after `:name-view`.
      * @return how many were offered.
      */
     private fun views(partial: String, prefix: String, limit: Int, candidates: MutableList<Candidate>): Int {

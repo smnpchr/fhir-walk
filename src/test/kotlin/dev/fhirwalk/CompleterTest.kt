@@ -316,9 +316,9 @@ class CompleterTest {
         // A name and the number it holds are one column: either rules out the other.
         assertEquals(setOf("born", "#2"), values(":view family ").toSet())
         assertEquals(setOf("family", "#1"), values(":view #2 ").toSet())
-        assertEquals(setOf("family", "born"), values(":unname ").toSet())
-        assertEquals(setOf("family", "born"), values(":name ").toSet())
-        assertEquals(listOf("#2", "#1"), values(":name born "))
+        assertEquals(setOf("family", "born"), values(":unname-expr ").toSet())
+        assertEquals(setOf("family", "born"), values(":name-expr ").toSet())
+        assertEquals(listOf("#2", "#1"), values(":name-expr born "))
     }
 
     @Test
