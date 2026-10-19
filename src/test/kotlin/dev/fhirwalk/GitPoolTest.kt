@@ -3,6 +3,7 @@ package dev.fhirwalk
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.repl.GitPool
+import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Session
 import dev.fhirwalk.repl.Workspaces
@@ -416,6 +417,31 @@ class GitPoolTest {
         assertEquals(listOf(minute(registry.out2)), offered(":at ${minute(registry.out2)}").map { it.value() })
         // What each changed is beside its subject, as :log shows it.
         assertEquals("Δ1  remove dummy patient", all.single { it.value() == minute(registry.out4) }.descr())
+    }
+
+    // ------------------------------------------------------------- the model
+
+    @Test
+    fun `log says what each commit is, apart from the window it is printed in`() {
+        val session = opened()
+        val listing = session.repl.outputOf(":log").listing!!
+        val first = listing.rows.first().spans
+        assertEquals(registry.out4.short, first.single { it.kind == Output.Kind.INDEX }.text)
+        assertEquals("    Δ1", first.single { it.kind == Output.Kind.COUNT }.text)
+        // The subject is what gives way in a narrow window; the model keeps it whole.
+        assertEquals("remove dummy patient", first.single { it.shrinks }.text)
+        assertEquals(5, listing.rows.size)
+    }
+
+    @Test
+    fun `delta rows name each resource as a label`() {
+        val session = opened()
+        session.run(":step -1")
+        val rows = session.repl.outputOf(":delta").listing!!.rows
+        assertTrue(rows.isNotEmpty())
+        rows.forEach { row -> assertTrue(row.spans.any { it.kind == Output.Kind.LABEL && it.text.contains('/') }, row.text) }
+        // :more prints the same listing whole.
+        assertEquals(rows, (session.repl.outputOf(":more").blocks.single() as Output.Whole).listing.rows)
     }
 
     // ------------------------------------------------------------- :at a date
