@@ -43,7 +43,7 @@ class ResourceHistoryTest {
     private val ctx = FhirVersion.R4.create()
     private val source = GitSource.open(root)
     private val importer = Importer(ctx, ResourcePool(ctx))
-    private val history = ResourceHistory(source, importer, ctx) { source.changes(it, importer::reads) }
+    private val history = ResourceHistory(source, importer, ctx, changes = { source.changes(it, importer::reads) })
     private val line = source.history(source.resolve("main")!!)
 
     @Test
@@ -64,7 +64,7 @@ class ResourceHistoryTest {
     @Test
     fun `a page stops reading once it is full`() {
         var asked = 0
-        val counting = ResourceHistory(source, importer, ctx) { asked++; source.changes(it, importer::reads) }
+        val counting = ResourceHistory(source, importer, ctx, changes = { asked++; source.changes(it, importer::reads) })
         assertEquals(gone.name, counting.of("Patient/a", line).first().commit.id.name)
         assertEquals(1, asked)
     }
@@ -72,9 +72,35 @@ class ResourceHistoryTest {
     @Test
     fun `only a label that holds across revisions can be followed`() {
         assertTrue(ResourceHistory.isLabel("Specimen/30012"))
-        assertTrue(ResourceHistory.isLabel("urn:uuid:7f1c"))
+        // HAPI takes an id-less entry's id from its fullUrl, and labels it so.
+        assertTrue(ResourceHistory.isLabel("Patient/urn:uuid:7f1c"))
         assertFalse(ResourceHistory.isLabel("type.coding.code"))
         assertFalse(ResourceHistory.isLabel("Patient[#3]"))
         assertFalse(ResourceHistory.isLabel("value/2"))
+        // An expression with a URL in it is an expression.
+        assertFalse(ResourceHistory.isLabel("extension('http://a.org/x').value"))
+        assertFalse(ResourceHistory.isLabel("urn:uuid:7f1c"))
+    }
+
+    @Test
+    fun `an entry of a urn-linked bundle is followed by the label the pool gives it`() {
+        fun bundle(family: String) = """{"resourceType":"Bundle","type":"transaction","entry":[""" +
+            """{"fullUrl":"urn:uuid:9d2e","resource":{"resourceType":"Patient","name":[{"family":"$family"}]}}]}"""
+        val first = commit("bundle", mapOf("bundle.json" to bundle("Ur")))
+        val second = commit("bundle again", mapOf("bundle.json" to bundle("Urs")))
+        val label = importer.parse("bundle.json", bundle("Ur"), Importer.Report()).single().label(ctx)
+        assertEquals("Patient/urn:uuid:9d2e", label)
+        val line = source.history(source.resolve("main")!!)
+        assertEquals(listOf(second, first).map { it.name }, history.of(label, line).map { it.commit.id.name }.toList())
+    }
+
+    @Test
+    fun `a file that will not parse is told, and the walk goes on`() {
+        val broken = commit("broken", mapOf("b.json" to "{\"resourceType\":\"Patient\",\"id\":\"a\""))
+        val told = mutableListOf<String>()
+        val walking = ResourceHistory(source, importer, ctx, { source.changes(it, importer::reads) }) { told += it }
+        val changes = walking.of("Patient/a", source.history(source.resolve("main")!!)).toList()
+        assertTrue(told.single().startsWith("at ${broken.name.take(7)}: b.json: "), "got $told")
+        assertEquals(listOf(gone, changed, added).map { it.name }, changes.map { it.commit.id.name })
     }
 }

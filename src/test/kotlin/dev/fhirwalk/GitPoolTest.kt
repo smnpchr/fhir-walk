@@ -520,11 +520,30 @@ class GitPoolTest {
     }
 
     @Test
+    fun `an element's trace runs the whole expression on the element`() {
+        val session = opened()
+        session.run(":focus Specimen/30012")
+        session.run(":focus type")
+        // A union: both sides on the element, not the right one on the Specimen.
+        val newest = rowsOf(session.repl.outputOf(":trace coding.code | coding.system")).first().second
+        assertTrue("CITRATE_PLASMA" in newest && "central-sample-type" in newest, newest)
+    }
+
+    @Test
+    fun `an expression with a URL in it is not taken for a label`() {
+        val session = opened()
+        session.run(":focus Specimen/30012")
+        val rows = rowsOf(session.repl.outputOf(":trace extension('${RegistryFixture.EXT}/sample-category').value"))
+        assertEquals(listOf(registry.m1.short to "DERIVED  (added)"), rows)
+    }
+
+    @Test
     fun `trace refuses what it cannot answer`() {
         val session = opened()
         assertContains(session.run(":trace type.coding.code"), "usage: :trace <label> <expr>")
         assertContains(session.run(":trace Specimen/30012"), "usage: :trace <label> <expr>")
         assertContains(session.run(":trace Specimen/30012 subject.resolve().name"), "resolve() would read the pool at ${registry.out4.short}")
+        assertContains(session.run(":trace Specimen/30012 subject.resolve ().name"), "resolve() would read the pool")
         assertContains(session.run(":trace Specimen/30012 type.where("), "! ")
         assertContains(Run("plain").run(":trace Specimen/30012 type"), "is not a git pool")
     }
