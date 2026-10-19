@@ -11,6 +11,7 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.GitSourceException
+import dev.fhirwalk.pool.ResourceHistory
 import org.jline.reader.EndOfFileException
 import org.jline.reader.LineReader
 import org.jline.reader.Reference
@@ -88,9 +89,10 @@ class Repl(
         FhirPathCompleter.CommandInfo(":pools", "", "the open pools, their sizes and paths"),
         FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@[rev]]", "add a pool and switch to it: path loads, dir@rev is a git revision, dir@ its current branch"),
         FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
-        FhirPathCompleter.CommandInfo(":log", "[n] [+skip]", "a git pool's line, newest first, with what each commit changed; +skip pages back"),
+        FhirPathCompleter.CommandInfo(":log", "[label] [n] [+skip]", "a git pool's line, newest first, with what each commit changed; with a label, the commits that changed that resource"),
         FhirPathCompleter.CommandInfo(":at", "<rev|date>", "move a git pool to a revision, or to its line as of a date (2026-03-11); TAB lists commits by date"),
         FhirPathCompleter.CommandInfo(":step", "[-n|+n]", "move a git pool along its line; alone, one commit back"),
+        FhirPathCompleter.CommandInfo(":trace", "[label] <expr>", "how an expression's answer for one resource changed along a git pool's line; with a focus, the focused one"),
         FhirPathCompleter.CommandInfo(":delta", "", "what this revision added, modified and deleted"),
         FhirPathCompleter.CommandInfo(":scope", "[delta|all]", "run pool-wide over the delta only, or over everything"),
         FhirPathCompleter.CommandInfo(":focus", "[label|#index|expr|[n]|..]", "evaluate against one resource or element"),
@@ -339,6 +341,7 @@ class Repl(
             ":log" -> gitLog(argument, out)
             ":at" -> if (argument.isBlank()) out.text("usage: :at <rev|date>  —  a branch, tag, id, branch~2, or 2026-03-11 for the line as of then") else at(argument, out)
             ":step" -> step(argument, out)
+            ":trace" -> trace(argument, out)
             ":delta" -> delta(out)
             ":scope" -> scope(argument, out)
             ":focus" -> focus(argument, out)
@@ -1312,7 +1315,7 @@ class Repl(
         return commits.zip(names) { commit, name ->
             val marker = if (commit.id == git.commit.id) "*" else " "
             FhirPathCompleter.CommitChoice(commit.short, name, "$marker ${name.padEnd(width)}  ${commit.short}", commit.subject) {
-                runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
+                runCatching { git.changedFiles(commit) }.getOrNull()
             }
         }
     }
@@ -1416,15 +1419,22 @@ class Repl(
     private fun gitLog(argument: String, out: Output) {
         val git = gitPool(out) ?: return
         val words = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        val (skips, limits) = words.partition { it.startsWith("+") }
+        val (skips, rest) = words.partition { it.startsWith("+") }
+        val (limits, labels) = rest.partition { it.toIntOrNull() != null }
         val skip = skips.singleOrNull()?.removePrefix("+")?.toIntOrNull()?.takeIf { it >= 0 }
         val limit = limits.singleOrNull()?.toIntOrNull()?.takeIf { it > 0 }
-        if (skips.size > 1 || limits.size > 1 || (skips.isNotEmpty() && skip == null) || (limits.isNotEmpty() && limit == null)) {
+        if (skips.size > 1 || limits.size > 1 || labels.size > 1 ||
+            (skips.isNotEmpty() && skip == null) || (limits.isNotEmpty() && limit == null)
+        ) {
             out.text(LOG_USAGE)
             return
         }
         val page = limit ?: DEFAULT_LOG
         val skipped = skip ?: 0
+        labels.singleOrNull()?.let { label ->
+            resourceLog(git, label, page, skipped, out)
+            return
+        }
         // A damaged repository throws from any read, as in a move: a history that
         // cannot be walked is an error, a commit whose changes cannot be read a Δ?.
         // One more than the page, to know whether there is an older one.
@@ -1447,9 +1457,13 @@ class Repl(
         out.listing(
             header = listOf(Output.text("${git.lineLabel} in ${git.source.path}, newest first")),
             rows = commits.map { commit ->
-                val count = runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
+                val count = runCatching { git.changedFiles(commit) }.getOrNull()
                 if (count == null) unreadable++
-                commitRow(git, commit, "Δ${count ?: "?"}".padStart(6))
+                commitRow(git, commit) {
+                    count("Δ${count ?: "?"}".padStart(6))
+                    +"  "
+                    shrink(commit.subject)
+                }
             },
         )
         if (unreadable > 0) {
@@ -1464,14 +1478,145 @@ class Repl(
         }
     }
 
-    /** `* 3f2a1c0  2026-10-17 14:02      Δ3  sync`, marked when the pool is at it. */
-    private fun commitRow(git: GitPool, commit: GitSource.Commit, what: String): Output.Line = Output.line {
+    /** `* 3f2a1c0  2026-10-17 14:02  ` and then [rest], marked when the pool is at the commit. */
+    private fun commitRow(git: GitPool, commit: GitSource.Commit, rest: Output.LineBuilder.() -> Unit): Output.Line = Output.line {
         +(if (commit.id == git.commit.id) "* " else "  ")
         index(commit.short)
         +"  ${COMMIT_TIME.format(commit.time)}  "
-        count(what)
-        +"  "
-        shrink(commit.subject)
+        rest()
+    }
+
+    /** What a resource's history could not be read for, or null when it can be. */
+    private fun untraceable(label: String): String? = when {
+        ResourceHistory.isLabel(label) -> null
+        else -> "$label is not a label a history can follow — Type/id or a fullUrl, as :pool and :delta show them"
+    }
+
+    /** `:log Specimen/s1`: the commits of the line that added, changed or deleted one resource. */
+    private fun resourceLog(git: GitPool, label: String, page: Int, skipped: Int, out: Output) {
+        untraceable(label)?.let {
+            out.text(it)
+            return
+        }
+        // One more than the page, to know whether there is an older one.
+        val read = try {
+            git.history(label).take(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt()).toList()
+        } catch (e: Exception) {
+            out.error("cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}")
+            return
+        }
+        if (read.isEmpty()) {
+            out.text("no commit on ${git.lineLabel} added, changed or deleted $label")
+            return
+        }
+        val changes = read.drop(skipped).take(page)
+        if (changes.isEmpty()) {
+            out.text("only ${read.size} commit(s) on ${git.lineLabel} touched $label")
+            return
+        }
+        out.listing(
+            header = listOf(Output.text("$label on ${git.lineLabel}, newest first")),
+            rows = changes.map { change ->
+                commitRow(git, change.commit) {
+                    count(change.kind.name.lowercase().padEnd(8))
+                    +"  "
+                    shrink(change.commit.subject)
+                }
+            },
+        )
+        if (read.size.toLong() > skipped.toLong() + page) {
+            val size = if (page == DEFAULT_LOG) "" else "$page "
+            out.hint("  older: :log $label $size+${skipped + page}")
+        }
+    }
+
+    /**
+     * `:trace Specimen/s1 type.coding.code`: the expression's answer after each commit
+     * that changed the resource, newest first, with what it was before -- a row only
+     * where the answer changed, or the resource came or went. Read from the history
+     * alone, so the pool stays where it is. With a focus, `:trace <expr>` traces the
+     * focused resource, or the focused element by the steps that reached it.
+     */
+    private fun trace(argument: String, out: Output) {
+        val git = gitPool(out) ?: return
+        val first = argument.substringBefore(' ')
+        val (label, expression) = if (ResourceHistory.isLabel(first)) {
+            first to argument.substringAfter(' ', "").trim()
+        } else {
+            val focus = session.focus ?: run {
+                out.text(TRACE_USAGE)
+                return
+            }
+            focus.resource.label to (focusedPath(focus, argument) ?: run {
+                out.text("${focus.label} was not reached by steps from ${focus.resource.label} — :trace ${focus.resource.label} <expr>")
+                return
+            })
+        }
+        untraceable(label)?.let {
+            out.text(it)
+            return
+        }
+        if (expression.isBlank()) {
+            out.text(TRACE_USAGE)
+            return
+        }
+        if (reportSyntaxError(expression, out)) return
+        // The history is of one resource; what it references is read from the pool,
+        // which is at another revision.
+        if (expression.contains("resolve(")) {
+            out.text("resolve() would read the pool at ${git.commit.short}, not the revision traced — trace the reference itself")
+            return
+        }
+        val changes = try {
+            git.history(label).toList()
+        } catch (e: Exception) {
+            out.error("cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}")
+            return
+        }
+        if (changes.isEmpty()) {
+            out.text("no commit on ${git.lineLabel} added, changed or deleted $label")
+            return
+        }
+        // Oldest first, so each answer can say what it replaced.
+        var before: String? = null
+        val rows = mutableListOf<Output.Line>()
+        for (change in changes.asReversed()) {
+            val resource = change.resource
+            val outcome = resource?.let { session.evaluator.evaluate(it, expression) }
+            val answer = when (outcome) {
+                null -> "deleted"
+                is Outcome.Failure -> "! ${outcome.message}"
+                is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
+            }
+            val came = change.kind == GitSource.Kind.ADDED
+            if (answer == before && !came) continue
+            val was = before
+            rows += commitRow(git, change.commit) {
+                when (outcome) {
+                    null -> hint(answer)
+                    is Outcome.Failure -> shrink(answer, Output.Kind.ERROR)
+                    else -> shrink(answer)
+                }
+                if (came) hint("  (added)") else was?.let { shrink("  (was $it)", Output.Kind.HINT) }
+            }
+            before = answer
+        }
+        out.listing(
+            header = listOf(Output.text("$label  $expression on ${git.lineLabel}, newest first — ${rows.size} change(s) in ${changes.size} commit(s) that touched it")),
+            rows = rows.asReversed(),
+        )
+    }
+
+    /**
+     * [expression] as the focused resource would take it: the focus's own steps, then
+     * the expression. Null for a focus not reached by steps from its resource.
+     */
+    private fun focusedPath(focus: Focus, expression: String): String? {
+        if (focus.isResource) return expression
+        val steps = focus.label.takeIf { it.startsWith("${focus.resource.label}.") }
+            ?.removePrefix("${focus.resource.label}.") ?: return null
+        val relative = focus.step(expression)
+        return if (relative.isEmpty()) steps else "$steps.$relative"
     }
 
     private fun at(revision: String, out: Output) {
@@ -1761,6 +1906,8 @@ class Repl(
         out.text("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
         out.text(":view run over what that commit changed, while resolve() still sees")
         out.text("everything; :delta lists it, :scope all goes back to the whole pool.")
+        out.text(":log Specimen/s1 lists the commits that changed one resource, and")
+        out.text(":trace Specimen/s1 type.coding.code how an answer changed across them.")
         out.text("")
         out.text("A workspace keeps all of that, the up-arrow history, and where the")
         out.text("session was left: FHIR version, pools, :limit and focus, all")
@@ -1798,7 +1945,8 @@ class Repl(
         const val DEFAULT_LOG = 20
         /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
         const val MAX_CHOICES = 2000
-        const val LOG_USAGE = "usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back"
+        const val LOG_USAGE = "usage: :log [label] [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back; :log Specimen/s1 those that changed it"
+        const val TRACE_USAGE = "usage: :trace <label> <expr>  —  or :trace <expr> with a focus, e.g. :trace Specimen/s1 type.coding.code"
 
         /** The naming commands' old spellings, before each said what it names (#29). */
         val RENAMED = mapOf(
