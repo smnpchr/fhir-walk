@@ -147,6 +147,16 @@ class ReplTest {
     }
 
     @Test
+    fun `a view that fits the window is not shortened`() {
+        // Five columns split 100 characters evenly would cut the given names to 15.
+        listOf("Patient.name.family", "Patient.name.given", "Patient.birthDate", "Patient.gender", "Patient.id")
+            .forEach { run(it) }
+        val table = run(":view #1 #2 #3 #4 #5")
+        assertContains(table, "Erika, Maria, Rika")
+        assertFalse(table.contains("…"), table)
+    }
+
+    @Test
     fun `a view keeps resources whose cells are all empty`() {
         run("Patient.contact.name.family")
         val table = run(":view #1")
