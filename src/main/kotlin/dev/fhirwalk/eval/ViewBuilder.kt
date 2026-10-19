@@ -54,7 +54,8 @@ class ViewBuilder(
             }
     }
 
-    data class Row(val resource: PooledResource, val cells: List<String>)
+    /** @param failed the columns whose expression failed here, shown as [ERROR_CELL]. */
+    data class Row(val resource: PooledResource, val cells: List<String>, val failed: Set<Int> = emptySet())
 
     sealed interface Result {
         data class Table(
@@ -113,16 +114,19 @@ class ViewBuilder(
                         }
                         cell(outcome.values)
                     }
+                    // Null until the rows are made, so a value that reads "!" is not taken for one.
                     is Outcome.Failure -> {
                         errors++
                         if (firstError == null) firstError = "${column.described}: ${outcome.message}"
-                        ERROR_CELL
+                        null
                     }
                 }
             }
         }
 
-        val rows = resources.mapIndexed { idx, resource -> Row(resource, cellsByColumn.map { it[idx] }) }
+        val rows = resources.mapIndexed { idx, resource ->
+            Row(resource, cellsByColumn.map { it[idx] ?: ERROR_CELL }, cellsByColumn.indices.filter { cellsByColumn[it][idx] == null }.toSet())
+        }
         return Result.Table(type, columns, rows, errors, firstError)
     }
 

@@ -172,9 +172,11 @@ produces confusing results that look like product bugs.
   window, the row limit and `:more` all live there. Write new output with spans
   (`out.line { index(id); +"  "; shrink(subject) }`, `out.listing(…)`), marking the
   part that may give way with `shrink` rather than calling `abbreviate` yourself;
-  tests can then check `Repl.outputOf(line)` instead of printed text. Commands not
-  converted yet still pass pre-styled strings to `out.text` and `emit` (#33). Never
-  truncate output without an expansion path.
+  tests can then check `Repl.outputOf(line)` instead of printed text. A value is
+  `shrink(…, Kind.PREVIEW, cutsEnd = true)`; a table is `out.table(…)`, laid out by
+  the printer. `out.text` is for plain lines only: no command calls `Style` or
+  measures the window (only `run()`'s last-resort crash line writes to the terminal
+  itself). Never truncate output without an expansion path.
 - Candidate `value` is what gets inserted (including any closing `')`); `displ` is what
   the menu shows. Keep them distinct, and assert on the right one in tests.
 - Keep candidate lists under 100 entries — past that JLine asks "see all N

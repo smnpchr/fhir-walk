@@ -35,6 +35,17 @@ class ViewBuilderTest {
             builder.build(listOf(Column("Patient.name.family", 1), Column("Patient.name.given", 2))),
         )
         assertEquals(listOf("Muster mann", "A, B"), table.rows.single().cells)
+        assertEquals(emptySet(), table.rows.single().failed)
+    }
+
+    @Test
+    fun `a failed cell is known as one, and a value that reads like one is not`() {
+        // given.single() fails on two names; the literal '!' is a value.
+        val table = assertIs<ViewBuilder.Result.Table>(
+            builder.build(listOf(Column("Patient.name.given.single()", 1), Column("Patient.name.family.replace('Muster\nmann', '!')", 2))),
+        )
+        assertEquals(listOf(ViewBuilder.ERROR_CELL, "!"), table.rows.single().cells)
+        assertEquals(setOf(0), table.rows.single().failed)
     }
 
     @Test

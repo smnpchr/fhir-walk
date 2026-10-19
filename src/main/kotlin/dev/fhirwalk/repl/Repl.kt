@@ -122,7 +122,7 @@ class Repl(
      * when it was shown, both in rows and in the width of each part. Truncating
      * without a way back to the whole thing is worse than printing it all.
      */
-    private var lastListing: Output.Listing? = null
+    private var lastListing: Output.Listed? = null
 
     /**
      * The last expression that was run, so a bare `:why` can re-diagnose it.
@@ -237,7 +237,7 @@ class Repl(
     internal fun open(out: PrintWriter) = show(out) { open(it) }
 
     private fun open(out: Output) {
-        startupNotes.forEach { out.text(style.error("! $it")) }
+        startupNotes.forEach { out.error(it) }
         startupNotes.clear()
         val where = if (workspace.name == Workspaces.DEFAULT) "" else "workspace ${workspace.name}, "
         out.text("${where}FHIR ${session.version.id.uppercase()}")
@@ -310,7 +310,7 @@ class Repl(
             val firstWord = input.substringBefore(' ')
             val command = RENAMED[":$firstWord"] ?: ":$firstWord"
             if (command in commandNames && !(isElementHere(firstWord) && parses(input))) {
-                out.text(style.error("! not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}"))
+                out.error("not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}")
                 return true
             }
             lastExpression = input
@@ -365,7 +365,7 @@ class Repl(
             ":fhir" -> switchVersion(argument, out)
             in RENAMED -> {
                 val now = RENAMED.getValue(command)
-                out.text(style.error("! $command is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}"))
+                out.error("$command is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}")
             }
             else -> out.text("unknown command $command — :help for the list")
         }
@@ -401,46 +401,23 @@ class Repl(
             return
         }
         when (val outcome = session.evaluator.evaluate(focus.node, expression)) {
-            is Outcome.Failure -> out.text(style.error("! ${outcome.message}"))
+            is Outcome.Failure -> out.error("${outcome.message}")
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
                     out.text("{} empty — :why")
                     return
                 }
                 lastPicks = session.focusResolver.picksOf(expression, focus, outcome.values)
-                emit(
-                    out,
-                    header = null,
-                    preview = outcome.values.mapIndexed { idx, value -> valueRow(value, idx) },
-                    full = outcome.values.flatMapIndexed { idx, value ->
-                        expanded("  [$idx] ", value)
-                    },
+                out.listing(
+                    header = emptyList(),
+                    rows = outcome.values.mapIndexed { idx, value -> valueRow(value, idx) },
+                    full = outcome.values.flatMapIndexed { idx, value -> expanded("  [$idx] ", value) },
                 )
             }
         }
     }
 
     // ------------------------------------------------------------------- listings
-
-    /**
-     * A listing of rows its command formatted and styled itself, for the commands
-     * not yet written with [Output.Span]s; the printer holds back what does not fit.
-     *
-     * @param full every row with nothing shortened; defaults to [preview] for
-     *   listings whose rows were never width-trimmed in the first place.
-     * @param fullHeader what `:more` prints above [full]; a table's column titles
-     *   are as wide as its columns, which differ between the two.
-     */
-    private fun emit(
-        out: Output,
-        header: String?,
-        preview: List<String>,
-        full: List<String> = preview,
-        fullHeader: String? = header,
-    ) {
-        fun lines(text: String?) = text?.split("\n")?.map(Output::text).orEmpty()
-        out.listing(lines(header), preview.map(Output::text), full.map(Output::text), lines(fullHeader))
-    }
 
     private fun more(out: Output) {
         val listing = lastListing ?: run {
@@ -502,32 +479,45 @@ class Repl(
         }
     }
 
-    /** Width left for a rendered value after its label, or unlimited if unknown. */
-    private fun valueWidth(indent: Int): Int = (columns - indent).coerceAtLeast(MIN_VALUE_WIDTH)
-
     /**
      * One value on one line, shortened to fit: `[idx] Type  value`.
      *
      * @param label adds a resource column, for rows drawn from several resources.
      */
-    private fun valueRow(value: IBase, index: Int? = null, label: String? = null): String {
-        val idx = index?.let { style.index("[$it]") + " " }.orEmpty()
-        val owner = label?.let { style.label(it.padEnd(LABEL_WIDTH)) + " " }.orEmpty()
-        val indent = VALUE_INDENT + if (label != null) LABEL_WIDTH else 0
-        return "  $idx$owner${style.type(session.render.typeOf(value))}  " +
-            style.value(session.render.value(value, valueWidth(indent)), keysOnly = true)
+    private fun valueRow(value: IBase, index: Int? = null, label: String? = null): Output.Line = Output.line {
+        +"  "
+        index?.let {
+            index("[$it]")
+            +" "
+        }
+        label?.let {
+            label(it.padEnd(LABEL_WIDTH))
+            +" "
+        }
+        type(session.render.typeOf(value))
+        +"  "
+        shrink(session.render.value(value), Output.Kind.PREVIEW, cutsEnd = true)
     }
 
     /**
      * One value in full: a primitive stays on the label's line, while anything
      * structured gets pretty-printed JSON underneath it.
      */
-    private fun expanded(label: String, value: IBase): List<String> {
-        val head = style.index(label) + style.type(session.render.typeOf(value))
+    private fun expanded(label: String, value: IBase): List<Output.Line> {
+        val type = session.render.typeOf(value)
         val lines = session.render.pretty(value)
-        if (lines.size == 1) return listOf("$head  ${style.value(lines.first())}")
+        if (lines.size == 1) {
+            return listOf(
+                Output.line {
+                    index(label)
+                    type(type)
+                    +"  "
+                    value(lines.first())
+                },
+            )
+        }
         val indent = " ".repeat(label.length + 2)
-        return listOf(head) + lines.map { indent + style.json(it) }
+        return listOf(Output.line { index(label); type(type) }) + lines.map { line -> Output.line { +indent; json(line) } }
     }
 
     /**
@@ -538,7 +528,7 @@ class Repl(
      */
     private fun reportSyntaxError(expression: String, out: Output): Boolean {
         val error = session.evaluator.validate(expression) ?: return false
-        out.text(style.error("! $error"))
+        out.error("$error")
         // FHIRPath strings are single-quoted; " delimits an identifier, so a
         // double-quoted URL fails with a message that never mentions quoting.
         if (expression.contains('"')) {
@@ -554,14 +544,16 @@ class Repl(
         nameable = null
         if (reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
-        val header = "${result.hits.size} of ${result.considered} resource(s) matched" +
-            if (result.errors > 0) style.error("; ${result.errors} error(s): ${result.firstError}") else ""
+        val header = Output.line {
+            +"${result.hits.size} of ${result.considered} resource(s) matched"
+            if (result.errors > 0) error("; ${result.errors} error(s): ${result.firstError}")
+        }
         // Matching something is the bar: a misspelt element parses fine and only
         // ever comes back empty, and would otherwise clutter the log.
         nameable = expression.takeIf { result.hits.isNotEmpty() }
         if (result.hits.isNotEmpty()) record(expression, out)
         if (result.hits.isEmpty()) {
-            out.text(header)
+            out.add(header)
             if (result.errors == 0) {
                 // Nothing matched anywhere, and it parsed: the question is which step
                 // goes empty, which is exactly what :why answers.
@@ -570,21 +562,21 @@ class Repl(
             lastListing = null
             return
         }
-        emit(
-            out,
-            header,
-            preview = result.hits.map { hit ->
-                val first = hit.values.firstOrNull()
-                    ?.let { session.render.value(it, valueWidth(LABEL_WIDTH + VALUE_INDENT)) }
-                    ?.let { style.value(it, keysOnly = true) }
-                    ?: ""
-                val extra = if (hit.values.size > 1) style.hint(" (+${hit.values.size - 1})") else ""
-                "  ${style.label(hit.resource.label.padEnd(LABEL_WIDTH))} $first$extra"
+        out.listing(
+            listOf(header),
+            rows = result.hits.map { hit ->
+                Output.line {
+                    +"  "
+                    label(hit.resource.label.padEnd(LABEL_WIDTH))
+                    +" "
+                    shrink(hit.values.firstOrNull()?.let { session.render.value(it) }.orEmpty(), Output.Kind.PREVIEW, cutsEnd = true)
+                    if (hit.values.size > 1) hint(" (+${hit.values.size - 1})")
+                }
             },
             // The full form keeps every value whole and adds the origin, so one
             // listing answers both "what matched" and "where did it come from".
             full = result.hits.flatMap { hit ->
-                listOf("  ${style.label(hit.resource.label)}  ${style.hint("(${hit.resource.origin})")}") +
+                listOf(Output.line { +"  "; label(hit.resource.label); +"  "; hint("(${hit.resource.origin})") }) +
                     hit.values.flatMap { expanded("      ", it) }
             },
         )
@@ -636,9 +628,11 @@ class Repl(
             }
             val label = segments.getOrNull(idx)?.text?.let { if (idx == 0) it else ".$it" }
                 ?: step.expression
-            // Colour after padding, so the escape codes do not count towards the width.
-            val cell = count.padEnd(5).let { if (step.error != null) style.error(it) else it }
-            out.text("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} $cell$marker")
+            out.line {
+                +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
+                if (step.error != null) error(count.padEnd(5)) else +count.padEnd(5)
+                +marker
+            }
         }
         if (diagnosis.firstEmpty == null) {
             out.text("  path resolves fully")
@@ -669,7 +663,7 @@ class Repl(
         names.all()
         views.all()
         workspace.problems.filter { reportedProblems.add(it) }.forEach {
-            out.text(style.error("! $it — changes are kept for this session only"))
+            out.error("$it — changes are kept for this session only")
         }
     }
 
@@ -697,16 +691,17 @@ class Repl(
         val width = "#${numbered.first().first}".length
         // Once per listing, not per row: each lookup checks the names file.
         val namesOf = names.all().entries.groupBy({ it.value }, { it.key })
-        fun row(number: Int, expression: String, shorten: Boolean): String {
-            val named = namesOf[expression].orEmpty().joinToString(", ").let { if (it.isEmpty()) "" else "  ($it)" }
-            val text = if (shorten) abbreviate(expression, valueWidth(width + 4 + named.length)) else expression
-            return "  ${style.index("#$number".padEnd(width))}  $text${style.hint(named)}"
-        }
-        emit(
-            out,
-            header = null,
-            preview = numbered.map { (number, expression) -> row(number, expression, shorten = true) },
-            full = numbered.map { (number, expression) -> row(number, expression, shorten = false) },
+        out.listing(
+            header = emptyList(),
+            rows = numbered.map { (number, expression) ->
+                Output.line {
+                    +"  "
+                    index("#$number".padEnd(width))
+                    +"  "
+                    shrink(expression)
+                    namesOf[expression]?.let { hint("  (${it.joinToString(", ")})") }
+                }
+            },
         )
     }
 
@@ -726,13 +721,16 @@ class Repl(
                     return
                 }
                 val width = all.keys.maxOf { it.length }
-                emit(
-                    out,
-                    header = null,
-                    preview = all.map { (name, expression) ->
-                        "  ${style.label(name.padEnd(width))}  " + abbreviate(expression, valueWidth(width + 4))
+                out.listing(
+                    header = emptyList(),
+                    rows = all.map { (name, expression) ->
+                        Output.line {
+                            +"  "
+                            label(name.padEnd(width))
+                            +"  "
+                            shrink(expression)
+                        }
                     },
-                    full = all.map { (name, expression) -> "  ${style.label(name.padEnd(width))}  $expression" },
                 )
             }
             1, 2 -> {
@@ -815,38 +813,27 @@ class Repl(
         }
         val table = when (val result = session.viewBuilder.build(picked)) {
             is ViewBuilder.Result.Refused -> {
-                out.text(style.error("! ${result.message}"))
+                out.error("${result.message}")
                 return
             }
             is ViewBuilder.Result.Table -> result
         }
         lastView = picked
-        val titles = table.columns.map { it.title(table.type) }
-        val labelWidth = table.rows.maxOf { it.resource.label.length }
-        // In full each column is as wide as its widest cell; the preview shares out
-        // what the window leaves after the labels and gaps.
-        val natural = titles.indices.map { idx -> maxOf(titles[idx].length, table.rows.maxOf { it.cells[idx].length }) }
-        val room = columns - 2 - labelWidth - COLUMN_GAP * titles.size
-        fun line(label: String, cells: List<String>, widths: List<Int>, styled: Boolean): String {
-            val body = cells.zip(widths).joinToString(" ".repeat(COLUMN_GAP)) { (cell, width) ->
-                // Pad after shortening and before colouring, so escape codes do not count.
-                val text = abbreviate(cell, width).padEnd(width)
-                if (styled && cell == ViewBuilder.ERROR_CELL) style.error(text) else text
-            }
-            val owner = label.padEnd(labelWidth).let { if (styled) style.label(it) else it }
-            return "  $owner" + " ".repeat(COLUMN_GAP) + body.trimEnd()
-        }
-        fun rows(widths: List<Int>) = table.rows.map { line(it.resource.label, it.cells, widths, styled = true) }
-        val previewWidths = fitColumns(natural, room, MIN_CELL_WIDTH)
-        val summary = "${table.rows.size} ${table.type} row(s)" +
-            if (table.errors > 0) style.error("; ${table.errors} error(s): ${table.firstError}") else ""
-        fun header(widths: List<Int>) = summary + "\n" + style.hint(line("", titles, widths, styled = false))
-        emit(
-            out,
-            header(previewWidths),
-            preview = rows(previewWidths),
-            full = rows(natural),
-            fullHeader = header(natural),
+        out.table(
+            header = listOf(
+                Output.line {
+                    +"${table.rows.size} ${table.type} row(s)"
+                    if (table.errors > 0) error("; ${table.errors} error(s): ${table.firstError}")
+                },
+            ),
+            titles = table.columns.map { it.title(table.type) },
+            rows = table.rows.map { row ->
+                Output.Table.Row(
+                    row.resource.label,
+                    row.cells,
+                    errors = row.failed,
+                )
+            },
         )
     }
 
@@ -878,15 +865,18 @@ class Repl(
                 return
             }
             val width = all.keys.maxOf { it.length } + 1
-            emit(
-                out,
-                header = null,
-                preview = all.map { (name, columns) ->
-                    "  ${style.label("@$name".padEnd(width))}  " +
-                        abbreviate(columns.joinToString("  ") { it.ref }, valueWidth(width + 4))
+            out.listing(
+                header = emptyList(),
+                rows = all.map { (name, columns) ->
+                    Output.line {
+                        +"  "
+                        label("@$name".padEnd(width))
+                        +"  "
+                        shrink(columns.joinToString("  ") { it.ref })
+                    }
                 },
                 full = all.flatMap { (name, columns) ->
-                    listOf("  ${style.label("@$name")}") + columns.map { "      ${it.described}" }
+                    listOf(Output.line { +"  "; label("@$name") }) + columns.map { Output.text("      ${it.described}") }
                 },
             )
             return
@@ -949,11 +939,9 @@ class Repl(
         val leftOn = saved.fhir?.takeIf { it != session.version.id }
         val paths = saved.pools.sumOf { it.loads.size }
         val state = if (leftOn != null && saved.pools.any { it.loads.isNotEmpty() || it.focus.isNotEmpty() }) {
-            out.text(
-                style.error(
-                    "! the workspace was left on ${leftOn.uppercase()}, so its $paths path(s) and focus " +
-                        "are not restored in ${session.version.id.uppercase()} — saved until something changes",
-                ),
+            out.error(
+                "the workspace was left on ${leftOn.uppercase()}, so its $paths path(s) and focus " +
+                    "are not restored in ${session.version.id.uppercase()} — saved until something changes",
             )
             saved.copy(pools = emptyList(), current = null)
         } else {
@@ -973,7 +961,7 @@ class Repl(
                     restoreFocus(pool.focus, out)
                 } else {
                     session.current.unavailable = pool
-                    out.text(style.error("  kept in the workspace, to open once it is back"))
+                    out.line { error("  kept in the workspace, to open once it is back") }
                 }
                 continue
             }
@@ -983,7 +971,7 @@ class Repl(
                     load(path, out)
                 } else {
                     val file = workspace.dir?.resolve("state")?.let { " (or drop it from $it)" }.orEmpty()
-                    out.text(style.error("! $path is missing${inPool()} — kept in the workspace, to load once it is back$file"))
+                    out.error("$path is missing${inPool()} — kept in the workspace, to load once it is back$file")
                 }
             }
             restoreFocus(pool.focus, out)
@@ -1000,9 +988,7 @@ class Repl(
             when (val resolution = session.focusResolver.resolve(step, current)) {
                 is Resolution.Focused -> current = resolution.focus
                 else -> {
-                    out.text(
-                        style.error("! focus restored only as far as ${current?.label ?: "the pool"} — $step no longer reaches one value"),
-                    )
+                    out.error("focus restored only as far as ${current?.label ?: "the pool"} — $step no longer reaches one value")
                     break
                 }
             }
@@ -1094,7 +1080,7 @@ class Repl(
             }
             reader.history.load()
         } catch (e: java.io.IOException) {
-            out.text(style.error("! cannot use $file for line history: ${e.message}"))
+            out.error("cannot use $file for line history: ${e.message}")
         }
     }
 
@@ -1151,7 +1137,7 @@ class Repl(
             "workspace $argument, FHIR ${session.version.id.uppercase()}" +
                 if (isNew) " — new, created once something is saved" else "",
         )
-        notes.forEach { out.text(style.error("! $it")) }
+        notes.forEach { out.error(it) }
         reportStorageProblems(out)
         restore(saved, out)
     }
@@ -1168,12 +1154,7 @@ class Repl(
         val absolute = Paths.get(expandHome(path)).toAbsolutePath().normalize().toString()
         val loaded = session.current.loadedPaths
         if (report.files > 0 && absolute !in loaded) loaded += absolute
-        val header = "loaded ${report.summary()}; ${poolName()} now ${session.pool.size}"
-        if (report.problems.isEmpty()) {
-            out.text(header)
-            return
-        }
-        emit(out, header, report.problems.map { "  " + style.error("! $it") })
+        withProblems(out, "loaded ${report.summary()}; ${poolName()} now ${session.pool.size}", report.problems)
     }
 
     private fun poolSummary(out: Output) {
@@ -1188,13 +1169,17 @@ class Repl(
             git?.let { "at ${it.commit.short} on ${it.lineLabel}" },
         ).joinToString(" ").let { if (it.isEmpty()) "" else "$it: " }
         val scoped = if (git?.deltaScope == true) "; scope: the delta's ${session.pool.inScope().size}" else ""
-        emit(
-            out,
-            "$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}$scoped",
+        out.listing(
+            listOf(Output.text("$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}$scoped")),
             session.pool.typeCounts().map { (type, count) ->
-                "  ${style.type(type.padEnd(LABEL_WIDTH))} ${style.count(count.toString())}"
+                Output.line {
+                    +"  "
+                    type(type.padEnd(LABEL_WIDTH))
+                    +" "
+                    count(count.toString())
+                }
             } +
-                listOf(
+                Output.text(
                     "census: ${census.extensions.size} extension url/path pair(s), " +
                         "${census.pathCounts.size} populated path(s)",
                 ),
@@ -1211,21 +1196,30 @@ class Repl(
 
     private fun listPools(out: Output) {
         val width = session.pools.maxOf { it.name.length }
-        emit(
-            out,
-            header = null,
-            preview = session.pools.map { pool ->
-                val marker = if (pool === session.current) "*" else " "
-                val focus = pool.focus?.let { style.hint("  focus ${abbreviate(it.label, PROMPT_WIDTH)}") }.orEmpty()
-                val paths = sourceOf(pool)
-                "$marker ${style.label(pool.name.padEnd(width))}  ${style.count(pool.pool.size.toString().padStart(6))}  " +
-                    abbreviate(paths, valueWidth(width + 12)) + focus
+        out.listing(
+            header = emptyList(),
+            rows = session.pools.map { pool ->
+                Output.line {
+                    +(if (pool === session.current) "* " else "  ")
+                    label(pool.name.padEnd(width))
+                    +"  "
+                    count(pool.pool.size.toString().padStart(6))
+                    +"  "
+                    shrink(sourceOf(pool))
+                    pool.focus?.let { hint("  focus ${abbreviate(it.label, PROMPT_WIDTH)}") }
+                }
             },
             full = session.pools.flatMap { pool ->
-                val marker = if (pool === session.current) "*" else " "
-                listOf("$marker ${style.label(pool.name)}  ${style.count(pool.pool.size.toString())} resource(s)") +
-                    (if (pool.git != null || pool.unavailable != null) listOf("      ${sourceOf(pool)}") else pool.loadedPaths.map { "      $it" }) +
-                    listOfNotNull(pool.focus?.let { "      focus ${it.label}" })
+                val paths = if (pool.git != null || pool.unavailable != null) listOf(sourceOf(pool)) else pool.loadedPaths
+                listOf(
+                    Output.line {
+                        +(if (pool === session.current) "* " else "  ")
+                        label(pool.name)
+                        +"  "
+                        count(pool.pool.size.toString())
+                        +" resource(s)"
+                    },
+                ) + paths.map { Output.text("      $it") } + listOfNotNull(pool.focus?.let { Output.text("      focus ${it.label}") })
             },
         )
     }
@@ -1756,8 +1750,8 @@ class Repl(
             is Resolution.NotInPool -> out.text("not in pool: ${resolution.argument}")
             is Resolution.CannotPick -> out.text(resolution.reason)
             is Resolution.Invalid ->
-                out.text(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
-            is Resolution.Failed -> out.text(style.error("! ${resolution.message}"))
+                out.error("not in pool, and not a valid expression: ${resolution.message}")
+            is Resolution.Failed -> out.error("${resolution.message}")
             is Resolution.Nothing -> {
                 // The hint points at :why, which should not need the expression retyped.
                 lastExpression = argument
@@ -1768,11 +1762,14 @@ class Repl(
                 val results = resolution.picks.results
                 val byResource = resolution.owners > 1
                 val counted = if (byResource) "from ${resolution.owners} resources" else ""
-                emit(
-                    out,
-                    header = listOf("${results.size} values", counted).filter { it.isNotEmpty() }.joinToString(" ") +
-                        "; focus needs one — pick it with  :focus [n]",
-                    preview = results.mapIndexed { idx, found ->
+                out.listing(
+                    header = listOf(
+                        Output.text(
+                            listOf("${results.size} values", counted).filter { it.isNotEmpty() }.joinToString(" ") +
+                                "; focus needs one — pick it with  :focus [n]",
+                        ),
+                    ),
+                    rows = results.mapIndexed { idx, found ->
                         valueRow(found.value, idx, found.owner.label.takeIf { byResource })
                     },
                     full = results.flatMapIndexed { idx, found ->
@@ -1789,10 +1786,9 @@ class Repl(
      */
     private fun announceFocus(focus: Focus, out: Output) {
         val what = if (focus.isResource) focus.resource.origin else "${focus.typeName} in ${focus.resource.origin}"
-        emit(
-            out,
-            header = "focus ${focus.label}  ($what)",
-            preview = listOf(valueRow(focus.node)),
+        out.listing(
+            header = listOf(Output.text("focus ${focus.label}  ($what)")),
+            rows = listOf(valueRow(focus.node)),
             full = expanded("  ", focus.node),
         )
     }
@@ -1815,12 +1811,17 @@ class Repl(
             out.text("no extensions observed at $argument")
             return
         }
-        emit(
-            out,
-            header = null,
-            preview = rows.map { (path, url, stat) ->
-                "  ${path.padEnd(34)} ${style.count(stat.count.toString().padStart(5))} ×  " +
-                    "${style.url(url)}  ${style.type(stat.valueTypes.joinToString("|"))}"
+        out.listing(
+            header = emptyList(),
+            rows = rows.map { (path, url, stat) ->
+                Output.line {
+                    +"  ${path.padEnd(34)} "
+                    count(stat.count.toString().padStart(5))
+                    +" ×  "
+                    url(url)
+                    +"  "
+                    type(stat.valueTypes.joinToString("|"))
+                }
             },
         )
     }
@@ -1865,7 +1866,7 @@ class Repl(
             session.switchTo(old.current.name)
             old.close()
         } catch (e: FhirVersionUnavailable) {
-            out.text(style.error("! ${e.message}"))
+            out.error("${e.message}")
         }
     }
 
@@ -1941,11 +1942,8 @@ class Repl(
         const val STEP_WIDTH = 48
         const val LABEL_WIDTH = 28
         const val PROMPT_WIDTH = 48
-        const val VALUE_INDENT = 14
         const val MIN_VALUE_WIDTH = Printer.MIN_VALUE_WIDTH
         const val MIN_ROW_LIMIT = 8
-        const val COLUMN_GAP = 2
-        const val MIN_CELL_WIDTH = 12
         /** Used until the terminal reports its size; a dumb terminal never does. */
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100
