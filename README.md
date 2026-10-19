@@ -110,7 +110,8 @@ Type a FHIRPath expression, or:
 | `:pools` | the open pools, their sizes and paths |
 | `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
 | `:close <name>` | drop a pool |
-| `:log [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back |
+| `:log [label] [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back; with a label, only the commits that changed that resource |
+| `:trace [label] <expr>` | how an expression's answer for one resource changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
 | `:delta` | what this revision added, modified and deleted |
@@ -353,6 +354,32 @@ with a hint for the page after.
 line, the branch it was opened on, or the last branch it was moved to with `:at`.
 Nothing about this is specific to a branch name: a pool on `master` steps the same
 way.
+
+### One resource through time
+
+`:log Specimen/30012` lists only the commits that added, changed or deleted that
+resource, and `:trace` shows how an expression's answer for it changed across them,
+with what it was before:
+
+```
+r4:in@4844b16(24)> :trace Specimen/30012 type.coding.code
+Specimen/30012  type.coding.code on branch/out, newest first — 3 change(s) in 3 commit(s) that touched it
+  dc9a375  2026-10-01 15:00  CITRATE_PLASMA  (was EDTA_PLASMA)
+  1e4ff79  2026-10-01 12:00  EDTA_PLASMA  (was PLASMA)
+  8b6cbb9  2026-10-01 11:00  PLASMA  (added)
+```
+
+A row appears only where the answer changed, or the resource came or went, so a
+commit that touched the resource elsewhere is left out. Both read the history alone:
+the pool stays at its revision. With a focus, `:trace <expr>` traces the focused
+resource, or the focused element by the steps that reached it. TAB completes the
+expression against the resource the label names.
+
+A resource is followed by its label, `Type/id` or a fullUrl, whatever file it is in:
+a file can hold several resources, so a commit that changed the file but not the
+resource does not count, and neither does moving it to another file. `resolve()` is
+refused in a trace, since what a reference points to would be read from the pool at
+its own revision, not the one traced.
 
 A workspace saves each git pool's source, the commit it was left at and its scope.
 The next start restores it at that commit rather than the branch tip, and `:at
