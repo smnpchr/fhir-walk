@@ -27,4 +27,15 @@ class ColumnFitTest {
     fun `a shortened column keeps the minimum even past the room`() {
         assertEquals(listOf(12, 12), fitColumns(listOf(30, 40), room = 10, minimum = 12))
     }
+
+    @Test
+    fun `a window with no room left still draws every column at the minimum`() {
+        assertEquals(listOf(12, 12), fitColumns(listOf(20, 30), room = -5, minimum = 12))
+    }
+
+    @Test
+    fun `a column under the minimum is not widened to it`() {
+        // 11 does not fit a share of 10, but the minimum must not pad it to 12.
+        assertEquals(listOf(11, 12), fitColumns(listOf(11, 100), room = 20, minimum = 12))
+    }
 }
