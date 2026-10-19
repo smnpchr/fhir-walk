@@ -375,7 +375,8 @@ the pool stays at its revision. With a focus, `:trace <expr>` traces the focused
 resource, or the focused element by the steps that reached it. TAB completes the
 expression against the resource the label names.
 
-A resource is followed by its label, `Type/id` or a fullUrl, whatever file it is in:
+A resource is followed by its label, `Type/id` as `:pool` shows it (an id-less bundle
+entry's is `Patient/urn:uuid:…`), whatever file it is in:
 a file can hold several resources, so a commit that changed the file but not the
 resource does not count, and neither does moving it to another file. `resolve()` is
 refused in a trace, since what a reference points to would be read from the pool at
