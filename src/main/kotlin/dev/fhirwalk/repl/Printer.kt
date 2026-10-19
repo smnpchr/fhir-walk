@@ -38,14 +38,18 @@ class Printer(private val style: Style, private val columns: Int, private val ro
     }
 
     /**
-     * Whether `:more` would show something the listing did not. A row given its own
-     * [Output.Listing.full] counts only when it also shows a "…", since a full form
-     * that adds detail (a value's JSON) is not a sign that anything was cut.
+     * Whether `:more` would show something the listing did not. Rows given their own
+     * [Output.Listing.full] count only when they also show a "…", since a full form
+     * that adds detail (a value's JSON) is not a sign that anything was cut; the same
+     * goes for a header. A "…" that is simply part of the text, such as in an error
+     * message, never counts on its own.
      */
     private fun shortened(listing: Output.Listing): Boolean {
-        val shown = (listing.header + listing.rows).map { plain(it, fit = true) }
-        val whole = ((listing.fullHeader ?: listing.header) + (listing.full ?: listing.rows)).map { plain(it, fit = false) }
-        return shown != whole && shown.any { it.contains('…') }
+        fun cut(shown: List<Output.Line>, whole: List<Output.Line>): Boolean {
+            val fitted = shown.map { plain(it, fit = true) }
+            return fitted != whole.map { plain(it, fit = false) } && fitted.any { it.contains('…') }
+        }
+        return cut(listing.rows, listing.full ?: listing.rows) || cut(listing.header, listing.fullHeader ?: listing.header)
     }
 
     /** [line] as printed: fitted to the window when [fit], then coloured. */
@@ -86,9 +90,10 @@ class Printer(private val style: Style, private val columns: Int, private val ro
     }
 }
 
-/** Elides the middle, since the informative parts of a URL are both ends. */
+/** Elides the middle, since the informative parts of a URL are both ends; never below the "…" itself. */
 internal fun abbreviate(text: String, width: Int): String {
     if (text.length <= width) return text
+    if (width <= 1) return "…"
     val keepTail = (width - 1) / 2
     val keepHead = width - 1 - keepTail
     return text.take(keepHead) + "…" + text.takeLast(keepTail)

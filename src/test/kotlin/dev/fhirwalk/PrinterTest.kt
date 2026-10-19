@@ -74,6 +74,21 @@ class PrinterTest {
     }
 
     @Test
+    fun `a dot-dot-dot that is only text is not taken for a cut`() {
+        // An error message may hold one; the header is the same in full.
+        val output = Output().apply {
+            listing(listOf(Output.text("2 of 6 matched; 1 error(s): extension('…') failed")), listOf(Output.text("  Patient/p1  x")), full = listOf(Output.text("  Patient/p1"), Output.text("      x")))
+        }
+        assertEquals(2, printed(output).size)
+    }
+
+    @Test
+    fun `a share too small for anything still prints`() {
+        val output = Output().apply { line { (1..50).forEach { shrink("abcdef") } } }
+        assertTrue(printed(output, columns = 10).single().isNotEmpty())
+    }
+
+    @Test
     fun `colour comes after fitting, so escape codes take no width`() {
         val output = Output().apply { line { index("abc1234"); +" "; shrink(long) } }
         val coloured = printed(output, columns = 60, style = Style(true)).single()
