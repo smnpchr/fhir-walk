@@ -64,6 +64,22 @@ class CommitTimesTest {
     }
 
     @Test
+    fun `a time that comes twice when the clocks go back still names its own commit`() {
+        val berlin = CommitTimes(java.time.ZoneId.of("Europe/Berlin"))
+        // 02:30 comes at 00:30Z (summer time) and again at 01:30Z (winter time).
+        assertEquals(Instant.parse("2026-10-25T01:31:00Z"), berlin.end("2026-10-25T02:30"))
+        val history = listOf(commit(2, "2026-10-25T01:30:00Z"), commit(1, "2026-10-24T10:00:00Z"))
+        assertEquals(history[0], berlin.asOf(history, berlin.end(berlin.names(history)[0])!!))
+        // The first 02:30:10 is named to the second, read in the later offset; once a
+        // newer commit falls inside that second's end, only the id names it.
+        val twice = listOf(commit(4, "2026-10-25T01:30:20Z"), commit(3, "2026-10-25T00:30:10Z"))
+        assertEquals(listOf("2026-10-25T02:30", "2026-10-25T02:30:10"), berlin.names(twice))
+        twice.zip(berlin.names(twice)).forEach { (commit, name) -> assertEquals(commit, berlin.asOf(twice, berlin.end(name)!!), name) }
+        val close = listOf(commit(6, "2026-10-25T01:30:10Z"), commit(5, "2026-10-25T00:30:10Z"))
+        assertEquals(listOf("2026-10-25T02:30", close[1].short), berlin.names(close))
+    }
+
+    @Test
     fun `every name reads back as its own commit, even out of time order`() {
         // A rebase can leave an older commit with the later time.
         val history = listOf(

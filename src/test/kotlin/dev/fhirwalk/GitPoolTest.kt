@@ -463,5 +463,10 @@ class GitPoolTest {
         assertContains(session.run(":log +9"), "only 5 commit(s) on branch/out")
         assertContains(session.run(":log x"), "usage: :log [n] [+skip]")
         assertContains(session.run(":log 0"), "usage: :log [n] [+skip]")
+        assertContains(session.run(":log 2 +2 +4"), "usage: :log [n] [+skip]")
+        // Past what an Int holds once a page is added: the whole line, nothing older.
+        val all = session.run(":log ${Int.MAX_VALUE}")
+        assertContains(all, registry.m1.short)
+        assertContains(session.run(":log +${Int.MAX_VALUE}"), "only 5 commit(s) on branch/out")
     }
 }

@@ -1399,24 +1399,21 @@ class Repl(
 
     private fun gitLog(argument: String, out: PrintWriter) {
         val git = gitPool(out) ?: return
-        var limit = DEFAULT_LOG
-        var skip = 0
-        for (word in argument.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
-            val number = word.removePrefix("+").toIntOrNull()
-            when {
-                number == null || number < 0 || (number == 0 && !word.startsWith("+")) -> {
-                    out.println("usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back")
-                    return
-                }
-                word.startsWith("+") -> skip = number
-                else -> limit = number
-            }
+        val words = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val (skips, limits) = words.partition { it.startsWith("+") }
+        val skip = skips.singleOrNull()?.removePrefix("+")?.toIntOrNull()?.takeIf { it >= 0 }
+        val limit = limits.singleOrNull()?.toIntOrNull()?.takeIf { it > 0 }
+        if (skips.size > 1 || limits.size > 1 || (skips.isNotEmpty() && skip == null) || (limits.isNotEmpty() && limit == null)) {
+            out.println("usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back")
+            return
         }
+        val page = limit ?: DEFAULT_LOG
+        val skipped = skip ?: 0
         // A damaged repository throws from any read, as in a move: a history that
         // cannot be walked is an error, a commit whose changes cannot be read a Δ?.
         // One more than the page, to know whether there is an older one.
         val read = try {
-            git.history(skip + limit + 1)
+            git.history(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt())
         } catch (e: Exception) {
             out.println(style.error("! cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}"))
             return
@@ -1425,7 +1422,7 @@ class Repl(
             out.println("${git.lineLabel} names no commit any more")
             return
         }
-        val commits = read.drop(skip).take(limit)
+        val commits = read.drop(skipped).take(page)
         if (commits.isEmpty()) {
             out.println("only ${read.size} commit(s) on ${git.lineLabel}")
             return
@@ -1449,9 +1446,9 @@ class Repl(
         if (commits.none { it.id == git.commit.id }) {
             out.println(style.hint("  (at ${git.commit.short}, which is not among these)"))
         }
-        if (read.size > skip + limit) {
-            val size = if (limit == DEFAULT_LOG) "" else "$limit "
-            out.println(style.hint("  older: :log $size+${skip + limit}"))
+        if (read.size.toLong() > skipped.toLong() + page) {
+            val size = if (page == DEFAULT_LOG) "" else "$page "
+            out.println(style.hint("  older: :log $size+${skipped + page}"))
         }
     }
 

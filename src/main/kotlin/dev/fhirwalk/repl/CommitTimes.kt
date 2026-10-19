@@ -43,7 +43,9 @@ class CommitTimes(private val zone: ZoneId = ZoneId.systemDefault()) {
                 start.plus(1, if (sec.isNotEmpty()) ChronoUnit.SECONDS else if (min.isNotEmpty()) ChronoUnit.MINUTES else ChronoUnit.HOURS)
             }
         }
-        return end.atZone(zone).toInstant()
+        // Where a local time comes twice, as when clocks go back, the end is the later
+        // of the two: the period has not ended until both have passed.
+        return end.atZone(zone).withLaterOffsetAtOverlap().toInstant()
     }
 
     /** The commit of [history] (newest first) that the line stood at when [end] came. */
@@ -55,12 +57,13 @@ class CommitTimes(private val zone: ZoneId = ZoneId.systemDefault()) {
      * neither would name it back. Each one names its own commit under [asOf].
      */
     fun names(history: List<GitSource.Commit>): List<String> {
-        // The oldest time among the newer commits: a name is good when it ends no
-        // later than that, so none of them is picked before this one.
+        // The oldest time among the newer commits: a name is good when it ends after
+        // this commit and no later than that, so none of them is picked before it.
+        // Checked rather than assumed, since a local time can name two instants.
         var oldestNewer = Instant.MAX
         return history.map { commit ->
             val name = listOf(minute, second).map { it.format(commit.time) }
-                .firstOrNull { end(it)!! <= oldestNewer } ?: commit.short
+                .firstOrNull { end(it)!!.let { end -> end > commit.time && end <= oldestNewer } } ?: commit.short
             oldestNewer = minOf(oldestNewer, commit.time)
             name
         }
