@@ -1489,7 +1489,7 @@ class Repl(
     /** What a resource's history could not be read for, or null when it can be. */
     private fun untraceable(label: String): String? = when {
         ResourceHistory.isLabel(label) -> null
-        else -> "$label is not a label a history can follow — Type/id or a fullUrl, as :pool and :delta show them"
+        else -> "$label is not a label a history can follow — Type/id, as :pool and :delta show them"
     }
 
     /** `:log Specimen/s1`: the commits of the line that added, changed or deleted one resource. */
@@ -1499,12 +1499,14 @@ class Repl(
             return
         }
         // One more than the page, to know whether there is an older one.
+        val problems = mutableListOf<String>()
         val read = try {
-            git.history(label).take(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt()).toList()
+            git.history(label) { problems += it }.take(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt()).toList()
         } catch (e: Exception) {
             out.error("cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}")
             return
         }
+        problems.forEach { out.error(it) }
         if (read.isEmpty()) {
             out.text("no commit on ${git.lineLabel} added, changed or deleted $label")
             return
@@ -1563,16 +1565,19 @@ class Repl(
         if (reportSyntaxError(expression, out)) return
         // The history is of one resource; what it references is read from the pool,
         // which is at another revision.
-        if (expression.contains("resolve(")) {
+        if (Regex("""\bresolve\s*\(""").containsMatchIn(expression)) {
             out.text("resolve() would read the pool at ${git.commit.short}, not the revision traced — trace the reference itself")
             return
         }
+        val problems = mutableListOf<String>()
         val changes = try {
-            git.history(label).toList()
+            git.history(label) { problems += it }.toList()
         } catch (e: Exception) {
             out.error("cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}")
             return
         }
+        // Before the rows: a resource that seems to come and go may be a file that broke.
+        problems.forEach { out.error(it) }
         if (changes.isEmpty()) {
             out.text("no commit on ${git.lineLabel} added, changed or deleted $label")
             return
@@ -1608,15 +1613,17 @@ class Repl(
     }
 
     /**
-     * [expression] as the focused resource would take it: the focus's own steps, then
-     * the expression. Null for a focus not reached by steps from its resource.
+     * [expression] as the focused resource would take it: the focus's own steps, and
+     * the expression run on what they reach -- through `select()`, so a union or a
+     * literal applies to the element rather than binding to the last step. Null for
+     * a focus not reached by steps from its resource.
      */
     private fun focusedPath(focus: Focus, expression: String): String? {
         if (focus.isResource) return expression
         val steps = focus.label.takeIf { it.startsWith("${focus.resource.label}.") }
             ?.removePrefix("${focus.resource.label}.") ?: return null
         val relative = focus.step(expression)
-        return if (relative.isEmpty()) steps else "$steps.$relative"
+        return if (relative.isEmpty()) steps else "($steps).select($relative)"
     }
 
     private fun at(revision: String, out: Output) {
