@@ -424,7 +424,7 @@ class GitPoolTest {
     @Test
     fun `log says what each commit is, apart from the window it is printed in`() {
         val session = opened()
-        val listing = session.repl.outputOf(":log").listing!!
+        val listing = session.repl.outputOf(":log").listed()
         val first = listing.rows.first().spans
         assertEquals(registry.out4.short, first.single { it.kind == Output.Kind.INDEX }.text)
         assertEquals("    Δ1", first.single { it.kind == Output.Kind.COUNT }.text)
@@ -437,17 +437,20 @@ class GitPoolTest {
     fun `delta rows name each resource as a label`() {
         val session = opened()
         session.run(":step -1")
-        val rows = session.repl.outputOf(":delta").listing!!.rows
+        val rows = session.repl.outputOf(":delta").listed().rows
         assertTrue(rows.isNotEmpty())
         rows.forEach { row -> assertTrue(row.spans.any { it.kind == Output.Kind.LABEL && it.text.contains('/') }, row.text) }
         // :more prints the same listing whole.
-        assertEquals(rows, (session.repl.outputOf(":more").blocks.single() as Output.Whole).listing.rows)
+        assertEquals(rows, ((session.repl.outputOf(":more").blocks.single() as Output.Whole).listing as Output.Listing).rows)
     }
 
     // ------------------------------------------------------- one resource's history
 
     /** Each row's short id, and the word or answer after its time. */
-    private fun rowsOf(output: Output) = output.listing!!.rows.map { row ->
+    /** The listing [this] ends with, which for these commands is never a table. */
+    private fun Output.listed(): Output.Listing = listing as Output.Listing
+
+    private fun rowsOf(output: Output) = output.listed().rows.map { row ->
         row.spans.single { it.kind == Output.Kind.INDEX }.text to row.spans.drop(3).joinToString("") { it.text }.trim()
     }
 

@@ -15,17 +15,26 @@ package dev.fhirwalk.repl
  */
 class Output {
 
-    /** The parts of a line, in the order they are printed. */
-    enum class Kind { PLAIN, INDEX, LABEL, HINT, COUNT, ERROR }
+    /**
+     * What a part of a line is, which decides its colour. [PREVIEW] is a value packed
+     * onto one row, where only JSON keys are picked out; [VALUE] a value shown whole;
+     * [JSON] one line of a pretty-printed one.
+     */
+    enum class Kind { PLAIN, INDEX, LABEL, TYPE, HINT, COUNT, URL, ERROR, PREVIEW, VALUE, JSON }
 
     /**
-     * @param shrinks the part that gives way when the line is wider than the window:
-     *   shortened in the middle, and printed whole by `:more`. Pad a column before it
-     *   is a span, so the padding counts towards the width.
+     * @param shrinks the part that gives way when the line is wider than the window,
+     *   printed whole by `:more`. Pad a column before it is a span, so the padding
+     *   counts towards the width.
+     * @param cutsEnd shortened at its end rather than in the middle: a value, whose
+     *   start says most, rather than a URL or a path, which say most at both ends.
      */
-    data class Span(val text: String, val kind: Kind = Kind.PLAIN, val shrinks: Boolean = false)
+    data class Span(val text: String, val kind: Kind = Kind.PLAIN, val shrinks: Boolean = false, val cutsEnd: Boolean = false)
 
     sealed interface Block
+
+    /** A block that `:more` can print whole. */
+    sealed interface Listed : Block
 
     data class Line(val spans: List<Span>) : Block {
         /** The line unstyled and unshortened. */
@@ -46,20 +55,32 @@ class Output {
         val rows: List<Line>,
         val full: List<Line>? = null,
         val fullHeader: List<Line>? = null,
-    ) : Block
+    ) : Listed
 
-    /** A listing printed whole, as `:more` does. */
-    data class Whole(val listing: Listing) : Block
+    /**
+     * A table: [header], a row of [titles], and a row per resource. The printer
+     * shares the window between the columns, shortening the widest, and `:more`
+     * prints every cell whole.
+     */
+    data class Table(val header: List<Line>, val titles: List<String>, val rows: List<Row>) : Listed {
+        /** @param errors the indexes of cells that hold an error rather than a value. */
+        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet())
+    }
+
+    /** A listing or table printed whole, as `:more` does. */
+    data class Whole(val listing: Listed) : Block
 
     private val added = mutableListOf<Block>()
 
     val blocks: List<Block> get() = added
 
-    /** The last listing, the one `:more` goes on to print. */
-    val listing: Listing? get() = added.filterIsInstance<Listing>().lastOrNull()
+    /** The last listing or table, the one `:more` goes on to print. */
+    val listing: Listed? get() = added.filterIsInstance<Listed>().lastOrNull()
 
-    fun line(build: LineBuilder.() -> Unit) {
-        added += Output.line(build)
+    fun line(build: LineBuilder.() -> Unit) = add(Output.line(build))
+
+    fun add(line: Line) {
+        added += line
     }
 
     /** A line as it is: plain, or already styled by a command not written with spans. */
@@ -76,7 +97,11 @@ class Output {
         added += Listing(header, rows, full, fullHeader)
     }
 
-    fun whole(listing: Listing) {
+    fun table(header: List<Line>, titles: List<String>, rows: List<Table.Row>) {
+        added += Table(header, titles, rows)
+    }
+
+    fun whole(listing: Listed) {
         added += Whole(listing)
     }
 
@@ -88,7 +113,11 @@ class Output {
         when (block) {
             is Line -> listOf(block.text)
             is Listing -> (block.header + block.rows).map { it.text }
-            is Whole -> ((block.listing.fullHeader ?: block.listing.header) + (block.listing.full ?: block.listing.rows)).map { it.text }
+            is Table -> block.header.map { it.text } + block.titles.joinToString("  ") + block.rows.map { "${it.label}  ${it.cells.joinToString("  ")}" }
+            is Whole -> when (val listed = block.listing) {
+                is Listing -> ((listed.fullHeader ?: listed.header) + (listed.full ?: listed.rows)).map { it.text }
+                is Table -> Output().apply { added += listed }.lines()
+            }
         }
     }
 
@@ -101,13 +130,17 @@ class Output {
 
         fun index(text: String) = add(text, Kind.INDEX)
         fun label(text: String) = add(text, Kind.LABEL)
+        fun type(text: String) = add(text, Kind.TYPE)
         fun hint(text: String) = add(text, Kind.HINT)
         fun count(text: String) = add(text, Kind.COUNT)
+        fun url(text: String) = add(text, Kind.URL)
         fun error(text: String) = add(text, Kind.ERROR)
+        fun value(text: String) = add(text, Kind.VALUE)
+        fun json(text: String) = add(text, Kind.JSON)
 
-        /** The part that is shortened to fit the window; see [Span.shrinks]. */
-        fun shrink(text: String, kind: Kind = Kind.PLAIN) {
-            spans += Span(text, kind, shrinks = true)
+        /** The part that is shortened to fit the window; see [Span.shrinks] and [Span.cutsEnd]. */
+        fun shrink(text: String, kind: Kind = Kind.PLAIN, cutsEnd: Boolean = false) {
+            spans += Span(text, kind, shrinks = true, cutsEnd = cutsEnd)
         }
 
         private fun add(text: String, kind: Kind) {

@@ -16,9 +16,14 @@ class Printer(private val style: Style, private val columns: Int, private val ro
             when (block) {
                 is Output.Line -> out.println(render(block, fit = true))
                 is Output.Listing -> listing(block, out)
+                is Output.Table -> listing(laidOut(block), out)
                 is Output.Whole -> {
-                    (block.listing.fullHeader ?: block.listing.header).forEach { out.println(render(it, fit = false)) }
-                    (block.listing.full ?: block.listing.rows).forEach { out.println(render(it, fit = false)) }
+                    val listing = when (val listed = block.listing) {
+                        is Output.Listing -> listed
+                        is Output.Table -> laidOut(listed)
+                    }
+                    (listing.fullHeader ?: listing.header).forEach { out.println(render(it, fit = false)) }
+                    (listing.full ?: listing.rows).forEach { out.println(render(it, fit = false)) }
                 }
             }
         }
@@ -52,6 +57,42 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         return cut(listing.rows, listing.full ?: listing.rows) || cut(listing.header, listing.fullHeader ?: listing.header)
     }
 
+    /**
+     * [table] as a listing: in full each column is as wide as its widest cell, while
+     * the window's share goes first to the columns that fit it; see [fitColumns].
+     */
+    private fun laidOut(table: Output.Table): Output.Listing {
+        val labelWidth = table.rows.maxOfOrNull { it.label.length } ?: 0
+        val natural = table.titles.indices.map { idx -> maxOf(table.titles[idx].length, table.rows.maxOfOrNull { it.cells[idx].length } ?: 0) }
+        val room = columns - 2 - labelWidth - COLUMN_GAP * table.titles.size
+        val fitting = fitColumns(natural, room, MIN_CELL_WIDTH)
+        fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean) = Output.line {
+            +"  "
+            if (titles) hint(label.padEnd(labelWidth)) else label(label.padEnd(labelWidth))
+            cells.zip(widths).forEachIndexed { idx, (cell, width) ->
+                // Padded after shortening, so the columns line up; the last needs none.
+                val text = abbreviate(cell, width).let { if (idx == cells.lastIndex) it else it.padEnd(width) }
+                +" ".repeat(COLUMN_GAP)
+                when {
+                    titles -> hint(text)
+                    idx in errors -> error(text)
+                    else -> +text
+                }
+            }
+        }
+        fun header(widths: List<Int>) = table.header + trimmed(line("", table.titles, widths, emptySet(), titles = true))
+        fun rows(widths: List<Int>) = table.rows.map { trimmed(line(it.label, it.cells, widths, it.errors, titles = false)) }
+        return Output.Listing(header(fitting), rows(fitting), rows(natural), header(natural))
+    }
+
+    /** [line] without the padding of empty cells at its end. */
+    private fun trimmed(line: Output.Line): Output.Line {
+        val spans = line.spans.toMutableList()
+        while (spans.isNotEmpty() && spans.last().text.isBlank()) spans.removeAt(spans.lastIndex)
+        spans.lastOrNull()?.let { spans[spans.lastIndex] = it.copy(text = it.text.trimEnd()) }
+        return Output.Line(spans)
+    }
+
     /** [line] as printed: fitted to the window when [fit], then coloured. */
     fun render(line: Output.Line, fit: Boolean): String =
         fitted(line, fit).joinToString("") { (text, kind) -> paint(text, kind) }
@@ -71,7 +112,7 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         return line.spans.map { span ->
             if (!span.shrinks) return@map span.text to span.kind
             val share = room / shrinking + if (index++ < room % shrinking) 1 else 0
-            abbreviate(span.text, share) to span.kind
+            (if (span.cutsEnd) cutEnd(span.text, share) else abbreviate(span.text, share)) to span.kind
         }
     }
 
@@ -79,16 +120,27 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         Output.Kind.PLAIN -> text
         Output.Kind.INDEX -> style.index(text)
         Output.Kind.LABEL -> style.label(text)
+        Output.Kind.TYPE -> style.type(text)
         Output.Kind.HINT -> style.hint(text)
         Output.Kind.COUNT -> style.count(text)
+        Output.Kind.URL -> style.url(text)
         Output.Kind.ERROR -> style.error(text)
+        Output.Kind.PREVIEW -> style.value(text, keysOnly = true)
+        Output.Kind.VALUE -> style.value(text)
+        Output.Kind.JSON -> style.json(text)
     }
 
     companion object {
         /** The least a shortened value is given, however little the window leaves. */
         const val MIN_VALUE_WIDTH = 40
+        const val COLUMN_GAP = 2
+        const val MIN_CELL_WIDTH = 12
     }
 }
+
+/** Keeps the start, as a value is shortened: its opening says what it is. */
+internal fun cutEnd(text: String, width: Int): String =
+    if (text.length <= width) text else text.take((width - 1).coerceAtLeast(0)) + "…"
 
 /** Elides the middle, since the informative parts of a URL are both ends; never below the "…" itself. */
 internal fun abbreviate(text: String, width: Int): String {
