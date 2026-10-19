@@ -3,6 +3,7 @@ package dev.fhirwalk
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.ExpressionLog
 import dev.fhirwalk.repl.NameStore
+import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
@@ -154,6 +155,22 @@ class ReplTest {
         val table = run(":view #1 #2 #3 #4 #5")
         assertContains(table, "Erika, Maria, Rika")
         assertFalse(table.contains("…"), table)
+    }
+
+    @Test
+    fun `no value row runs past the window, however long its type name`() {
+        // 100 columns, the default without a terminal.
+        run(":focus Observation/obs1")
+        val rows = run(":focus code").lines() + run("coding") + run(":all Observation.code").lines()
+        assertTrue(rows.all { it.length <= 100 }, rows.filter { it.length > 100 }.joinToString("\n"))
+    }
+
+    @Test
+    fun `a view is a table the printer lays out`() {
+        run("Patient.name.family")
+        val table = repl.outputOf(":view #1").blocks.single() as Output.Table
+        assertEquals(listOf("#1 name.family"), table.titles)
+        assertEquals(listOf("Patient/pat1", "Patient/pat2"), table.rows.map { it.label })
     }
 
     @Test

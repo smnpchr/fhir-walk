@@ -96,6 +96,40 @@ class PrinterTest {
         assertEquals(printed(output, columns = 60).single(), coloured.replace(Regex("\u001b\\[[0-9;]*m"), ""))
     }
 
+    private fun table(vararg rows: Output.Table.Row) =
+        Output().apply { table(listOf(Output.text("2 Patient row(s)")), listOf("family", "#2 given"), rows.toList()) }
+
+    @Test
+    fun `a table that fits is laid out whole, its columns lined up`() {
+        val printed = printed(table(Output.Table.Row("Patient/p1", listOf("Mustermann", "Erika")), Output.Table.Row("Patient/p2", listOf("Schmidt", ""))), columns = 80)
+        assertEquals(
+            listOf(
+                "2 Patient row(s)",
+                "              family      #2 given",
+                "  Patient/p1  Mustermann  Erika",
+                // An empty last cell leaves no padding behind.
+                "  Patient/p2  Schmidt",
+            ),
+            printed,
+        )
+    }
+
+    @Test
+    fun `a narrow window shortens the widest column, and more lays it out whole`() {
+        val output = table(Output.Table.Row("Patient/p1", listOf("Mustermann", "x".repeat(60))))
+        val narrow = printed(output, columns = 50)
+        assertTrue(narrow.drop(1).dropLast(1).all { it.length <= 50 }, narrow.joinToString("\n"))
+        assertEquals("  … shortened to fit — :more", narrow.last())
+        val whole = printed(Output().apply { whole(output.listing!!) }, columns = 50)
+        assertTrue(whole.last().endsWith("x".repeat(60)), whole.last())
+    }
+
+    @Test
+    fun `an error cell is coloured as one`() {
+        val coloured = printed(table(Output.Table.Row("Patient/p1", listOf("!", "Erika"), errors = setOf(0))), style = Style(true))
+        assertTrue(coloured.last().contains("\u001b[31m!"), coloured.last())
+    }
+
     @Test
     fun `lines are what was found, whole and unstyled`() {
         val output = Output().apply {
