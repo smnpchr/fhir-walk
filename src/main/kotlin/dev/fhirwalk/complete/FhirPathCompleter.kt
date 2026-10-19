@@ -50,10 +50,19 @@ class FhirPathCompleter(
     data class CommandInfo(val name: String, val args: String, val doc: String)
 
     /**
-     * A commit to step to: [id] is what goes into the line, [shown] what the menu
-     * shows (date first, since that is what you look for), [subject] its description.
+     * A commit to step to: [at] is the time that names it and [id] its short id,
+     * either of which goes into the line; [shown] is what the menu shows (time
+     * first, since that is what you look for), [subject] its description. [changed]
+     * counts its files, or null when they cannot be read; it is asked only of the
+     * commits offered, since each one is a diff.
      */
-    data class CommitChoice(val id: String, val shown: String, val subject: String)
+    data class CommitChoice(
+        val id: String,
+        val at: String,
+        val shown: String,
+        val subject: String,
+        val changed: () -> Int? = { null },
+    )
 
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
@@ -131,12 +140,21 @@ class FhirPathCompleter(
             }
             // The commits are what you step to, newest first; the branches and tags
             // follow, a few, to switch the line.
+            // A commit is typed by its time, or by its id once one is begun; the value
+            // is whichever the word matched, since JLine narrows the menu by it.
             ":at" -> if (arguments.size == 1) {
                 val refs = revisions().filter { it.startsWith(lastToken) }.take(MAX_REFS)
-                commits().filter { it.id.startsWith(lastToken, ignoreCase = true) }
+                commits().mapNotNull { commit ->
+                    when {
+                        commit.at.startsWith(lastToken, ignoreCase = true) -> commit to commit.at
+                        commit.id.startsWith(lastToken, ignoreCase = true) -> commit to commit.id
+                        else -> null
+                    }
+                }
                     .take(minOf(MAX_ROWS, MAX_MENU - refs.size))
-                    .forEachIndexed { rank, commit ->
-                        candidates += Candidate(commit.id, commit.shown, MenuGroups.COMMITS, commit.subject, null, null, true, rank)
+                    .forEachIndexed { rank, (commit, value) ->
+                        val changed = "Δ${commit.changed() ?: "?"}"
+                        candidates += Candidate(value, commit.shown, MenuGroups.COMMITS, "$changed  ${commit.subject}", null, null, true, rank)
                     }
                 refs.forEach { candidates += commandCand(it, it, MenuGroups.BRANCHES, null) }
             }

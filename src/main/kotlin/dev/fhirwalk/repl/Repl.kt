@@ -49,6 +49,8 @@ class Repl(
     /** Said once [open] has somewhere to say it. */
     private val startupNotes = mutableListOf<String>()
 
+    private val commitTimes = CommitTimes()
+
     private var session = startSession(
         explicitVersion ?: restoring.fhir?.let(FhirVersion::parse),
         explicit = explicitVersion != null,
@@ -86,8 +88,8 @@ class Repl(
         FhirPathCompleter.CommandInfo(":pools", "", "the open pools, their sizes and paths"),
         FhirPathCompleter.CommandInfo(":open", "<name> [path|dir@[rev]]", "add a pool and switch to it: path loads, dir@rev is a git revision, dir@ its current branch"),
         FhirPathCompleter.CommandInfo(":close", "<name>", "drop a pool"),
-        FhirPathCompleter.CommandInfo(":log", "[n]", "a git pool's line, newest first, with what each commit changed"),
-        FhirPathCompleter.CommandInfo(":at", "<rev>", "move a git pool to a revision: a branch, tag, id or branch~2; TAB lists commits by date"),
+        FhirPathCompleter.CommandInfo(":log", "[n] [+skip]", "a git pool's line, newest first, with what each commit changed; +skip pages back"),
+        FhirPathCompleter.CommandInfo(":at", "<rev|date>", "move a git pool to a revision, or to its line as of a date (2026-03-11); TAB lists commits by date"),
         FhirPathCompleter.CommandInfo(":step", "[-n|+n]", "move a git pool along its line; alone, one commit back"),
         FhirPathCompleter.CommandInfo(":delta", "", "what this revision added, modified and deleted"),
         FhirPathCompleter.CommandInfo(":scope", "[delta|all]", "run pool-wide over the delta only, or over everything"),
@@ -317,7 +319,7 @@ class Repl(
             ":open" -> openPool(argument, out)
             ":close" -> closePool(argument, out)
             ":log" -> gitLog(argument, out)
-            ":at" -> if (argument.isBlank()) out.println("usage: :at <rev>") else at(argument, out)
+            ":at" -> if (argument.isBlank()) out.println("usage: :at <rev|date>  —  a branch, tag, id, branch~2, or 2026-03-11 for the line as of then") else at(argument, out)
             ":step" -> step(argument, out)
             ":delta" -> delta(out)
             ":scope" -> scope(argument, out)
@@ -1289,16 +1291,21 @@ class Repl(
     }
 
     /**
-     * The current git pool's line, newest first, for TAB after `:at`: date and short
-     * id, the commit it sits at marked as `:log` marks it, the subject alongside.
-     * Internal so tests can check what the menu would offer.
+     * The current git pool's line, newest first, for TAB after `:at`: the time that
+     * names each commit and its short id, the commit it sits at marked as `:log`
+     * marks it, what it changed and its subject alongside. Internal so tests can
+     * check what the menu would offer.
      */
     internal fun commitChoices(): List<FhirPathCompleter.CommitChoice> {
         val git = session.current.git ?: return emptyList()
         val commits = runCatching { git.history(MAX_CHOICES) }.getOrDefault(emptyList())
-        return commits.map { commit ->
+        val names = commitTimes.names(commits)
+        val width = names.maxOfOrNull { it.length } ?: 0
+        return commits.zip(names) { commit, name ->
             val marker = if (commit.id == git.commit.id) "*" else " "
-            FhirPathCompleter.CommitChoice(commit.short, "$marker ${COMMIT_TIME.format(commit.time)}  ${commit.short}", commit.subject)
+            FhirPathCompleter.CommitChoice(commit.short, name, "$marker ${name.padEnd(width)}  ${commit.short}", commit.subject) {
+                runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
+            }
         }
     }
 
@@ -1392,20 +1399,32 @@ class Repl(
 
     private fun gitLog(argument: String, out: PrintWriter) {
         val git = gitPool(out) ?: return
-        val limit = if (argument.isBlank()) DEFAULT_LOG else argument.toIntOrNull()?.takeIf { it > 0 } ?: run {
-            out.println("usage: :log [n]")
+        val words = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val (skips, limits) = words.partition { it.startsWith("+") }
+        val skip = skips.singleOrNull()?.removePrefix("+")?.toIntOrNull()?.takeIf { it >= 0 }
+        val limit = limits.singleOrNull()?.toIntOrNull()?.takeIf { it > 0 }
+        if (skips.size > 1 || limits.size > 1 || (skips.isNotEmpty() && skip == null) || (limits.isNotEmpty() && limit == null)) {
+            out.println("usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back")
             return
         }
+        val page = limit ?: DEFAULT_LOG
+        val skipped = skip ?: 0
         // A damaged repository throws from any read, as in a move: a history that
         // cannot be walked is an error, a commit whose changes cannot be read a Δ?.
-        val commits = try {
-            git.history(limit)
+        // One more than the page, to know whether there is an older one.
+        val read = try {
+            git.history(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt())
         } catch (e: Exception) {
             out.println(style.error("! cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}"))
             return
         }
-        if (commits.isEmpty()) {
+        if (read.isEmpty()) {
             out.println("${git.lineLabel} names no commit any more")
+            return
+        }
+        val commits = read.drop(skipped).take(page)
+        if (commits.isEmpty()) {
+            out.println("only ${read.size} commit(s) on ${git.lineLabel}")
             return
         }
         var unreadable = 0
@@ -1426,6 +1445,10 @@ class Repl(
         }
         if (commits.none { it.id == git.commit.id }) {
             out.println(style.hint("  (at ${git.commit.short}, which is not among these)"))
+        }
+        if (read.size.toLong() > skipped.toLong() + page) {
+            val size = if (page == DEFAULT_LOG) "" else "$page "
+            out.println(style.hint("  older: :log $size+${skipped + page}"))
         }
     }
 
@@ -1466,6 +1489,7 @@ class Repl(
                 git.deltaScope = true
                 val header = "${poolName()} at ${revision(git)} — ${deltaSummary(git)}"
                 val problems = move.report.problems
+                move.note?.let { out.println(it) }
                 if (problems.isEmpty()) out.println(header) else emit(out, header, problems.map { "  " + style.error("! $it") })
                 restoreFocus(steps, out)
             }
