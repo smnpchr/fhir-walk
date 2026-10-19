@@ -116,21 +116,11 @@ class Repl(
         commands.map { it.name }.toSet() + setOf(":exit", ":q", ":?")
 
     /**
-     * A printed listing, kept so `:more` can show it in full.
-     *
-     * [preview] is trimmed to fit the screen, both in rows and in the width of each
-     * rendered value; [full] holds every row with nothing shortened. Truncating
+     * The last listing printed, so `:more` can print it whole: trimmed to the window
+     * when it was shown, both in rows and in the width of each part. Truncating
      * without a way back to the whole thing is worse than printing it all.
-     * [fullHeader] goes with [full], for a header whose layout follows the rows.
      */
-    private class Listing(
-        val header: String?,
-        val preview: List<String>,
-        val full: List<String>,
-        val fullHeader: String? = header,
-    )
-
-    private var lastListing: Listing? = null
+    private var lastListing: Output.Listing? = null
 
     /**
      * The last expression that was run, so a bare `:why` can re-diagnose it.
@@ -200,7 +190,7 @@ class Repl(
             option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
         }
         this.reader = reader
-        useLineHistory(reader, out)
+        show(out) { useLineHistory(reader, it) }
         bindArrowKeys(reader)
         style = Style.detect(terminal)
 
@@ -211,11 +201,7 @@ class Repl(
 
         out.println("fhir-walk — FHIRPath over a local resource pool.  :help for commands")
         open(out)
-        if (session.pool.size == 0) {
-            out.println("pool is empty — :load <path> to import")
-        } else {
-            out.println("TAB on an empty line lists the resource types in the pool")
-        }
+        out.println(if (session.pool.size == 0) "pool is empty — :load <path> to import" else "TAB on an empty line lists the resource types in the pool")
         out.flush()
 
         while (true) {
@@ -233,7 +219,7 @@ class Repl(
             } catch (e: Exception) {
                 out.println(style.error("! ${e.message ?: e.javaClass.simpleName}"))
             }
-            attachPendingHistory(reader, out)
+            show(out) { attachPendingHistory(reader, it) }
             out.flush()
         }
         out.println("bye")
@@ -246,11 +232,13 @@ class Repl(
      * Restores the workspace, then loads the command line's paths on top. Internal,
      * like [dispatch], so tests can start a session without a terminal.
      */
-    internal fun open(out: PrintWriter) {
-        startupNotes.forEach { out.println(style.error("! $it")) }
+    internal fun open(out: PrintWriter) = show(out) { open(it) }
+
+    private fun open(out: Output) {
+        startupNotes.forEach { out.text(style.error("! $it")) }
         startupNotes.clear()
         val where = if (workspace.name == Workspaces.DEFAULT) "" else "workspace ${workspace.name}, "
-        out.println("${where}FHIR ${session.version.id.uppercase()}")
+        out.text("${where}FHIR ${session.version.id.uppercase()}")
         reportStorageProblems(out)
         restore(restoring, out)
         initialPaths.forEach { load(it, out) }
@@ -282,6 +270,36 @@ class Repl(
      * @return false to exit.
      */
     internal fun dispatch(input: String, out: PrintWriter): Boolean {
+        val output = Output()
+        try {
+            return dispatch(input, output)
+        } finally {
+            show(output, out)
+        }
+    }
+
+    /**
+     * As [dispatch], but what the line had to say is returned rather than printed:
+     * what a command found, apart from the window it would be shown in. For tests.
+     */
+    internal fun outputOf(input: String): Output = Output().also {
+        dispatch(input, it)
+        remember(it)
+    }
+
+    /** Prints what [say] says, as everything is printed: fitted, coloured, and kept for `:more`. */
+    private fun show(out: PrintWriter, say: (Output) -> Unit) = show(Output().also(say), out)
+
+    private fun show(output: Output, out: PrintWriter) {
+        remember(output)
+        Printer(style, columns, rowLimit).print(output, out)
+    }
+
+    private fun remember(output: Output) {
+        output.listing?.let { lastListing = it }
+    }
+
+    private fun dispatch(input: String, out: Output): Boolean {
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so
             // beats handing the whole line to the FHIRPath parser -- unless the word is
@@ -290,7 +308,7 @@ class Repl(
             val firstWord = input.substringBefore(' ')
             val command = RENAMED[":$firstWord"] ?: ":$firstWord"
             if (command in commandNames && !(isElementHere(firstWord) && parses(input))) {
-                out.println(style.error("! not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}"))
+                out.text(style.error("! not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}"))
                 return true
             }
             lastExpression = input
@@ -309,23 +327,23 @@ class Repl(
     }
 
     /** @return false to exit. */
-    private fun command(command: String, argument: String, out: PrintWriter): Boolean {
+    private fun command(command: String, argument: String, out: Output): Boolean {
         when (command) {
             ":quit", ":exit", ":q" -> return false
             ":help", ":?" -> help(out)
-            ":load" -> if (argument.isBlank()) out.println("usage: :load <path>") else load(argument, out)
+            ":load" -> if (argument.isBlank()) out.text("usage: :load <path>") else load(argument, out)
             ":pool" -> if (argument.isBlank()) poolSummary(out) else switchPool(argument, out)
             ":pools" -> listPools(out)
             ":open" -> openPool(argument, out)
             ":close" -> closePool(argument, out)
             ":log" -> gitLog(argument, out)
-            ":at" -> if (argument.isBlank()) out.println("usage: :at <rev|date>  —  a branch, tag, id, branch~2, or 2026-03-11 for the line as of then") else at(argument, out)
+            ":at" -> if (argument.isBlank()) out.text("usage: :at <rev|date>  —  a branch, tag, id, branch~2, or 2026-03-11 for the line as of then") else at(argument, out)
             ":step" -> step(argument, out)
             ":delta" -> delta(out)
             ":scope" -> scope(argument, out)
             ":focus" -> focus(argument, out)
             ":all" -> if (argument.isBlank()) {
-                out.println("usage: :all <expr>")
+                out.text("usage: :all <expr>")
             } else {
                 lastExpression = argument
                 evaluateAll(argument, out)
@@ -344,9 +362,9 @@ class Repl(
             ":fhir" -> switchVersion(argument, out)
             in RENAMED -> {
                 val now = RENAMED.getValue(command)
-                out.println(style.error("! $command is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}"))
+                out.text(style.error("! $command is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}"))
             }
-            else -> out.println("unknown command $command — :help for the list")
+            else -> out.text("unknown command $command — :help for the list")
         }
         return true
     }
@@ -365,14 +383,14 @@ class Repl(
 
     // ------------------------------------------------------------------ evaluate
 
-    private fun evaluate(expression: String, out: PrintWriter) {
+    private fun evaluate(expression: String, out: Output) {
         lastPicks = null
         nameable = null
         if (reportSyntaxError(expression, out)) return
         val focus = session.focus
         if (focus == null) {
             if (session.pool.size == 0) {
-                out.println("pool is empty — :load <path> first")
+                out.text("pool is empty — :load <path> first")
                 return
             }
             // No focus: the pool is the subject. This is the default on purpose.
@@ -380,10 +398,10 @@ class Repl(
             return
         }
         when (val outcome = session.evaluator.evaluate(focus.node, expression)) {
-            is Outcome.Failure -> out.println(style.error("! ${outcome.message}"))
+            is Outcome.Failure -> out.text(style.error("! ${outcome.message}"))
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
-                    out.println("{} empty — :why")
+                    out.text("{} empty — :why")
                     return
                 }
                 lastPicks = session.focusResolver.picksOf(expression, focus, outcome.values)
@@ -402,7 +420,8 @@ class Repl(
     // ------------------------------------------------------------------- listings
 
     /**
-     * Prints a listing, holding back whatever does not fit for `:more`.
+     * A listing of rows its command formatted and styled itself, for the commands
+     * not yet written with [Output.Span]s; the printer holds back what does not fit.
      *
      * @param full every row with nothing shortened; defaults to [preview] for
      *   listings whose rows were never width-trimmed in the first place.
@@ -410,54 +429,43 @@ class Repl(
      *   are as wide as its columns, which differ between the two.
      */
     private fun emit(
-        out: PrintWriter,
+        out: Output,
         header: String?,
         preview: List<String>,
         full: List<String> = preview,
         fullHeader: String? = header,
     ) {
-        lastListing = Listing(header, preview, full, fullHeader)
-        header?.let { out.println(it) }
-        val shown = if (rowLimit <= 0) preview.size else minOf(rowLimit, preview.size)
-        for (index in 0 until shown) out.println(preview[index])
-        val hidden = preview.size - shown
-        when {
-            hidden > 0 -> out.println(style.hint("  … $hidden more of ${preview.size} — :more"))
-            // Nothing was held back by row count, but a value may still have been
-            // shortened to fit the window; say so rather than leaving a dangling "…".
-            preview != full && preview.any { it.contains('…') } ->
-                out.println(style.hint("  … shortened to fit — :more"))
-        }
+        fun lines(text: String?) = text?.split("\n")?.map(Output::text).orEmpty()
+        out.listing(lines(header), preview.map(Output::text), full.map(Output::text), lines(fullHeader))
     }
 
-    private fun more(out: PrintWriter) {
+    private fun more(out: Output) {
         val listing = lastListing ?: run {
-            out.println("nothing listed yet")
+            out.text("nothing listed yet")
             return
         }
-        listing.fullHeader?.let { out.println(it) }
-        listing.full.forEach { out.println(it) }
+        out.whole(listing)
     }
 
-    private fun limit(argument: String, out: PrintWriter) {
+    private fun limit(argument: String, out: Output) {
         when {
             argument.isBlank() ->
-                out.println(
+                out.text(
                     "rows per listing: " + if (rowLimit <= 0) "unlimited" else rowLimit.toString(),
                 )
             argument.equals("off", ignoreCase = true) || argument == "0" -> {
                 rowLimit = UNLIMITED
                 limitSet = UNLIMITED
-                out.println("row limit off — listings print in full and the terminal scrolls")
+                out.text("row limit off — listings print in full and the terminal scrolls")
             }
             else -> {
                 val rows = argument.toIntOrNull()
                 if (rows == null || rows < 1) {
-                    out.println("usage: :limit <rows|off>")
+                    out.text("usage: :limit <rows|off>")
                 } else {
                     rowLimit = rows
                     limitSet = rows
-                    out.println("rows per listing: $rows")
+                    out.text("rows per listing: $rows")
                 }
             }
         }
@@ -525,19 +533,19 @@ class Repl(
      *
      * @return true when the expression could not be parsed and nothing should run.
      */
-    private fun reportSyntaxError(expression: String, out: PrintWriter): Boolean {
+    private fun reportSyntaxError(expression: String, out: Output): Boolean {
         val error = session.evaluator.validate(expression) ?: return false
-        out.println(style.error("! $error"))
+        out.text(style.error("! $error"))
         // FHIRPath strings are single-quoted; " delimits an identifier, so a
         // double-quoted URL fails with a message that never mentions quoting.
         if (expression.contains('"')) {
-            out.println("  FHIRPath string literals use single quotes — try '…' rather than \"…\"")
+            out.text("  FHIRPath string literals use single quotes — try '…' rather than \"…\"")
         }
         return true
     }
 
     /** Not numbered: rows are resources, and an indexer would not pick between them. */
-    private fun evaluateAll(expression: String, out: PrintWriter) {
+    private fun evaluateAll(expression: String, out: Output) {
         lastPicks = null
         // Before the syntax check, so a failed :all leaves nothing behind to name.
         nameable = null
@@ -550,11 +558,11 @@ class Repl(
         nameable = expression.takeIf { result.hits.isNotEmpty() }
         if (result.hits.isNotEmpty()) record(expression, out)
         if (result.hits.isEmpty()) {
-            out.println(header)
+            out.text(header)
             if (result.errors == 0) {
                 // Nothing matched anywhere, and it parsed: the question is which step
                 // goes empty, which is exactly what :why answers.
-                out.println("  nothing matched — :why")
+                out.text("  nothing matched — :why")
             }
             lastListing = null
             return
@@ -580,16 +588,16 @@ class Repl(
     }
 
     /** @param argument the expression, or blank to re-diagnose [lastExpression]. */
-    private fun why(argument: String, out: PrintWriter) {
+    private fun why(argument: String, out: Output) {
         val expression = argument.ifBlank { lastExpression ?: "" }
         if (expression.isBlank()) {
-            out.println("usage: :why <expr>  —  or :why alone, to re-run the last expression")
+            out.text("usage: :why <expr>  —  or :why alone, to re-run the last expression")
             return
         }
         lastExpression = expression
         if (reportSyntaxError(expression, out)) return
         if (session.pool.size == 0) {
-            out.println("pool is empty")
+            out.text("pool is empty")
             return
         }
         val root = FhirPathTokenizer.segments(expression)
@@ -599,12 +607,12 @@ class Repl(
         if (root != null && session.navigator.resourceTypes().contains(root) &&
             session.pool.ofType(root).isEmpty()
         ) {
-            out.println("no $root in the pool — it holds ${session.pool.types().joinToString(", ")}")
+            out.text("no $root in the pool — it holds ${session.pool.types().joinToString(", ")}")
             return
         }
         val focus = session.focus
             ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
-        if (session.focus == null) out.println("(no focus; diagnosing against ${focus.label})")
+        if (session.focus == null) out.text("(no focus; diagnosing against ${focus.label})")
         // A relative step is rooted at the focus, then stripped of where()/[n] the way
         // the census spells it: "how many Observations populate code.coding.foo" is
         // the question, not how many share this one's indexes.
@@ -627,19 +635,19 @@ class Repl(
                 ?: step.expression
             // Colour after padding, so the escape codes do not count towards the width.
             val cell = count.padEnd(5).let { if (step.error != null) style.error(it) else it }
-            out.println("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} $cell$marker")
+            out.text("  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} $cell$marker")
         }
         if (diagnosis.firstEmpty == null) {
-            out.println("  path resolves fully")
+            out.text("  path resolves fully")
             return
         }
         diagnosis.poolCoverage?.let { coverage ->
-            out.println(
+            out.text(
                 "  ${abbreviate(coverage.expression, 60)} is populated in ${coverage.matching} of " +
                     "${coverage.considered} resource(s) of that type",
             )
             if (coverage.matching == 0) {
-                out.println("  nothing in the pool populates it — check the element name or the data")
+                out.text("  nothing in the pool populates it — check the element name or the data")
             }
         }
     }
@@ -653,28 +661,28 @@ class Repl(
      * startup, or when a write fails later. Asking for the entries is what reads
      * the files, so a problem is known by the time this looks.
      */
-    private fun reportStorageProblems(out: PrintWriter) {
+    private fun reportStorageProblems(out: Output) {
         log.entries()
         names.all()
         views.all()
         workspace.problems.filter { reportedProblems.add(it) }.forEach {
-            out.println(style.error("! $it — changes are kept for this session only"))
+            out.text(style.error("! $it — changes are kept for this session only"))
         }
     }
 
-    private fun record(expression: String, out: PrintWriter) {
+    private fun record(expression: String, out: Output) {
         log.record(expression)
         reportStorageProblems(out)
     }
 
-    private fun history(argument: String, out: PrintWriter) {
+    private fun history(argument: String, out: Output) {
         val entries = log.entries()
         reportStorageProblems(out)
         val numbered = entries.mapIndexed { idx, expression -> idx + 1 to expression }
             .filter { (_, expression) -> expression.contains(argument, ignoreCase = true) }
             .asReversed()
         if (numbered.isEmpty()) {
-            out.println(
+            out.text(
                 if (argument.isBlank()) {
                     "nothing recorded yet — pool-wide expressions that match something are kept here"
                 } else {
@@ -704,14 +712,14 @@ class Repl(
      * `:name-expr family #1` names a recorded one. A name may hold any expression; only `:view` asks for
      * primitives, and says so when it is used.
      */
-    private fun name(argument: String, out: PrintWriter) {
+    private fun name(argument: String, out: Output) {
         val parts = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
         reportStorageProblems(out)
         when (parts.size) {
             0 -> {
                 val all = names.all()
                 if (all.isEmpty()) {
-                    out.println("no names yet — :name-expr <name> #n names a recorded expression")
+                    out.text("no names yet — :name-expr <name> #n names a recorded expression")
                     return
                 }
                 val width = all.keys.maxOf { it.length }
@@ -727,12 +735,12 @@ class Repl(
             1, 2 -> {
                 val name = parts[0]
                 if (!NameStore.valid(name)) {
-                    out.println("not a valid name: $name — ${KeyedStore.RULE}")
+                    out.text("not a valid name: $name — ${KeyedStore.RULE}")
                     return
                 }
                 val expression = if (parts.size == 1) {
                     nameable ?: run {
-                        out.println(
+                        out.text(
                             "nothing to name — run a pool-wide expression that matches something first, " +
                                 "or :name-expr $name #n for one from :history",
                         )
@@ -740,17 +748,17 @@ class Repl(
                     }
                 } else {
                     val number = parts[1].removePrefix("#").toIntOrNull() ?: run {
-                        out.println("usage: :name-expr <name> [#n]  —  #n from :history")
+                        out.text("usage: :name-expr <name> [#n]  —  #n from :history")
                         return
                     }
                     log.get(number) ?: run {
-                        out.println("nothing recorded as #$number — see :history")
+                        out.text("nothing recorded as #$number — see :history")
                         return
                     }
                 }
                 val before = names.set(name, expression)
                 reportStorageProblems(out)
-                out.println(
+                out.text(
                     when (before) {
                         null -> "$name  $expression"
                         expression -> "$name already names $expression"
@@ -758,45 +766,45 @@ class Repl(
                     },
                 )
             }
-            else -> out.println("usage: :name-expr [name [#n]]")
+            else -> out.text("usage: :name-expr [name [#n]]")
         }
     }
 
-    private fun unname(argument: String, out: PrintWriter) {
+    private fun unname(argument: String, out: Output) {
         if (argument.isBlank()) {
-            out.println("usage: :unname-expr <name>")
+            out.text("usage: :unname-expr <name>")
             return
         }
         val before = names.remove(argument)
         reportStorageProblems(out)
-        out.println(if (before == null) "no name $argument — :name-expr lists them" else "forgot $argument  ($before)")
+        out.text(if (before == null) "no name $argument — :name-expr lists them" else "forgot $argument  ($before)")
     }
 
     /** @param argument recorded expressions by number or name: `#3 family`, `3, 5`. */
-    private fun view(argument: String, out: PrintWriter) {
+    private fun view(argument: String, out: Output) {
         val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
         if (refs.isEmpty()) {
-            out.println("usage: :view #n|name|@view …  —  numbers from :history, names from :name-expr, views from :name-view")
+            out.text("usage: :view #n|name|@view …  —  numbers from :history, names from :name-expr, views from :name-view")
             return
         }
         reportStorageProblems(out)
         val picked = refs.flatMap { ref ->
             if (ref.startsWith("@")) {
                 return@flatMap savedColumns(ref.drop(1)) ?: run {
-                    out.println("no saved view ${ref.drop(1)} — :name-view lists them")
+                    out.text("no saved view ${ref.drop(1)} — :name-view lists them")
                     return
                 }
             }
             val number = ref.removePrefix("#").toIntOrNull()
             if (number != null) {
                 val expression = log.get(number) ?: run {
-                    out.println("nothing recorded as #$number — see :history")
+                    out.text("nothing recorded as #$number — see :history")
                     return
                 }
                 listOf(ViewBuilder.Column(expression, number = number))
             } else {
                 val expression = names.get(ref) ?: run {
-                    out.println("no :history number or name $ref — see :history and :name-expr")
+                    out.text("no :history number or name $ref — see :history and :name-expr")
                     return
                 }
                 listOf(ViewBuilder.Column(expression, name = ref))
@@ -804,7 +812,7 @@ class Repl(
         }
         val table = when (val result = session.viewBuilder.build(picked)) {
             is ViewBuilder.Result.Refused -> {
-                out.println(style.error("! ${result.message}"))
+                out.text(style.error("! ${result.message}"))
                 return
             }
             is ViewBuilder.Result.Table -> result
@@ -858,12 +866,12 @@ class Repl(
     }
 
     /** `:name-view` lists, `:name-view patients` saves the last `:view` under that name. */
-    private fun saveView(argument: String, out: PrintWriter) {
+    private fun saveView(argument: String, out: Output) {
         reportStorageProblems(out)
         if (argument.isBlank()) {
             val all = views.all()
             if (all.isEmpty()) {
-                out.println("no saved views — :name-view <name> after a :view saves it")
+                out.text("no saved views — :name-view <name> after a :view saves it")
                 return
             }
             val width = all.keys.maxOf { it.length } + 1
@@ -883,28 +891,28 @@ class Repl(
         // `@people` is how a view is written everywhere else, so it is taken here too.
         val name = argument.removePrefix("@")
         if (!KeyedStore.valid(name)) {
-            out.println("not a valid view name: $name — ${KeyedStore.RULE}")
+            out.text("not a valid view name: $name — ${KeyedStore.RULE}")
             return
         }
         val columns = lastView ?: run {
-            out.println("nothing to save — run a :view first")
+            out.text("nothing to save — run a :view first")
             return
         }
         val before = views.set(name, columns)
         reportStorageProblems(out)
         val replaced = if (before != null && before != columns) "  (replaced ${before.size} column(s))" else ""
-        out.println("saved @$name: ${columns.size} column(s) — :view @$name reruns it$replaced")
+        out.text("saved @$name: ${columns.size} column(s) — :view @$name reruns it$replaced")
     }
 
-    private fun unsaveView(argument: String, out: PrintWriter) {
+    private fun unsaveView(argument: String, out: Output) {
         val name = argument.removePrefix("@")
         if (name.isBlank()) {
-            out.println("usage: :unname-view <view>")
+            out.text("usage: :unname-view <view>")
             return
         }
         val before = views.remove(name)
         reportStorageProblems(out)
-        out.println(if (before == null) "no saved view $name — :name-view lists them" else "forgot @$name")
+        out.text(if (before == null) "no saved view $name — :name-view lists them" else "forgot @$name")
     }
 
     // ----------------------------------------------------------------- workspace
@@ -934,11 +942,11 @@ class Repl(
      * other one, just as `:fhir` empties the pools. They stay saved until something
      * changes.
      */
-    private fun restore(saved: SavedState, out: PrintWriter) {
+    private fun restore(saved: SavedState, out: Output) {
         val leftOn = saved.fhir?.takeIf { it != session.version.id }
         val paths = saved.pools.sumOf { it.loads.size }
         val state = if (leftOn != null && saved.pools.any { it.loads.isNotEmpty() || it.focus.isNotEmpty() }) {
-            out.println(
+            out.text(
                 style.error(
                     "! the workspace was left on ${leftOn.uppercase()}, so its $paths path(s) and focus " +
                         "are not restored in ${session.version.id.uppercase()} — saved until something changes",
@@ -962,7 +970,7 @@ class Repl(
                     restoreFocus(pool.focus, out)
                 } else {
                     session.current.unavailable = pool
-                    out.println(style.error("  kept in the workspace, to open once it is back"))
+                    out.text(style.error("  kept in the workspace, to open once it is back"))
                 }
                 continue
             }
@@ -972,7 +980,7 @@ class Repl(
                     load(path, out)
                 } else {
                     val file = workspace.dir?.resolve("state")?.let { " (or drop it from $it)" }.orEmpty()
-                    out.println(style.error("! $path is missing${inPool()} — kept in the workspace, to load once it is back$file"))
+                    out.text(style.error("! $path is missing${inPool()} — kept in the workspace, to load once it is back$file"))
                 }
             }
             restoreFocus(pool.focus, out)
@@ -982,14 +990,14 @@ class Repl(
         lastSaved = stateNow()
     }
 
-    private fun restoreFocus(steps: List<String>, out: PrintWriter) {
+    private fun restoreFocus(steps: List<String>, out: Output) {
         if (steps.isEmpty()) return
         var current: Focus? = null
         for (step in steps) {
             when (val resolution = session.focusResolver.resolve(step, current)) {
                 is Resolution.Focused -> current = resolution.focus
                 else -> {
-                    out.println(
+                    out.text(
                         style.error("! focus restored only as far as ${current?.label ?: "the pool"} — $step no longer reaches one value"),
                     )
                     break
@@ -997,7 +1005,7 @@ class Repl(
             }
         }
         session.focus = current
-        current?.let { out.println("focus ${it.label}${inPool()}") }
+        current?.let { out.text("focus ${it.label}${inPool()}") }
     }
 
     /**
@@ -1043,7 +1051,7 @@ class Repl(
         )
 
     /** Writes the state when it has changed since it was last written or restored. */
-    private fun saveState(out: PrintWriter) {
+    private fun saveState(out: Output) {
         val now = stateNow()
         if (now == lastSaved) return
         workspace.state.write(now)
@@ -1059,7 +1067,7 @@ class Repl(
      * empty file first makes every switch start from what the workspace has. It is
      * created owner-only, as JLine warns on every start about one others can read.
      */
-    private fun useLineHistory(reader: LineReader, out: PrintWriter) {
+    private fun useLineHistory(reader: LineReader, out: Output) {
         val file = workspace.lineHistory ?: return
         if (file.parent?.let(Files::isDirectory) != true) {
             // Switching to a workspace does not create it, or a typo would stay as
@@ -1083,7 +1091,7 @@ class Repl(
             }
             reader.history.load()
         } catch (e: java.io.IOException) {
-            out.println(style.error("! cannot use $file for line history: ${e.message}"))
+            out.text(style.error("! cannot use $file for line history: ${e.message}"))
         }
     }
 
@@ -1091,7 +1099,7 @@ class Repl(
      * Once the workspace's directory exists, moves the lines typed so far into its
      * history file: they were typed in this workspace, so they belong to it.
      */
-    private fun attachPendingHistory(reader: LineReader, out: PrintWriter) {
+    private fun attachPendingHistory(reader: LineReader, out: Output) {
         if (!historyPending || workspace.lineHistory?.parent?.let(Files::isDirectory) != true) return
         val typed = reader.history.map { it.line() }
         useLineHistory(reader, out)
@@ -1099,21 +1107,21 @@ class Repl(
     }
 
     /** `:workspace` shows the current one and lists the rest; `:workspace biobank` switches. */
-    private fun switchWorkspace(argument: String, out: PrintWriter) {
+    private fun switchWorkspace(argument: String, out: Output) {
         if (argument.isBlank()) {
             val where = workspace.dir?.let { "  ($it)" }.orEmpty()
-            out.println("workspace ${workspace.name}$where")
+            out.text("workspace ${workspace.name}$where")
             workspaces.available().filter { it != workspace.name }.takeIf { it.isNotEmpty() }?.let {
-                out.println("  also: ${it.joinToString(", ")}")
+                out.text("  also: ${it.joinToString(", ")}")
             }
             return
         }
         if (!Workspaces.valid(argument)) {
-            out.println("not a valid workspace name: $argument — ${KeyedStore.RULE}")
+            out.text("not a valid workspace name: $argument — ${KeyedStore.RULE}")
             return
         }
         if (argument == workspace.name) {
-            out.println("already in workspace $argument")
+            out.text("already in workspace $argument")
             return
         }
         val next = workspaces.open(argument)
@@ -1136,20 +1144,20 @@ class Repl(
         limitSet = null
         rowLimit = windowRowLimit
         reader?.let { useLineHistory(it, out) }
-        out.println(
+        out.text(
             "workspace $argument, FHIR ${session.version.id.uppercase()}" +
                 if (isNew) " — new, created once something is saved" else "",
         )
-        notes.forEach { out.println(style.error("! $it")) }
+        notes.forEach { out.text(style.error("! $it")) }
         reportStorageProblems(out)
         restore(saved, out)
     }
 
     // ---------------------------------------------------------------------- pool
 
-    private fun load(path: String, out: PrintWriter) {
+    private fun load(path: String, out: Output) {
         session.current.git?.let {
-            out.println("${poolName()} is ${it.source.path}@${it.lineLabel} — :at <rev> moves it; :open another pool to load files")
+            out.text("${poolName()} is ${it.source.path}@${it.lineLabel} — :at <rev> moves it; :open another pool to load files")
             return
         }
         val report = session.importer.load(Paths.get(expandHome(path)))
@@ -1159,15 +1167,15 @@ class Repl(
         if (report.files > 0 && absolute !in loaded) loaded += absolute
         val header = "loaded ${report.summary()}; ${poolName()} now ${session.pool.size}"
         if (report.problems.isEmpty()) {
-            out.println(header)
+            out.text(header)
             return
         }
         emit(out, header, report.problems.map { "  " + style.error("! $it") })
     }
 
-    private fun poolSummary(out: PrintWriter) {
+    private fun poolSummary(out: Output) {
         if (session.pool.size == 0) {
-            out.println("pool is empty")
+            out.text("pool is empty")
             return
         }
         val census = session.pool.census
@@ -1198,7 +1206,7 @@ class Repl(
     private fun inPool(): String =
         if (session.pools.size > 1) " (pool ${session.current.name})" else ""
 
-    private fun listPools(out: PrintWriter) {
+    private fun listPools(out: Output) {
         val width = session.pools.maxOf { it.name.length }
         emit(
             out,
@@ -1220,35 +1228,35 @@ class Repl(
     }
 
     /** Rows from another pool cannot be picked here, so a switch forgets them. */
-    private fun switchPool(name: String, out: PrintWriter) {
+    private fun switchPool(name: String, out: Output) {
         when {
             session.pool(name) == null ->
-                out.println("no pool $name — :pools lists them, :open $name <path> adds one")
-            name == session.current.name -> out.println("already in pool $name")
+                out.text("no pool $name — :pools lists them, :open $name <path> adds one")
+            name == session.current.name -> out.text("already in pool $name")
             else -> {
                 session.switchTo(name)
                 lastPicks = null
                 val focus = session.focus?.let { ", focus ${it.label}" }.orEmpty()
-                out.println("pool $name: ${session.pool.size} resource(s)$focus")
+                out.text("pool $name: ${session.pool.size} resource(s)$focus")
             }
         }
     }
 
     /** `:open specimen` adds an empty pool; `:open specimen <path>` loads into it too. */
-    private fun openPool(argument: String, out: PrintWriter) {
+    private fun openPool(argument: String, out: Output) {
         val name = argument.substringBefore(' ').trim()
         val path = argument.substringAfter(' ', "").trim()
         when {
-            name.isEmpty() -> out.println("usage: :open <name> [path]")
-            !KeyedStore.valid(name) -> out.println("not a valid pool name: $name — ${KeyedStore.RULE}")
-            session.pool(name) != null -> out.println("pool $name is already open — :pool $name switches to it")
+            name.isEmpty() -> out.text("usage: :open <name> [path]")
+            !KeyedStore.valid(name) -> out.text("not a valid pool name: $name — ${KeyedStore.RULE}")
+            session.pool(name) != null -> out.text("pool $name is already open — :pool $name switches to it")
             else -> {
                 val before = session.current.name
                 session.open(name)
                 session.switchTo(name)
                 lastPicks = null
                 when {
-                    path.isEmpty() -> out.println("pool $name — empty, :load <path> to import")
+                    path.isEmpty() -> out.text("pool $name — empty, :load <path> to import")
                     gitSpecOf(path) != null ->
                         if (!openGit(path, null, false, out)) {
                             session.close(name)
@@ -1263,16 +1271,16 @@ class Repl(
         }
     }
 
-    private fun closePool(name: String, out: PrintWriter) {
+    private fun closePool(name: String, out: Output) {
         when {
-            name.isBlank() -> out.println("usage: :close <name>")
-            session.pool(name) == null -> out.println("no pool $name — :pools lists them")
-            session.pools.size == 1 -> out.println("$name is the only pool — there is always one to evaluate against")
+            name.isBlank() -> out.text("usage: :close <name>")
+            session.pool(name) == null -> out.text("no pool $name — :pools lists them")
+            session.pools.size == 1 -> out.text("$name is the only pool — there is always one to evaluate against")
             else -> {
                 val wasCurrent = name == session.current.name
                 session.close(name)
                 if (wasCurrent) lastPicks = null
-                out.println("closed pool $name" + if (wasCurrent) " — now in pool ${session.current.name}" else "")
+                out.text("closed pool $name" + if (wasCurrent) " — now in pool ${session.current.name}" else "")
             }
         }
     }
@@ -1282,12 +1290,12 @@ class Repl(
      * repository: switching to git silently would change what the pool holds. So the
      * history is only pointed out.
      */
-    private fun gitHint(path: String, out: PrintWriter) {
+    private fun gitHint(path: String, out: Output) {
         val dir = runCatching { Paths.get(expandHome(path)) }.getOrNull() ?: return
         if (!Files.isDirectory(dir)) return
         val head = GitSource.historyAt(dir) ?: return
         val where = if (head.startsWith("HEAD ")) head else "on $head"
-        out.println(style.hint("  in a git repository, $where — :open <name> ${path.trimEnd('/')}@ opens its history; TAB after the @ lists revisions"))
+        out.hint("  in a git repository, $where — :open <name> ${path.trimEnd('/')}@ opens its history; TAB after the @ lists revisions")
     }
 
     /**
@@ -1325,15 +1333,15 @@ class Repl(
      *
      * @return false when it could not be opened; what went wrong has been said.
      */
-    private fun openGit(spec: String, at: String?, deltaScope: Boolean, out: PrintWriter): Boolean {
+    private fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output): Boolean {
         val (path, revision) = GitSource.split(spec) ?: run {
-            out.println(style.error("! $spec names no revision — dir@rev, e.g. registry/in/import@branch/out"))
+            out.error("$spec names no revision — dir@rev, e.g. registry/in/import@branch/out")
             return false
         }
         val source = try {
             GitSource.open(Paths.get(expandHome(path)).toAbsolutePath().normalize())
         } catch (e: GitSourceException) {
-            out.println(style.error("! ${e.message}"))
+            out.error("${e.message}")
             return false
         }
         // `dir@` follows whatever branch HEAD is on; the line saved is that branch, so
@@ -1342,22 +1350,22 @@ class Repl(
             source.headLine()?.also { head ->
                 // A detached HEAD has no branch to follow, so the pool stays at its commit.
                 if (!source.isBranch(head)) {
-                    out.println(style.hint("  HEAD is detached — pinned at ${GitSource.label(head)}; :at <branch> to follow one"))
+                    out.hint("  HEAD is detached — pinned at ${GitSource.label(head)}; :at <branch> to follow one")
                 }
             } ?: run {
                 source.close()
-                out.println(style.error("! ${source.path} is in a repository with no commits yet"))
+                out.error("${source.path} is in a repository with no commits yet")
                 return false
             }
         }
         val left = at?.let { id ->
             source.resolve(id) ?: null.also {
-                out.println(style.error("! ${id.take(7)} is gone from ${source.path} — opening the tip of $line instead"))
+                out.error("${id.take(7)} is gone from ${source.path} — opening the tip of $line instead")
             }
         }
         val start = left ?: source.resolve(line) ?: run {
             source.close()
-            out.println(style.error("! no commit $line in ${source.path}"))
+            out.error("no commit $line in ${source.path}")
             return false
         }
         val git = GitPool(source, line, session.importer, session.pool)
@@ -1367,15 +1375,23 @@ class Repl(
             git.load(start)
         } catch (e: Exception) {
             source.close()
-            out.println(style.error("! cannot read ${source.path} at ${start.short}: ${e.message ?: e.javaClass.simpleName}"))
+            out.error("cannot read ${source.path} at ${start.short}: ${e.message ?: e.javaClass.simpleName}")
             return false
         }
         session.current.git = git
         session.current.unavailable = null
         git.deltaScope = deltaScope
-        val header = "${poolName()} at ${revision(git)}: ${report.summary()}"
-        if (report.problems.isEmpty()) out.println(header) else emit(out, header, report.problems.map { "  " + style.error("! $it") })
+        withProblems(out, "${poolName()} at ${revision(git)}: ${report.summary()}", report.problems)
         return true
+    }
+
+    /** [header], and under it any files that could not be read, held back past the row limit. */
+    private fun withProblems(out: Output, header: String, problems: List<String>) {
+        if (problems.isEmpty()) {
+            out.text(header)
+            return
+        }
+        out.listing(listOf(Output.text(header)), problems.map { problem -> Output.line { +"  "; error("! $problem") } })
     }
 
     /** `3f2a1c0 on branch/out, 2026-10-17 14:02 sync`. */
@@ -1392,19 +1408,19 @@ class Repl(
     }
 
     /** The current pool's git side, or null after saying why there is none. */
-    private fun gitPool(out: PrintWriter): GitPool? = session.current.git ?: run {
-        out.println("${poolName()} is not a git pool — :open <name> <dir>@<rev> opens one")
+    private fun gitPool(out: Output): GitPool? = session.current.git ?: run {
+        out.text("${poolName()} is not a git pool — :open <name> <dir>@<rev> opens one")
         null
     }
 
-    private fun gitLog(argument: String, out: PrintWriter) {
+    private fun gitLog(argument: String, out: Output) {
         val git = gitPool(out) ?: return
         val words = argument.split(Regex("\\s+")).filter { it.isNotEmpty() }
         val (skips, limits) = words.partition { it.startsWith("+") }
         val skip = skips.singleOrNull()?.removePrefix("+")?.toIntOrNull()?.takeIf { it >= 0 }
         val limit = limits.singleOrNull()?.toIntOrNull()?.takeIf { it > 0 }
         if (skips.size > 1 || limits.size > 1 || (skips.isNotEmpty() && skip == null) || (limits.isNotEmpty() && limit == null)) {
-            out.println("usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back")
+            out.text(LOG_USAGE)
             return
         }
         val page = limit ?: DEFAULT_LOG
@@ -1415,60 +1431,66 @@ class Repl(
         val read = try {
             git.history(minOf(Int.MAX_VALUE.toLong(), skipped.toLong() + page + 1).toInt())
         } catch (e: Exception) {
-            out.println(style.error("! cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}"))
+            out.error("cannot read ${git.source.path}: ${e.message ?: e.javaClass.simpleName}")
             return
         }
         if (read.isEmpty()) {
-            out.println("${git.lineLabel} names no commit any more")
+            out.text("${git.lineLabel} names no commit any more")
             return
         }
         val commits = read.drop(skipped).take(page)
         if (commits.isEmpty()) {
-            out.println("only ${read.size} commit(s) on ${git.lineLabel}")
+            out.text("only ${read.size} commit(s) on ${git.lineLabel}")
             return
         }
         var unreadable = 0
-        emit(
-            out,
-            header = "${git.lineLabel} in ${git.source.path}, newest first",
-            preview = commits.map { commit ->
-                val marker = if (commit.id == git.commit.id) "*" else " "
+        out.listing(
+            header = listOf(Output.text("${git.lineLabel} in ${git.source.path}, newest first")),
+            rows = commits.map { commit ->
                 val count = runCatching { git.changedFiles(commit, session.importer::reads) }.getOrNull()
                 if (count == null) unreadable++
-                val changed = "Δ${count ?: "?"}"
-                "$marker ${style.index(commit.short)}  ${COMMIT_TIME.format(commit.time)}  " +
-                    "${style.count(changed.padStart(6))}  ${abbreviate(commit.subject, valueWidth(LOG_INDENT))}"
+                commitRow(git, commit, "Δ${count ?: "?"}".padStart(6))
             },
         )
         if (unreadable > 0) {
-            out.println(style.error("  Δ? — what $unreadable commit(s) changed cannot be read from ${git.source.path}"))
+            out.line { error("  Δ? — what $unreadable commit(s) changed cannot be read from ${git.source.path}") }
         }
         if (commits.none { it.id == git.commit.id }) {
-            out.println(style.hint("  (at ${git.commit.short}, which is not among these)"))
+            out.hint("  (at ${git.commit.short}, which is not among these)")
         }
         if (read.size.toLong() > skipped.toLong() + page) {
             val size = if (page == DEFAULT_LOG) "" else "$page "
-            out.println(style.hint("  older: :log $size+${skipped + page}"))
+            out.hint("  older: :log $size+${skipped + page}")
         }
     }
 
-    private fun at(revision: String, out: PrintWriter) {
+    /** `* 3f2a1c0  2026-10-17 14:02      Δ3  sync`, marked when the pool is at it. */
+    private fun commitRow(git: GitPool, commit: GitSource.Commit, what: String): Output.Line = Output.line {
+        +(if (commit.id == git.commit.id) "* " else "  ")
+        index(commit.short)
+        +"  ${COMMIT_TIME.format(commit.time)}  "
+        count(what)
+        +"  "
+        shrink(commit.subject)
+    }
+
+    private fun at(revision: String, out: Output) {
         val git = gitPool(out) ?: return
         moved(git, git.at(revision), out)
     }
 
-    private fun step(argument: String, out: PrintWriter) {
+    private fun step(argument: String, out: Output) {
         val git = gitPool(out) ?: return
         val by = when {
             argument.isBlank() -> -1
             Regex("[+-]\\d{1,6}").matches(argument) -> argument.removePrefix("+").toInt()
             else -> {
-                out.println("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.lineLabel}")
+                out.text("usage: :step [-n|+n]  —  -1 is one commit back, +1 one forward along ${git.lineLabel}")
                 return
             }
         }
         if (by == 0) {
-            out.println("at ${git.commit.short}")
+            out.text("at ${git.commit.short}")
             return
         }
         moved(git, git.step(by), out)
@@ -1478,48 +1500,48 @@ class Repl(
      * Moving is how you ask what a run changed, so the scope goes to the delta. The
      * focus is found again in the new revision by the steps that reached it.
      */
-    private fun moved(git: GitPool, move: GitPool.Move, out: PrintWriter) {
+    private fun moved(git: GitPool, move: GitPool.Move, out: Output) {
         when (move) {
-            is GitPool.Move.Refused -> out.println(move.message)
-            is GitPool.Move.Failed -> out.println(style.error("! ${move.message}"))
+            is GitPool.Move.Refused -> out.text(move.message)
+            is GitPool.Move.Failed -> out.error(move.message)
             is GitPool.Move.Moved -> {
                 val steps = focusSteps(session.focus)
                 session.focus = null
                 lastPicks = null
                 git.deltaScope = true
-                val header = "${poolName()} at ${revision(git)} — ${deltaSummary(git)}"
-                val problems = move.report.problems
-                move.note?.let { out.println(it) }
-                if (problems.isEmpty()) out.println(header) else emit(out, header, problems.map { "  " + style.error("! $it") })
+                move.note?.let { out.text(it) }
+                withProblems(out, "${poolName()} at ${revision(git)} — ${deltaSummary(git)}", move.report.problems)
                 restoreFocus(steps, out)
             }
         }
     }
 
-    private fun delta(out: PrintWriter) {
+    private fun delta(out: Output) {
         val git = gitPool(out) ?: return
         val delta = git.delta
         val against = delta.parent?.let { "against ${it.short}" } ?: "against nothing: the first commit"
         val header = "${git.commit.short} $against — ${deltaSummary(git)}"
         if (delta.size == 0) {
-            out.println(header)
+            out.text(header)
             return
         }
-        fun row(sign: String, label: String, origin: String?) =
-            "  $sign ${style.label(label.padEnd(LABEL_WIDTH))}" + origin?.let { " " + style.hint("($it)") }.orEmpty()
-        emit(
-            out,
-            header,
+        fun row(sign: String, label: String, origin: String?) = Output.line {
+            +"  $sign "
+            label(label.padEnd(LABEL_WIDTH))
+            origin?.let { hint(" ($it)") }
+        }
+        out.listing(
+            listOf(Output.text(header)),
             delta.added.map { row("+", it.label, it.origin) } +
                 delta.modified.map { row("~", it.label, it.origin) } +
                 delta.deleted.map { row("-", it, null) },
         )
     }
 
-    private fun scope(argument: String, out: PrintWriter) {
+    private fun scope(argument: String, out: Output) {
         val git = session.current.git
         when (argument.lowercase()) {
-            "" -> out.println(
+            "" -> out.text(
                 if (git?.deltaScope == true) {
                     "scope: the delta, ${session.pool.inScope().size} of ${session.pool.size} resource(s) — :scope all for everything"
                 } else {
@@ -1529,13 +1551,13 @@ class Repl(
             "delta" -> {
                 val pool = gitPool(out) ?: return
                 pool.deltaScope = true
-                out.println("scope: the delta, ${session.pool.inScope().size} resource(s) — ${deltaSummary(pool)}")
+                out.text("scope: the delta, ${session.pool.inScope().size} resource(s) — ${deltaSummary(pool)}")
             }
             "all" -> {
                 git?.deltaScope = false
-                out.println("scope: all ${session.pool.size} resource(s)")
+                out.text("scope: all ${session.pool.size} resource(s)")
             }
-            else -> out.println("usage: :scope [delta|all]")
+            else -> out.text("usage: :scope [delta|all]")
         }
     }
 
@@ -1545,20 +1567,20 @@ class Repl(
      * result becomes the focus. Each new focus remembers the last, for `:focus ..`.
      * The rules live in [FocusResolver]; this only reports.
      */
-    private fun focus(argument: String, out: PrintWriter) {
+    private fun focus(argument: String, out: Output) {
         val current = session.focus
         if (argument.isBlank()) {
             session.focus = null
             // Clears the lot: pool-wide rows would otherwise come back into play.
             lastPicks = null
-            out.println("focus cleared — expressions now run across the pool")
+            out.text("focus cleared — expressions now run across the pool")
             return
         }
         if (argument == "..") {
             session.focus = current?.parent
             when {
-                current == null -> out.println("nothing in focus")
-                current.parent == null -> out.println("focus cleared — expressions now run across the pool")
+                current == null -> out.text("nothing in focus")
+                current.parent == null -> out.text("focus cleared — expressions now run across the pool")
                 else -> announceFocus(current.parent, out)
             }
             return
@@ -1579,16 +1601,16 @@ class Repl(
                 session.focus = resolution.focus
                 announceFocus(resolution.focus, out)
             }
-            is Resolution.NotInPool -> out.println("not in pool: ${resolution.argument}")
-            is Resolution.CannotPick -> out.println(resolution.reason)
+            is Resolution.NotInPool -> out.text("not in pool: ${resolution.argument}")
+            is Resolution.CannotPick -> out.text(resolution.reason)
             is Resolution.Invalid ->
-                out.println(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
-            is Resolution.Failed -> out.println(style.error("! ${resolution.message}"))
+                out.text(style.error("! not in pool, and not a valid expression: ${resolution.message}"))
+            is Resolution.Failed -> out.text(style.error("! ${resolution.message}"))
             is Resolution.Nothing -> {
                 // The hint points at :why, which should not need the expression retyped.
                 lastExpression = argument
                 val label = if (resolution.couldBeLabel) "not a pool label, and " else ""
-                out.println("$label$argument yields nothing — :why")
+                out.text("$label$argument yields nothing — :why")
             }
             is Resolution.Several -> {
                 val results = resolution.picks.results
@@ -1613,7 +1635,7 @@ class Repl(
      * A listing of one, so `:more` straight after `:focus` shows the focused value
      * whole. A long element path is exactly when you want to see what it landed on.
      */
-    private fun announceFocus(focus: Focus, out: PrintWriter) {
+    private fun announceFocus(focus: Focus, out: Output) {
         val what = if (focus.isResource) focus.resource.origin else "${focus.typeName} in ${focus.resource.origin}"
         emit(
             out,
@@ -1623,10 +1645,10 @@ class Repl(
         )
     }
 
-    private fun extensions(argument: String, out: PrintWriter) {
+    private fun extensions(argument: String, out: Output) {
         val census = session.pool.census
         if (census.extensions.isEmpty()) {
-            out.println("no extensions observed in the pool")
+            out.text("no extensions observed in the pool")
             return
         }
         val rows = if (argument.isBlank()) {
@@ -1638,7 +1660,7 @@ class Repl(
                 .map { Triple(it.key.path, it.key.url, it.value) }
         }
         if (rows.isEmpty()) {
-            out.println("no extensions observed at $argument")
+            out.text("no extensions observed at $argument")
             return
         }
         emit(
@@ -1651,17 +1673,17 @@ class Repl(
         )
     }
 
-    private fun switchVersion(argument: String, out: PrintWriter) {
+    private fun switchVersion(argument: String, out: Output) {
         if (argument.isBlank()) {
-            out.println("FHIR ${session.version.id} — available: ${FhirVersion.ids()}")
+            out.text("FHIR ${session.version.id} — available: ${FhirVersion.ids()}")
             return
         }
         val version = FhirVersion.parse(argument) ?: run {
-            out.println("unknown version $argument — available: ${FhirVersion.ids()}")
+            out.text("unknown version $argument — available: ${FhirVersion.ids()}")
             return
         }
         if (version == session.version) {
-            out.println("already on ${version.id}")
+            out.text("already on ${version.id}")
             return
         }
         try {
@@ -1676,7 +1698,7 @@ class Repl(
                 old.pools.none { it.git != null } -> "pool reset"
                 else -> "loaded pools emptied, git pools read again"
             }
-            out.println("switched to FHIR ${version.id.uppercase()} — $reset")
+            out.text("switched to FHIR ${version.id.uppercase()} — $reset")
             // A git pool's contents are its revision, so it reads that again in the new version.
             for (pool in old.pools) {
                 session.switchTo(pool.name)
@@ -1691,82 +1713,74 @@ class Repl(
             session.switchTo(old.current.name)
             old.close()
         } catch (e: FhirVersionUnavailable) {
-            out.println(style.error("! ${e.message}"))
+            out.text(style.error("! ${e.message}"))
         }
     }
 
-    private fun help(out: PrintWriter) {
-        out.println("Type a FHIRPath expression, or:")
+    private fun help(out: Output) {
+        out.text("Type a FHIRPath expression, or:")
         val usages = commands.map { "  ${it.name} ${it.args}" }
         val width = usages.maxOf { it.length } + 2
-        commands.zip(usages).forEach { (command, usage) -> out.println(usage.padEnd(width) + command.doc) }
-        out.println()
-        out.println("With a focus set, an expression runs against that resource;")
-        out.println("with no focus it runs across the whole pool.")
-        out.println()
-        out.println(":focus also takes an expression: it runs against the current focus")
-        out.println("(or the pool) and its one result becomes the focus, which may be an")
-        out.println("element. Expressions then start from that element — coding.code,")
-        out.println("not Observation.code.coding — and :focus .. steps back up.")
-        out.println(":more right after :focus prints the focused value in full.")
-        out.println(":focus [n] picks row n of the last numbered listing, e.g. when")
-        out.println("an expression matched several values.")
-        out.println()
-        out.println(":why with no expression re-diagnoses the last one you ran, so the")
-        out.println("hint printed after an empty result can be followed by just :why.")
-        out.println()
-        out.println("A pool-wide expression that matches something is recorded, once, in")
-        out.println("the workspace; :history lists them by number. :view #3 #5")
-        out.println("tabulates them: one row per resource of the type they start from,")
-        out.println("one column each. Columns must yield primitives, e.g. name.family")
-        out.println("rather than name; several values in one cell are joined with \", \".")
-        out.println(":name-expr family right after a pool-wide expression names it;")
-        out.println(":name-expr family #1 names a recorded one. Then :view family birth #3")
-        out.println("works and the column is titled family. A name holds the expression")
-        out.println("itself, not its number.")
-        out.println(":name-view people saves the last :view; :view @people reruns it.")
-        out.println()
-        out.println("Several pools can be open at once, each with its own census and focus;")
-        out.println("resolve() stays inside the pool. :open specimen <path> adds one and")
-        out.println("switches to it, :pool <name> switches, :pools lists them. Recorded")
-        out.println("expressions, names and views are shared, so :view @people runs in any.")
-        out.println()
-        out.println("A pool can be a directory in a git repository at a revision, read")
-        out.println("without checking anything out: :open in registry/in/import@branch/out.")
-        out.println("A bare @ opens the branch HEAD is on; TAB after the @ lists revisions.")
-        out.println("TAB after :at lists the line's commits by date, newest first.")
-        out.println(":log lists its line, :step -1 and :step +1 move along it, :at <rev>")
-        out.println("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
-        out.println(":view run over what that commit changed, while resolve() still sees")
-        out.println("everything; :delta lists it, :scope all goes back to the whole pool.")
-        out.println()
-        out.println("A workspace keeps all of that, the up-arrow history, and where the")
-        out.println("session was left: FHIR version, pools, :limit and focus, all")
-        out.println("restored at the next start. The default is ~/.fhir-walk; start with")
-        out.println("--workspace <name>, or :workspace <name> to switch. --fresh starts")
-        out.println("empty and keeps the saved state until something changes.")
-        out.println()
-        out.println("A listing fills the window and keeps the rest for :more, which")
-        out.println("reprints it whole with no value shortened. :limit off prints")
-        out.println("everything up front and lets the terminal scroll.")
-        out.println()
-        out.println("TAB completes, including after :all and :why. On an empty line it")
-        out.println("lists the pool's resource types; after a '.' the elements and")
-        out.println("functions available there, with the ones present in the pool first;")
-        out.println("inside extension('…') the URLs observed on that element.")
-        out.println("Up/Down or further TABs walk the candidates; Enter takes the one shown.")
+        commands.zip(usages).forEach { (command, usage) -> out.text(usage.padEnd(width) + command.doc) }
+        out.text("")
+        out.text("With a focus set, an expression runs against that resource;")
+        out.text("with no focus it runs across the whole pool.")
+        out.text("")
+        out.text(":focus also takes an expression: it runs against the current focus")
+        out.text("(or the pool) and its one result becomes the focus, which may be an")
+        out.text("element. Expressions then start from that element — coding.code,")
+        out.text("not Observation.code.coding — and :focus .. steps back up.")
+        out.text(":more right after :focus prints the focused value in full.")
+        out.text(":focus [n] picks row n of the last numbered listing, e.g. when")
+        out.text("an expression matched several values.")
+        out.text("")
+        out.text(":why with no expression re-diagnoses the last one you ran, so the")
+        out.text("hint printed after an empty result can be followed by just :why.")
+        out.text("")
+        out.text("A pool-wide expression that matches something is recorded, once, in")
+        out.text("the workspace; :history lists them by number. :view #3 #5")
+        out.text("tabulates them: one row per resource of the type they start from,")
+        out.text("one column each. Columns must yield primitives, e.g. name.family")
+        out.text("rather than name; several values in one cell are joined with \", \".")
+        out.text(":name-expr family right after a pool-wide expression names it;")
+        out.text(":name-expr family #1 names a recorded one. Then :view family birth #3")
+        out.text("works and the column is titled family. A name holds the expression")
+        out.text("itself, not its number.")
+        out.text(":name-view people saves the last :view; :view @people reruns it.")
+        out.text("")
+        out.text("Several pools can be open at once, each with its own census and focus;")
+        out.text("resolve() stays inside the pool. :open specimen <path> adds one and")
+        out.text("switches to it, :pool <name> switches, :pools lists them. Recorded")
+        out.text("expressions, names and views are shared, so :view @people runs in any.")
+        out.text("")
+        out.text("A pool can be a directory in a git repository at a revision, read")
+        out.text("without checking anything out: :open in registry/in/import@branch/out.")
+        out.text("A bare @ opens the branch HEAD is on; TAB after the @ lists revisions.")
+        out.text("TAB after :at lists the line's commits by date, newest first.")
+        out.text(":log lists its line, :step -1 and :step +1 move along it, :at <rev>")
+        out.text("jumps. Moving sets the scope to the delta, so pool-wide expressions and")
+        out.text(":view run over what that commit changed, while resolve() still sees")
+        out.text("everything; :delta lists it, :scope all goes back to the whole pool.")
+        out.text("")
+        out.text("A workspace keeps all of that, the up-arrow history, and where the")
+        out.text("session was left: FHIR version, pools, :limit and focus, all")
+        out.text("restored at the next start. The default is ~/.fhir-walk; start with")
+        out.text("--workspace <name>, or :workspace <name> to switch. --fresh starts")
+        out.text("empty and keeps the saved state until something changes.")
+        out.text("")
+        out.text("A listing fills the window and keeps the rest for :more, which")
+        out.text("reprints it whole with no value shortened. :limit off prints")
+        out.text("everything up front and lets the terminal scroll.")
+        out.text("")
+        out.text("TAB completes, including after :all and :why. On an empty line it")
+        out.text("lists the pool's resource types; after a '.' the elements and")
+        out.text("functions available there, with the ones present in the pool first;")
+        out.text("inside extension('…') the URLs observed on that element.")
+        out.text("Up/Down or further TABs walk the candidates; Enter takes the one shown.")
     }
 
     private fun expandHome(path: String): String =
         if (path.startsWith("~")) System.getProperty("user.home") + path.drop(1) else path
-
-    /** Elides the middle, since the informative parts of a URL are both ends. */
-    private fun abbreviate(text: String, width: Int): String {
-        if (text.length <= width) return text
-        val keepTail = (width - 1) / 2
-        val keepHead = width - 1 - keepTail
-        return text.take(keepHead) + "…" + text.takeLast(keepTail)
-    }
 
     private companion object {
         const val UNLIMITED = 0
@@ -1774,7 +1788,7 @@ class Repl(
         const val LABEL_WIDTH = 28
         const val PROMPT_WIDTH = 48
         const val VALUE_INDENT = 14
-        const val MIN_VALUE_WIDTH = 40
+        const val MIN_VALUE_WIDTH = Printer.MIN_VALUE_WIDTH
         const val MIN_ROW_LIMIT = 8
         const val COLUMN_GAP = 2
         const val MIN_CELL_WIDTH = 12
@@ -1784,7 +1798,7 @@ class Repl(
         const val DEFAULT_LOG = 20
         /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
         const val MAX_CHOICES = 2000
-        const val LOG_INDENT = 38
+        const val LOG_USAGE = "usage: :log [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back"
 
         /** The naming commands' old spellings, before each said what it names (#29). */
         val RENAMED = mapOf(
