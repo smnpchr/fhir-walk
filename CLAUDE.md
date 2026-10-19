@@ -174,8 +174,9 @@ produces confusing results that look like product bugs.
   part that may give way with `shrink` rather than calling `abbreviate` yourself;
   tests can then check `Repl.outputOf(line)` instead of printed text. A value is
   `shrink(…, Kind.PREVIEW, cutsEnd = true)`; a table is `out.table(…)`, laid out by
-  the printer. `out.text` is for plain lines only: nothing in `Repl` calls `Style`
-  or measures the window. Never truncate output without an expansion path.
+  the printer. `out.text` is for plain lines only: no command calls `Style` or
+  measures the window (only `run()`'s last-resort crash line writes to the terminal
+  itself). Never truncate output without an expansion path.
 - Candidate `value` is what gets inserted (including any closing `')`); `displ` is what
   the menu shows. Keep them distinct, and assert on the right one in tests.
 - Keep candidate lists under 100 entries — past that JLine asks "see all N

@@ -158,7 +158,7 @@ class ReplTest {
     }
 
     @Test
-    fun `no value row runs past the window, however long its type name`() {
+    fun `a value row with an ordinary label stays within the window, however long its type name`() {
         // 100 columns, the default without a terminal.
         run(":focus Observation/obs1")
         val rows = run(":focus code").lines() + run("coding") + run(":all Observation.code").lines()

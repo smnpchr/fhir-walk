@@ -83,7 +83,7 @@ class Output {
         added += line
     }
 
-    /** A line as it is: plain, or already styled by a command not written with spans. */
+    /** A plain line, printed as it is. */
     fun text(text: String) {
         added += Line(listOf(Span(text)))
     }

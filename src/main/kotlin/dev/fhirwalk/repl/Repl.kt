@@ -831,7 +831,7 @@ class Repl(
                 Output.Table.Row(
                     row.resource.label,
                     row.cells,
-                    errors = row.cells.indices.filter { row.cells[it] == ViewBuilder.ERROR_CELL }.toSet(),
+                    errors = row.failed,
                 )
             },
         )
