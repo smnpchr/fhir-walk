@@ -73,7 +73,7 @@ class GitPoolTest {
         val container = "Specimen.parent.resolve().parent.resolve().extension('${RegistryFixture.EXT}/primary-container').value"
         assertContains(session.run(container), "2 of 3 resource(s) matched")
         assertContains(session.run("Specimen.subject.resolve().name.family"), "Muster")
-        session.run(":name family")
+        session.run(":name-expr family")
         assertContains(session.run(":view family"), "3 Specimen row(s)")
     }
 

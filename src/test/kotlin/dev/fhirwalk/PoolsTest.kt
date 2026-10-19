@@ -68,7 +68,7 @@ class PoolsTest {
     @Test
     fun `recorded expressions and names are shared between pools`() {
         run("Observation.status")
-        run(":name status")
+        run(":name-expr status")
         run(":open tree samples/basic/tree")
         assertContains(run(":view status"), "2 Observation row(s)")
     }
