@@ -54,6 +54,14 @@ class CompleterTest {
     private fun displays(expression: String) = candidates(expression).map { it.displ() }
 
     @Test
+    fun `trace completes its expression against the resource it names`() {
+        val members = values(":trace Patient/pat1 na")
+        assertTrue("name" in members, "got $members")
+        // Before the label is finished, labels are offered alongside.
+        assertTrue("Patient/pat1" in displays(":trace Patient/pa"), "got ${displays(":trace Patient/pa")}")
+    }
+
+    @Test
     fun `extension urls are scoped to the element they were observed on`() {
         val onName = displays("Patient.name.extension('")
         assertTrue(onName.any { it.endsWith("humanname-namenszusatz") }, "got $onName")

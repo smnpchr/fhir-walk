@@ -1,5 +1,7 @@
 package dev.fhirwalk.eval
 
+import dev.fhirwalk.pool.ResourceHistory
+
 /**
  * Where, in a line typed at the prompt, the FHIRPath expression begins.
  *
@@ -7,14 +9,15 @@ package dev.fhirwalk.eval
  * their argument, so everything after the command name completes exactly as a bare
  * expression would -- the alternative is completion that works until you prefix the
  * line with a command, which is worse than no completion at all. (`:focus` also
- * takes a label; the completer offers those alongside.)
+ * takes a label; the completer offers those alongside.) `:trace` may start with the
+ * label of the resource its expression runs against, which is then not part of it.
  *
  * Lives below both the parser and the completer, which must agree on the answer.
  */
 object PromptLine {
 
     /** Commands whose argument is a FHIRPath expression. */
-    val EXPRESSION_COMMANDS = setOf(":all", ":why", ":focus")
+    val EXPRESSION_COMMANDS = setOf(":all", ":why", ":focus", ":trace")
 
     /**
      * @param text the expression alone.
@@ -23,8 +26,9 @@ object PromptLine {
      * @param command the command the expression is the argument of, or null for a
      *   bare line. Callers ask this rather than re-reading the line, so there is one
      *   answer to "which command is this".
+     * @param subject the label `:trace` was given ahead of its expression.
      */
-    data class Slice(val text: String, val cursor: Int, val offset: Int, val command: String? = null)
+    data class Slice(val text: String, val cursor: Int, val offset: Int, val command: String? = null, val subject: String? = null)
 
     /**
      * @return the expression under the cursor, or null when the cursor sits in a
@@ -44,6 +48,19 @@ object PromptLine {
         while (expressionStart < line.length && line[expressionStart].isWhitespace()) expressionStart++
         if (cursor < expressionStart) return null
 
-        return Slice(line.substring(expressionStart), cursor - expressionStart, expressionStart, command)
+        // A label already finished by a space is the subject; one still being typed
+        // completes alongside the expression, as `:focus` does.
+        var subject: String? = null
+        if (command == ":trace") {
+            val wordEnd = (expressionStart until line.length).firstOrNull { line[it].isWhitespace() }
+            val word = wordEnd?.let { line.substring(expressionStart, it) }
+            if (word != null && cursor > wordEnd && ResourceHistory.isLabel(word)) {
+                subject = word
+                expressionStart = wordEnd
+                while (expressionStart < line.length && line[expressionStart].isWhitespace()) expressionStart++
+            }
+        }
+
+        return Slice(line.substring(expressionStart), cursor - expressionStart, expressionStart, command, subject)
     }
 }

@@ -3,6 +3,7 @@ package dev.fhirwalk.repl
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.RevisionLoader
+import dev.fhirwalk.pool.ResourceHistory
 import dev.fhirwalk.pool.ResourcePool
 import org.eclipse.jgit.lib.ObjectId
 import java.time.DateTimeException
@@ -19,14 +20,29 @@ import java.time.Instant
 class GitPool(
     val source: GitSource,
     var line: String,
-    importer: Importer,
+    private val importer: Importer,
     private val pool: ResourcePool,
     private val times: CommitTimes = CommitTimes(),
 ) {
     private val loader = RevisionLoader(source, importer, pool)
 
-    /** What each commit changed, by id: a commit never changes, and listings ask often. */
-    private val changed = HashMap<ObjectId, Int>()
+    /** How many files each commit changed, by id: a commit never changes, and listings ask often. */
+    private val counted = HashMap<ObjectId, Int>()
+
+    /**
+     * What recent commits changed, file by file, for walking a resource's history
+     * again. Bounded by files rather than commits: a sync that rewrites the whole
+     * registry is one commit of thousands.
+     */
+    private val changed = object : LinkedHashMap<ObjectId, List<GitSource.Change>>(16, 0.75f, true) {
+        var files = 0
+
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ObjectId, List<GitSource.Change>>): Boolean {
+            if (files <= MAX_KEPT_CHANGES) return false
+            files -= eldest.value.size
+            return true
+        }
+    }
 
     val commit: GitSource.Commit get() = checkNotNull(loader.commit) { "not loaded yet" }
 
@@ -122,10 +138,31 @@ class GitPool(
 
     /**
      * How many files [commit] changed, for listing many commits without loading them.
-     * Throws when they cannot be read; only a count is kept, so it is asked again.
+     * Throws when they cannot be read; nothing is kept then, so it is asked again.
      */
-    fun changedFiles(commit: GitSource.Commit, reads: (String) -> Boolean): Int =
-        changed.getOrPut(commit.id) { source.changes(commit, reads).size }
+    fun changedFiles(commit: GitSource.Commit): Int = counted.getOrPut(commit.id) { changes(commit).size }
+
+    private fun changes(commit: GitSource.Commit): List<GitSource.Change> =
+        changed[commit.id] ?: source.changes(commit, importer::reads).also {
+            changed.files += it.size
+            changed[commit.id] = it
+            counted[commit.id] = it.size
+        }
+
+    /**
+     * The commits of the line that added, changed or deleted [label], newest first,
+     * read as the sequence is: see [ResourceHistory]. Throws as any read of the line
+     * does; a file that cannot be read or parsed goes to [problem] instead.
+     */
+    fun history(label: String, problem: (String) -> Unit = {}): Sequence<ResourceHistory.Change> {
+        val tip = source.resolve(line) ?: return emptySequence()
+        return ResourceHistory(source, importer, pool.ctx, ::changes, problem).of(label, source.history(tip))
+    }
+
+    private companion object {
+        /** About a few MB of paths and ids. */
+        const val MAX_KEPT_CHANGES = 50_000
+    }
 
     /**
      * A damaged or vanished repository surfaces as whatever JGit throws, from any

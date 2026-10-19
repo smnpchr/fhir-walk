@@ -81,7 +81,7 @@ class RevisionLoader(
             added = changes.filter { it.kind == GitSource.Kind.ADDED }.flatMap { byFile[it.path].orEmpty() },
             modified = changes.filter { it.kind == GitSource.Kind.MODIFIED }.flatMap { byFile[it.path].orEmpty() },
             deleted = deletedBlobs.flatMap { (change, blob) ->
-                blob?.parsed?.map { labelOf(it) }?.ifEmpty { null } ?: listOf(change.path)
+                blob?.parsed?.map { it.label(pool.ctx) }?.ifEmpty { null } ?: listOf(change.path)
             },
         )
         previous = current
@@ -100,10 +100,4 @@ class RevisionLoader(
         return Blob(parsed, report.problems)
     }
 
-    /** As [PooledResource.label] would have it, for a resource that is in no pool. */
-    private fun labelOf(parsed: Importer.Parsed): String {
-        val type = pool.ctx.getResourceType(parsed.resource)
-        val id = parsed.resource.idElement?.idPart?.takeIf { it.isNotBlank() }
-        return id?.let { "$type/$it" } ?: parsed.fullUrl ?: "$type (${parsed.origin})"
-    }
 }
