@@ -379,7 +379,8 @@ class GitPoolTest {
             listOf(registry.out4, registry.out3, registry.out2, registry.out1, registry.m1).map { it.short },
             choices.map { it.id },
         )
-        assertTrue(choices.first().shown.startsWith("* 2026-10-01 "), choices.first().shown)
+        assertEquals(minute(registry.out4), choices.first().at)
+        assertTrue(choices.first().shown.startsWith("* ${minute(registry.out4)}  "), choices.first().shown)
         assertTrue(choices.first().shown.endsWith(registry.out4.short), choices.first().shown)
         assertEquals("remove dummy patient", choices.first().subject)
         // The mark follows the pool.
@@ -407,7 +408,60 @@ class GitPoolTest {
         val all = offered(":at ")
         val order = dev.fhirwalk.repl.FhirWalkLineReader(terminal).groupComparator
         assertEquals(listOf("commits", "branches and tags"), all.map { it.group() }.distinct().sortedWith(order))
-        assertEquals(registry.out4.short, all.filter { it.group() == "commits" }.sorted().first().value())
         assertEquals(listOf(registry.out2.short), offered(":at ${registry.out2.name.take(5)}").map { it.value() })
+        // With nothing typed, or a date begun, a commit goes in as its time.
+        assertEquals(minute(registry.out4), all.filter { it.group() == "commits" }.sorted().first().value())
+        val day = minute(registry.out2).take(10)
+        assertTrue(offered(":at $day").all { it.value().startsWith(day) })
+        assertEquals(listOf(minute(registry.out2)), offered(":at ${minute(registry.out2)}").map { it.value() })
+        // What each changed is beside its subject, as :log shows it.
+        assertEquals("Δ1  remove dummy patient", all.single { it.value() == minute(registry.out4) }.descr())
+    }
+
+    // ------------------------------------------------------------- :at a date
+
+    /** [commit]'s time to the minute, as `:at` takes it, in the zone `:log` shows. */
+    private fun minute(commit: org.eclipse.jgit.revwalk.RevCommit, plusMinutes: Long = 0): String =
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm").withZone(java.time.ZoneId.systemDefault())
+            .format(java.time.Instant.ofEpochSecond(commit.commitTime.toLong()).plusSeconds(plusMinutes * 60))
+
+    @Test
+    fun `at a date is the line as it stood then, saying which commit that is`() {
+        val session = opened()
+        // Half an hour after out2, before out3: the line still stood at out2.
+        val output = session.run(":at ${minute(registry.out2, plusMinutes = 30)}")
+        assertContains(output, "on branch/out is ${registry.out2.short}")
+        assertContains(output, "spec at ${registry.out2.short}")
+        // The space :log shows works as well as the T.
+        assertContains(session.run(":at ${minute(registry.out3).replace('T', ' ')}"), "spec at ${registry.out3.short}")
+        // A date leaves the line as it was, so :step still walks towards its tip.
+        assertContains(session.run(":step +1"), "spec at ${registry.out4.short}")
+    }
+
+    @Test
+    fun `at a date before the line or no date at all is refused and stays put`() {
+        val session = opened()
+        val before = java.time.LocalDate.parse(minute(registry.m1).take(10)).minusDays(2).toString()
+        assertContains(session.run(":at $before"), "branch/out starts at ")
+        assertContains(session.run(":at 2026-13"), "not a date: 2026-13")
+        assertContains(session.run(":log"), "* ${registry.out4.short}")
+    }
+
+    // ---------------------------------------------------------------- :log pages
+
+    @Test
+    fun `log pages back through the line`() {
+        val session = opened()
+        val first = session.run(":log 2").lines().filter { it.isNotBlank() }
+        assertEquals(4, first.size, first.joinToString("\n"))
+        assertContains(first[1], registry.out4.short)
+        assertContains(first[3], "older: :log 2 +2")
+        val last = session.run(":log 2 +4")
+        assertContains(last, registry.m1.short)
+        assertFalse(last.contains("older"), last)
+        assertContains(last, "(at ${registry.out4.short}, which is not among these)")
+        assertContains(session.run(":log +9"), "only 5 commit(s) on branch/out")
+        assertContains(session.run(":log x"), "usage: :log [n] [+skip]")
+        assertContains(session.run(":log 0"), "usage: :log [n] [+skip]")
     }
 }

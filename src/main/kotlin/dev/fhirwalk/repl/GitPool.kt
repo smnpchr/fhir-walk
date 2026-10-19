@@ -4,6 +4,9 @@ import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.RevisionLoader
 import dev.fhirwalk.pool.ResourcePool
+import org.eclipse.jgit.lib.ObjectId
+import java.time.DateTimeException
+import java.time.Instant
 
 /**
  * What makes a [Pool] a git revision rather than a set of loaded paths: where it is
@@ -18,8 +21,12 @@ class GitPool(
     var line: String,
     importer: Importer,
     private val pool: ResourcePool,
+    private val times: CommitTimes = CommitTimes(),
 ) {
     private val loader = RevisionLoader(source, importer, pool)
+
+    /** What each commit changed, by id: a commit never changes, and listings ask often. */
+    private val changed = HashMap<ObjectId, Int>()
 
     val commit: GitSource.Commit get() = checkNotNull(loader.commit) { "not loaded yet" }
 
@@ -42,7 +49,8 @@ class GitPool(
     val spec: String get() = "${source.path}@$line"
 
     sealed interface Move {
-        class Moved(val report: Importer.Report) : Move
+        /** @param note which commit a date named, since it need not be one made then. */
+        class Moved(val report: Importer.Report, val note: String? = null) : Move
         class Refused(val message: String) : Move
 
         /** The repository could not be read; the pool is where it was. */
@@ -52,7 +60,19 @@ class GitPool(
     /** Throws when the revision cannot be read, leaving the pool as it was. */
     fun load(commit: GitSource.Commit): Importer.Report = loader.load(commit).also { applyScope() }
 
+    /**
+     * A branch or tag goes first, so one named like a date stays reachable; then a
+     * date, the line as it stood then; then anything else git reads as a revision.
+     */
     fun at(revision: String): Move = reading {
+        if (revision !in source.refNames()) {
+            val end = try {
+                times.end(revision)
+            } catch (e: DateTimeException) {
+                return@reading Move.Refused("not a date: $revision")
+            }
+            if (end != null) return@reading asOf(revision, end)
+        }
         val target = source.resolve(revision) ?: return@reading Move.Refused("no commit $revision in ${source.path}")
         val moved = Move.Moved(load(target))
         if (source.isBranch(revision)) line = revision
@@ -86,14 +106,26 @@ class GitPool(
         }
     }
 
+    private fun asOf(date: String, end: Instant): Move {
+        val tip = source.resolve(line) ?: return Move.Refused("$lineLabel names no commit any more")
+        val history = source.history(tip)
+        val target = times.asOf(history, end)
+            ?: return Move.Refused("$lineLabel starts at ${times.shown(history.last())}, after $date")
+        return Move.Moved(load(target), note = "$date on $lineLabel is ${target.short}, ${times.shown(target)} ${target.subject}")
+    }
+
     /** The line's commits, newest first. */
     fun history(limit: Int): List<GitSource.Commit> {
         val tip = source.resolve(line) ?: return emptyList()
         return source.history(tip, limit)
     }
 
-    /** How many files [commit] changed, for listing many commits without loading them. */
-    fun changedFiles(commit: GitSource.Commit, reads: (String) -> Boolean): Int = source.changes(commit, reads).size
+    /**
+     * How many files [commit] changed, for listing many commits without loading them.
+     * Throws when they cannot be read; only a count is kept, so it is asked again.
+     */
+    fun changedFiles(commit: GitSource.Commit, reads: (String) -> Boolean): Int =
+        changed.getOrPut(commit.id) { source.changes(commit, reads).size }
 
     /**
      * A damaged or vanished repository surfaces as whatever JGit throws, from any

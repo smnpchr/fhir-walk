@@ -110,8 +110,8 @@ Type a FHIRPath expression, or:
 | `:pools` | the open pools, their sizes and paths |
 | `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
 | `:close <name>` | drop a pool |
-| `:log [n]` | a git pool's line, newest first, with what each commit changed |
-| `:at <rev>` | move a git pool to a revision: a branch, tag, id or `branch~2` |
+| `:log [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back |
+| `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
 | `:delta` | what this revision added, modified and deleted |
 | `:scope [delta\|all]` | run pool-wide over the delta only, or over everything |
@@ -335,8 +335,20 @@ and `:why` still see the whole revision, so a changed Specimen still reaches the
 Patient that did not change. `:delta` lists it, deletions included by label, and
 `:scope all` goes back to the whole pool.
 
-TAB after `:at` lists the line's commits newest first, by date and short id with
-their subject, the current one marked; picking one moves there. Branches and tags follow.
+`:at` also takes a date — `2026-03`, `2026-03-11`, `2026-03-11T11:00`, or the
+`2026-03-11 11:00` that `:log` shows — and moves to the line as it stood at the end of
+it: the first commit back from the tip made before then, which need not be one made
+that day, so it says which commit that is. Times are in the local time zone, as `:log`
+shows them.
+
+TAB after `:at` lists the line's commits newest first, each named by its time, with
+its short id, what it changed and its subject, the current one marked. Typing a date
+narrows the menu (`:at 2026-03<TAB>`), as typing an id does; ↑/↓ and Enter pick one.
+A commit that shares its minute with a newer one is named to the second, so each name
+moves to its own commit. Branches and tags follow.
+
+`:log` shows the newest 20; `:log 50` more at once, and `:log +20` the 20 before those,
+with a hint for the page after.
 `:step -1` follows the first parent. `:step +1` walks towards the tip of the pool's
 line, the branch it was opened on, or the last branch it was moved to with `:at`.
 Nothing about this is specific to a branch name: a pool on `master` steps the same
