@@ -55,8 +55,10 @@ commands:
         args: "[label] [n] [+skip]"
         summary: a git pool's line, newest first, with what each commit changed; with a label, the commits that changed that resource
         details: |
-          :log 10 +20 is the 21st to 30th commit back; :log Specimen/s1 lists the
-          commits that changed that resource.
+          :log 10 +20 is the 21st to 30th commit back. Alone it goes by files:
+          a commit that only reformatted one counts. :log Specimen/s1 goes by
+          the resource's content instead: a reformat, or a change to another
+          resource in the same file, is left out; reordered extensions are not.
         topic: git
       - name: ":at"
         args: "<rev|date>"
@@ -72,12 +74,17 @@ commands:
           -1 is one commit back, +1 one forward along the line.
         topic: git
       - name: ":trace"
-        args: "[label] <expr>"
-        summary: how an expression's answer for one resource changed along a git pool's line; with a focus, the focused one
+        args: "[label] [expr]"
+        summary: how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused one
         details: |
           :trace Specimen/s1 type.coding.code lists the commits where the answer
-          changed, with what it was before. resolve() is refused: it would read the
-          pool at its own revision, not the one traced.
+          changed, with what it was before: by content, not by file, so a commit
+          that changed the resource elsewhere is left out. A focused element is
+          traced the same way, by the steps that reached it. :trace Specimen/s1
+          alone traces the whole resource: the commits :log Specimen/s1 lists,
+          each with what it holds. :more prints each answer whole, a resource as
+          pretty-printed JSON. resolve() is refused: it would read the pool at
+          its own revision, not the one traced.
         topic: git
       - name: ":delta"
         args: ""
@@ -217,7 +224,16 @@ topics:
       :view run over what that commit changed, while resolve() still sees
       everything; :delta lists it, :scope all goes back to the whole pool.
       :log Specimen/s1 lists the commits that changed one resource, and
-      :trace Specimen/s1 type.coding.code how an answer changed across them.
+      :trace Specimen/s1 type.coding.code how an answer changed across them;
+      :trace Specimen/s1 alone, how the resource itself did.
+
+      Each counts a different kind of change. :log alone goes by the files
+      git changed, so a reformat counts. :log Specimen/s1 and :trace
+      Specimen/s1 go by the resource's content: a reformat, its keys in
+      another order, or another resource in the same file changing does not
+      count, while extensions or codings in another order do, since order is
+      part of the content. :trace Specimen/s1 <expr> goes by the answer: a
+      row only where it changed. Whitespace inside a string counts.
 
   - name: workspaces
     title: Workspaces
