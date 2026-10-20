@@ -72,12 +72,14 @@ commands:
           -1 is one commit back, +1 one forward along the line.
         topic: git
       - name: ":trace"
-        args: "[label] <expr>"
-        summary: how an expression's answer for one resource changed along a git pool's line; with a focus, the focused one
+        args: "[label] [expr]"
+        summary: how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused one
         details: |
           :trace Specimen/s1 type.coding.code lists the commits where the answer
-          changed, with what it was before. resolve() is refused: it would read the
-          pool at its own revision, not the one traced.
+          changed, with what it was before. :trace Specimen/s1 alone traces the
+          whole resource: every commit that changed it. :more prints each answer
+          whole, a resource as pretty-printed JSON. resolve() is refused: it
+          would read the pool at its own revision, not the one traced.
         topic: git
       - name: ":delta"
         args: ""
@@ -217,7 +219,8 @@ topics:
       :view run over what that commit changed, while resolve() still sees
       everything; :delta lists it, :scope all goes back to the whole pool.
       :log Specimen/s1 lists the commits that changed one resource, and
-      :trace Specimen/s1 type.coding.code how an answer changed across them.
+      :trace Specimen/s1 type.coding.code how an answer changed across them;
+      :trace Specimen/s1 alone, how the resource itself did.
 
   - name: workspaces
     title: Workspaces

@@ -264,36 +264,39 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
      * where the answer changed, or the resource came or went. Read from the history
      * alone, so the pool stays where it is. With a focus, `:trace <expr>` traces the
      * focused resource, or the focused element by the steps that reached it.
+     *
+     * With no expression the answer is the resource itself (or the focused element),
+     * so every commit that changed its content is a row. Each row is a preview;
+     * `:more` prints every answer whole, as pretty-printed JSON.
      */
     private fun trace(argument: String, out: Output) {
         val git = gitPool(out) ?: return
         val first = argument.substringBefore(' ')
         val (label, expression) = if (ResourceHistory.isLabel(first)) {
-            first to argument.substringAfter(' ', "").trim()
+            first to argument.substringAfter(' ', "").trim().ifBlank { null }
         } else {
             val focus = session.focus ?: run {
                 out.text(TRACE_USAGE)
                 return
             }
-            focus.resource.label to (focusedPath(focus, argument) ?: run {
+            val path = focusedPath(focus, argument) ?: run {
                 out.text("${focus.label} was not reached by steps from ${focus.resource.label} — :trace ${focus.resource.label} <expr>")
                 return
-            })
+            }
+            focus.resource.label to path.ifBlank { null }
         }
         untraceable(label)?.let {
             out.text(it)
             return
         }
-        if (expression.isBlank()) {
-            out.text(TRACE_USAGE)
-            return
-        }
-        if (state.reportSyntaxError(expression, out)) return
-        // The history is of one resource; what it references is read from the pool,
-        // which is at another revision.
-        if (Regex("""\bresolve\s*\(""").containsMatchIn(expression)) {
-            out.text("resolve() would read the pool at ${git.commit.short}, not the revision traced — trace the reference itself")
-            return
+        if (expression != null) {
+            if (state.reportSyntaxError(expression, out)) return
+            // The history is of one resource; what it references is read from the pool,
+            // which is at another revision.
+            if (Regex("""\bresolve\s*\(""").containsMatchIn(expression)) {
+                out.text("resolve() would read the pool at ${git.commit.short}, not the revision traced — trace the reference itself")
+                return
+            }
         }
         val problems = mutableListOf<String>()
         val changes = try {
@@ -310,32 +313,65 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         }
         // Oldest first, so each answer can say what it replaced.
         var before: String? = null
-        val rows = mutableListOf<Output.Line>()
+        val traced = mutableListOf<Traced>()
         for (change in changes.asReversed()) {
-            val resource = change.resource
-            val outcome = resource?.let { session.evaluator.evaluate(it, expression) }
+            val outcome = change.resource?.let { resource ->
+                if (expression == null) Outcome.Values(listOf(resource)) else session.evaluator.evaluate(resource, expression)
+            }
             val answer = when (outcome) {
                 null -> "deleted"
                 is Outcome.Failure -> "! ${outcome.message}"
                 is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
             }
-            val came = change.kind == GitSource.Kind.ADDED
-            if (answer == before && !came) continue
-            val was = before
-            rows += commitRow(git, change.commit) {
-                when (outcome) {
-                    null -> hint(answer)
-                    is Outcome.Failure -> shrink(answer, Output.Kind.ERROR)
-                    else -> shrink(answer)
-                }
-                if (came) hint("  (added)") else was?.let { shrink("  (was $it)", Output.Kind.HINT) }
-            }
+            if (answer == before && change.kind != GitSource.Kind.ADDED) continue
+            traced += Traced(change, outcome, answer, was = before)
             before = answer
         }
+        traced.reverse()
+        val what = expression?.let { "  $it" }.orEmpty()
         out.listing(
-            header = listOf(Output.text("$label  $expression on ${git.lineLabel}, newest first — ${rows.size} change(s) in ${changes.size} commit(s) that touched it")),
-            rows = rows.asReversed(),
+            header = listOf(Output.text("$label$what on ${git.lineLabel}, newest first — ${traced.size} change(s) in ${changes.size} commit(s) that touched it")),
+            rows = traced.map { row ->
+                commitRow(git, row.change.commit) {
+                    if (expression == null) {
+                        // A resource's answer is the whole of it: what happened says more than what it was.
+                        count(row.kind.padEnd(8))
+                        if (row.outcome != null) {
+                            +"  "
+                            shrink(row.answer, Output.Kind.PREVIEW, cutsEnd = true)
+                        }
+                        return@commitRow
+                    }
+                    when (row.outcome) {
+                        null -> hint(row.answer)
+                        is Outcome.Failure -> shrink(row.answer, Output.Kind.ERROR)
+                        else -> shrink(row.answer)
+                    }
+                    if (row.came) hint("  (added)") else row.was?.let { shrink("  (was $it)", Output.Kind.HINT) }
+                }
+            },
+            // Each answer whole under its commit; what it was is the row below.
+            full = traced.flatMap { row ->
+                listOf(commitRow(git, row.change.commit) { count(row.kind) }) +
+                    when (val outcome = row.outcome) {
+                        null -> emptyList()
+                        is Outcome.Failure -> listOf(Output.line { +"      "; error(row.answer) })
+                        is Outcome.Values ->
+                            if (outcome.values.isEmpty()) listOf(Output.text("      {}")) else outcome.values.flatMap { state.expanded("      ", it) }
+                    }
+            },
         )
+    }
+
+    /**
+     * A commit in a trace: what [change] made the answer, as [answer] reads it on one
+     * line, and what it [was] before, if anything.
+     */
+    private class Traced(val change: ResourceHistory.Change, val outcome: Outcome?, val answer: String, val was: String?) {
+        val came: Boolean get() = change.kind == GitSource.Kind.ADDED
+
+        /** `added`, `modified`, `deleted`, as `:log <label>` says. */
+        val kind: String get() = change.kind.name.lowercase()
     }
 
     /**
@@ -444,7 +480,8 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
         const val MAX_CHOICES = 2000
         const val LOG_USAGE = "usage: :log [label] [n] [+skip]  —  :log 10 +20 is the 21st to 30th commit back; :log Specimen/s1 those that changed it"
-        const val TRACE_USAGE = "usage: :trace <label> <expr>  —  or :trace <expr> with a focus, e.g. :trace Specimen/s1 type.coding.code"
+        const val TRACE_USAGE = "usage: :trace <label> [expr]  —  or :trace [expr] with a focus, e.g. :trace Specimen/s1 type.coding.code; " +
+            "with no expression, the whole resource"
 
         val COMMIT_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
     }

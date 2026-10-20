@@ -111,7 +111,7 @@ Type a FHIRPath expression, or:
 | `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
 | `:close <name>` | drop a pool |
 | `:log [label] [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back; with a label, only the commits that changed that resource |
-| `:trace [label] <expr>` | how an expression's answer for one resource changed along a git pool's line; with a focus, the focused resource or element |
+| `:trace [label] [expr]` | how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
 | `:delta` | what this revision added, modified and deleted |
@@ -376,6 +376,12 @@ commit that touched the resource elsewhere is left out. Both read the history al
 the pool stays at its revision. With a focus, `:trace <expr>` traces the focused
 resource, or the focused element by the steps that reached it. TAB completes the
 expression against the resource the label names.
+
+Without an expression, `:trace Specimen/30012` (or `:trace` alone, with a focus)
+traces the resource itself: a row for every commit that changed its content, saying
+whether it was added, modified or deleted, with a preview of it. As with any trace,
+`:more` prints every answer whole, a resource or element as pretty-printed JSON under
+its commit.
 
 A resource is followed by its label, `Type/id` as `:pool` shows it (an id-less bundle
 entry's is `Patient/urn:uuid:…`), whatever file it is in:

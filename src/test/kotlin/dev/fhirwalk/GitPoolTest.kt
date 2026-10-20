@@ -541,10 +541,41 @@ class GitPoolTest {
     }
 
     @Test
+    fun `trace with no expression follows the whole resource`() {
+        val session = opened()
+        val output = session.repl.outputOf(":trace Specimen/30012")
+        val rows = rowsOf(output)
+        assertEquals(listOf(registry.out3, registry.out1, registry.m1).map { it.short }, rows.map { it.first })
+        assertTrue(rows.first().second.startsWith("modified  {"), rows.first().second)
+        assertContains(rows.first().second, "CITRATE_PLASMA")
+        assertTrue(rows.last().second.startsWith("added     {"), rows.last().second)
+        assertContains(output.lines().first(), "Specimen/30012 on branch/out, newest first — 3 change(s) in 3 commit(s)")
+        // With a focus, :trace alone traces the focused resource.
+        session.run(":focus Specimen/30012")
+        assertEquals(rows, rowsOf(session.repl.outputOf(":trace")))
+    }
+
+    @Test
+    fun `more prints a trace's answers whole, a resource as pretty-printed JSON`() {
+        val session = opened()
+        session.repl.outputOf(":trace Specimen/30012 Specimen")
+        val whole = session.repl.outputOf(":more").lines()
+        // Under the header, one commit line, then the resource under it, a field to a line.
+        assertContains(whole[1], registry.out3.short)
+        assertContains(whole[1], "modified")
+        assertTrue(whole.any { it.trim() == "\"resourceType\": \"Specimen\"," }, whole.joinToString("\n"))
+        assertTrue(whole.none { it.contains("\"resourceType\":\"Specimen\"") }, "compact JSON left in:\n${whole.joinToString("\n")}")
+        // A primitive stays on one line under its commit.
+        session.repl.outputOf(":trace Specimen/30012 type.coding.code")
+        val codes = session.repl.outputOf(":more").lines()
+        assertTrue(codes.any { it.trim() == "code  CITRATE_PLASMA" }, codes.joinToString("\n"))
+    }
+
+    @Test
     fun `trace refuses what it cannot answer`() {
         val session = opened()
-        assertContains(session.run(":trace type.coding.code"), "usage: :trace <label> <expr>")
-        assertContains(session.run(":trace Specimen/30012"), "usage: :trace <label> <expr>")
+        assertContains(session.run(":trace type.coding.code"), "usage: :trace <label> [expr]")
+        assertContains(session.run(":trace"), "usage: :trace <label> [expr]")
         assertContains(session.run(":trace Specimen/30012 subject.resolve().name"), "resolve() would read the pool at ${registry.out4.short}")
         assertContains(session.run(":trace Specimen/30012 subject.resolve ().name"), "resolve() would read the pool")
         assertContains(session.run(":trace Specimen/30012 type.where("), "! ")
