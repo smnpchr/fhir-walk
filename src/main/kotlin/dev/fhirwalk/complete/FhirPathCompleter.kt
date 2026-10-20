@@ -262,16 +262,27 @@ class FhirPathCompleter(
         return matching.size
     }
 
+    /**
+     * Entries of the directory typed so far whose name starts with what follows its
+     * last `/`. Narrowed before the cap, or a directory of more than MAX_ROWS entries
+     * would offer an arbitrary few. The directory is kept as typed: JLine matches
+     * candidates against the word, so `sam` must be offered `samples/`, not `./samples/`.
+     */
     private fun completePath(partial: String, candidates: MutableList<Candidate>) {
-        val asPath = runCatching { Paths.get(partial.ifBlank { "." }) }.getOrNull() ?: return
-        val dir: Path = if (Files.isDirectory(asPath)) asPath else asPath.parent ?: Paths.get(".")
+        val typedDir = partial.substring(0, partial.lastIndexOf('/') + 1)
+        val namePrefix = partial.substring(typedDir.length)
+        val dir: Path = runCatching { Paths.get(typedDir.ifEmpty { "." }) }.getOrNull() ?: return
         if (!Files.isDirectory(dir)) return
         runCatching {
             Files.list(dir).use { stream ->
-                stream.limit(MAX_ROWS.toLong()).forEach { entry ->
-                    val display = entry.toString() + if (Files.isDirectory(entry)) "/" else ""
-                    candidates += Candidate(display, display, "files", null, null, null, !Files.isDirectory(entry))
-                }
+                stream.filter { it.fileName.toString().startsWith(namePrefix) }
+                    .sorted()
+                    .limit(MAX_ROWS.toLong())
+                    .forEach { entry ->
+                        val isDir = Files.isDirectory(entry)
+                        val value = typedDir + entry.fileName + if (isDir) "/" else ""
+                        candidates += Candidate(value, value, "files", null, null, null, !isDir)
+                    }
             }
         }
     }

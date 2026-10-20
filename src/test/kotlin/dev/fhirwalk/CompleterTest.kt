@@ -13,7 +13,9 @@ import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
 import org.jline.terminal.TerminalBuilder
+import java.nio.file.Files
 import java.nio.file.Paths
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -165,6 +167,26 @@ class CompleterTest {
         assertTrue(values(":fhir ").contains("r5"), "versions not offered")
         // :load takes a path, so resource types must not appear.
         assertTrue(values(":load sam").none { it == "Specimen" || it == "Patient" })
+    }
+
+    @Test
+    fun `load narrows a large directory by the name typed before capping it`() {
+        val dir = createTempDirectory("fhir-walk-paths")
+        try {
+            (1..70).forEach { Files.createDirectory(dir.resolve("other$it")) }
+            listOf("test-fhir-pipes", "test-test-fhir-pipes").forEach { Files.createDirectory(dir.resolve(it)) }
+            assertEquals(listOf("$dir/test-fhir-pipes/", "$dir/test-test-fhir-pipes/"), values(":load $dir/test-"))
+            assertEquals(listOf("$dir/test-test-fhir-pipes/"), values(":load $dir/test-t"))
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `load offers a relative path as typed, without a leading dot`() {
+        // JLine matches against the word, so `./samples/` would never match `sam`.
+        assertEquals(listOf("samples/"), values(":load sam"))
+        assertTrue("samples/basic/" in values(":load samples/b"))
     }
 
     @Test
