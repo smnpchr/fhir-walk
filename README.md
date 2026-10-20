@@ -377,11 +377,22 @@ the pool stays at its revision. With a focus, `:trace <expr>` traces the focused
 resource, or the focused element by the steps that reached it. TAB completes the
 expression against the resource the label names.
 
-Without an expression, `:trace Specimen/30012` (or `:trace` alone, with a focus)
-traces the resource itself: a row for every commit that changed its content, saying
-whether it was added, modified or deleted, with a preview of it. As with any trace,
-`:more` prints every answer whole, a resource or element as pretty-printed JSON under
-its commit.
+Without an expression, `:trace Specimen/30012` (or `:trace` alone, with a resource
+in focus) traces the resource itself: the commits `:log Specimen/30012` lists, each
+saying whether it added, modified or deleted the resource, with a preview of it.
+With an element in focus, `:trace` alone traces the element's content, as an
+expression on the steps that reached it. As with any trace, `:more` prints every
+answer whole, a resource or element as pretty-printed JSON under its commit.
+
+Each of these counts a different kind of change:
+
+| | a change is |
+|---|---|
+| `:log` | a file git changed: a reformat counts |
+| `:log Specimen/30012`, `:trace Specimen/30012` | a change to the resource's content: a reformat, keys in another order, or another resource in the same file changing does not count; extensions or codings in another order do |
+| `:trace Specimen/30012 <expr>` | a change to the answer |
+
+Content is compared exactly, whitespace inside a string included.
 
 A resource is followed by its label, `Type/id` as `:pool` shows it (an id-less bundle
 entry's is `Patient/urn:uuid:…`), whatever file it is in:

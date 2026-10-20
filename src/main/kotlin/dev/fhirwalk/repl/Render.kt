@@ -30,7 +30,9 @@ class Render(private val ctx: FhirContext) {
             value is IBaseResource -> runCatching { json.encodeResourceToString(value) }.getOrDefault("<resource>")
             else -> runCatching { json.encodeToString(value) }.getOrElse { describe(value) }
         }
-        val flat = text.replace(Regex("\\s+"), " ").trim()
+        // Onto one line, and no more: compact JSON has no whitespace outside its
+        // strings, and the spaces inside them are part of the value.
+        val flat = text.replace(Regex("\\s*\\R\\s*"), " ").trim()
         return if (width <= 0 || flat.length <= width) flat else flat.take(width - 1) + "…"
     }
 

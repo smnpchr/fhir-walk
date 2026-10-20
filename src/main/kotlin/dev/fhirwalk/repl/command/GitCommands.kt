@@ -313,6 +313,7 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         }
         // Oldest first, so each answer can say what it replaced.
         var before: String? = null
+        var beforeExactly: String? = null
         val traced = mutableListOf<Traced>()
         for (change in changes.asReversed()) {
             val outcome = change.resource?.let { resource ->
@@ -323,9 +324,15 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
                 is Outcome.Failure -> "! ${outcome.message}"
                 is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
             }
-            if (answer == before && change.kind != GitSource.Kind.ADDED) continue
+            val exactly = exactly(outcome)
+            // The history already holds only commits that changed the resource's
+            // content, so with no expression every one is a row. An answer is
+            // compared whole: its one-line form runs whitespace together, which a
+            // string's value may differ by.
+            if (expression != null && exactly == beforeExactly && change.kind != GitSource.Kind.ADDED) continue
             traced += Traced(change, outcome, answer, was = before)
             before = answer
+            beforeExactly = exactly
         }
         traced.reverse()
         val what = expression?.let { "  $it" }.orEmpty()
@@ -340,14 +347,14 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
                             +"  "
                             shrink(row.answer, Output.Kind.PREVIEW, cutsEnd = true)
                         }
-                        return@commitRow
+                    } else {
+                        when (row.outcome) {
+                            null -> hint(row.answer)
+                            is Outcome.Failure -> shrink(row.answer, Output.Kind.ERROR)
+                            else -> shrink(row.answer)
+                        }
+                        if (row.came) hint("  (added)") else row.was?.let { shrink("  (was $it)", Output.Kind.HINT) }
                     }
-                    when (row.outcome) {
-                        null -> hint(row.answer)
-                        is Outcome.Failure -> shrink(row.answer, Output.Kind.ERROR)
-                        else -> shrink(row.answer)
-                    }
-                    if (row.came) hint("  (added)") else row.was?.let { shrink("  (was $it)", Output.Kind.HINT) }
                 }
             },
             // Each answer whole under its commit; what it was is the row below.
@@ -361,6 +368,16 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
                     }
             },
         )
+    }
+
+    /**
+     * [outcome] as a trace compares it: every value whole, whitespace in its strings
+     * included, and never equal to a failure or a deletion.
+     */
+    private fun exactly(outcome: Outcome?): String = when (outcome) {
+        null -> "-"
+        is Outcome.Failure -> "!${outcome.message}"
+        is Outcome.Values -> "=" + outcome.values.joinToString("\u0000") { session.render.pretty(it).joinToString("\n") }
     }
 
     /**

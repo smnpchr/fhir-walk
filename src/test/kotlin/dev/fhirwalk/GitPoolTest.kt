@@ -556,6 +556,18 @@ class GitPoolTest {
     }
 
     @Test
+    fun `with an element in focus, trace alone follows the element's content`() {
+        val session = opened()
+        session.run(":focus Specimen/30012")
+        session.run(":focus type")
+        // An expression on the focus's steps: a row where the element changed, saying what it was.
+        val output = session.repl.outputOf(":trace")
+        assertContains(output.lines().first(), "Specimen/30012  type on branch/out")
+        assertEquals(listOf(registry.out3, registry.out1, registry.m1).map { it.short }, rowsOf(output).map { it.first })
+        assertTrue(rowsOf(output).first().second.contains("(was "), rowsOf(output).first().second)
+    }
+
+    @Test
     fun `more prints a trace's answers whole, a resource as pretty-printed JSON`() {
         val session = opened()
         session.repl.outputOf(":trace Specimen/30012 Specimen")
