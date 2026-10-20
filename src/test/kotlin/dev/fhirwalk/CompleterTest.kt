@@ -13,7 +13,9 @@ import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
 import org.jline.terminal.TerminalBuilder
+import java.nio.file.Files
 import java.nio.file.Paths
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -165,6 +167,50 @@ class CompleterTest {
         assertTrue(values(":fhir ").contains("r5"), "versions not offered")
         // :load takes a path, so resource types must not appear.
         assertTrue(values(":load sam").none { it == "Specimen" || it == "Patient" })
+    }
+
+    @Test
+    fun `load narrows a large directory by the name typed before capping it`() {
+        val dir = createTempDirectory("fhir-walk-paths")
+        try {
+            (1..70).forEach { Files.createDirectory(dir.resolve("other$it")) }
+            listOf("test-fhir-pipes", "test-test-fhir-pipes").forEach { Files.createDirectory(dir.resolve(it)) }
+            assertEquals(listOf("$dir/test-fhir-pipes/", "$dir/test-test-fhir-pipes/"), values(":load $dir/test-"))
+            assertEquals(listOf("$dir/test-test-fhir-pipes/"), values(":load $dir/test-t"))
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `load offers a relative path as typed, without a leading dot`() {
+        // JLine matches against the word, so `./samples/` would never match `sam`.
+        assertEquals(listOf("samples/"), values(":load sam"))
+        assertTrue("samples/basic/" in values(":load samples/b"))
+    }
+
+    @Test
+    fun `load completes paths as a shell would`() {
+        val dir = createTempDirectory("fhir-walk-paths")
+        val home = System.getProperty("user.home")
+        try {
+            listOf(".hidden", "visible", "Mixed").forEach { Files.createDirectory(dir.resolve(it)) }
+            // Hidden entries only once a dot is typed, so they cannot crowd out the rest.
+            assertEquals(listOf("$dir/Mixed/", "$dir/visible/"), values(":load $dir/"))
+            assertEquals(listOf("$dir/.hidden/"), values(":load $dir/.h"))
+            // The reader matches ignoring case, so the listing must too.
+            assertEquals(listOf("$dir/Mixed/"), values(":load $dir/mi"))
+            // No listing returns . or .., so typed without a slash they would go nowhere.
+            assertEquals("$dir/../", values(":load $dir/..").first())
+            assertTrue("$dir/./" in values(":load $dir/."))
+            // ~ is looked up as home but inserted as typed.
+            System.setProperty("user.home", dir.toString())
+            assertEquals(listOf("~/visible/"), values(":load ~/v"))
+            assertEquals(listOf("~/"), values(":load ~"))
+        } finally {
+            System.setProperty("user.home", home)
+            dir.toFile().deleteRecursively()
+        }
     }
 
     @Test
