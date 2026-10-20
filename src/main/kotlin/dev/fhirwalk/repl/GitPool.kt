@@ -6,6 +6,7 @@ import dev.fhirwalk.pool.RevisionLoader
 import dev.fhirwalk.pool.ResourceHistory
 import dev.fhirwalk.pool.ResourcePool
 import org.eclipse.jgit.lib.ObjectId
+import java.nio.file.Files
 import java.time.DateTimeException
 import java.time.Instant
 
@@ -60,6 +61,15 @@ class GitPool(
 
     /** [line] for showing: a branch as it is, a pinned commit by its short id. */
     val lineLabel: String get() = GitSource.label(line)
+
+    /**
+     * Whether the directory and the commit the pool is at are still there: a test
+     * run may delete the repository, or rebuild it with another history, between
+     * two prompts. Asked of the repository opened afresh: the one held open remembers
+     * objects it has seen, and answers for a commit that a rebuild took away.
+     */
+    val readable: Boolean get() =
+        Files.isDirectory(source.path) && runCatching { GitSource.open(source.path).use { it.has(commit.id) } }.getOrDefault(false)
 
     /** `~/fp/registry/in/import@branch/out`, as the workspace saves it. */
     val spec: String get() = "${source.path}@$line"

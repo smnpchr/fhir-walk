@@ -145,6 +145,9 @@ class Repl(
         out.flush()
 
         while (true) {
+            // Before the prompt too, so it shows where the pool is now.
+            show(out) { checkSources(it) }
+            out.flush()
             val line = try {
                 reader.readLine(prompt())
             } catch (e: UserInterruptException) {
@@ -246,6 +249,8 @@ class Repl(
     }
 
     private fun dispatch(input: String, out: Output): Boolean {
+        // The repository may have gone while the prompt waited; nothing should answer from it.
+        checkSources(out)
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so
             // beats handing the whole line to the FHIRPath parser -- unless the word is
@@ -281,6 +286,11 @@ class Repl(
         } finally {
             workspaceCommands.saveState(out)
         }
+    }
+
+    /** See [GitCommands.checkSources]. */
+    private fun checkSources(out: Output) {
+        if (gitCommands.checkSources(out)) workspaceCommands.saveState(out)
     }
 
     /**

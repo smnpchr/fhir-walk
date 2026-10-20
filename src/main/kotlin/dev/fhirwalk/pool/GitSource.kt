@@ -53,6 +53,9 @@ class GitSource private constructor(
 
     fun commit(id: ObjectId): Commit = RevWalk(repository).use { walk -> commitOf(walk.parseCommit(id)) }
 
+    /** Whether the repository still holds [id]: not once it is deleted, or replaced by one with another history. */
+    fun has(id: ObjectId): Boolean = runCatching { repository.objectDatabase.has(id) }.getOrDefault(false)
+
     /**
      * Plain ids, not the walk's [RevCommit]s: those keep their message and every
      * parent they reached, which would keep the walked history alive for as long as

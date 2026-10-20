@@ -8,6 +8,8 @@ import dev.fhirwalk.pool.GitSourceException
 import dev.fhirwalk.pool.ResourceHistory
 import dev.fhirwalk.repl.GitPool
 import dev.fhirwalk.repl.Output
+import dev.fhirwalk.repl.Pool
+import dev.fhirwalk.repl.SavedPool
 import dev.fhirwalk.repl.Session
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -90,6 +92,82 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         git.deltaScope = deltaScope
         state.withProblems(out, "${state.poolName()} at ${revision(git)}: ${report.summary()}", report.problems)
         return true
+    }
+
+    /** The line's tip each unavailable pool was last tried at, so one that still fails is not read again before every prompt. */
+    private val triedAt = HashMap<String, String>()
+
+    /**
+     * Notices a git pool's repository going and coming back, as a test run that
+     * deletes and rebuilds it does between two prompts. A pool whose directory or
+     * commit has gone is emptied, rather than answering from what is no longer on
+     * disk, and kept as [Pool.unavailable]; an unavailable pool opens again at the
+     * tip of its line once that line has a commit. A pool whose commit is still there
+     * never moves.
+     *
+     * @return whether any pool changed, so the workspace state is saved.
+     */
+    fun checkSources(out: Output): Boolean {
+        val current = session.current.name
+        var changed = false
+        try {
+            for (pool in session.pools) {
+                session.switchTo(pool.name)
+                val git = pool.git
+                val replaced = git != null && !git.readable
+                if (replaced) empty(pool, git!!, out)
+                val reopened = pool.unavailable?.let { reopen(pool, it, if (replaced) "was replaced" else "is back", out) } == true
+                if (!replaced && !reopened) continue
+                changed = true
+                // Rows picked from the current pool no longer name what it holds.
+                if (pool.name == current) state.lastPicks = null
+            }
+        } finally {
+            session.switchTo(current)
+        }
+        return changed
+    }
+
+    private fun empty(pool: Pool, git: GitPool, out: Output) {
+        pool.unavailable = SavedPool(
+            pool.name,
+            focus = focus.focusSteps(pool.focus),
+            source = git.spec,
+            at = git.commit.id.name,
+            deltaScope = git.deltaScope,
+        )
+        pool.git = null
+        pool.focus = null
+        pool.pool.clear()
+        git.source.close()
+        triedAt.remove(pool.name)
+        // Said only when it is not about to open again: then that says it all.
+        if (tipOf(git.spec) == null) {
+            val why = if (Files.isDirectory(git.source.path)) "holds no commit of ${git.lineLabel} now" else "is gone"
+            out.error("${git.source.path} $why — ${state.poolName()} emptied, to open again once it is back")
+        }
+    }
+
+    private fun reopen(pool: Pool, saved: SavedPool, how: String, out: Output): Boolean {
+        val spec = saved.source ?: return false
+        val tip = tipOf(spec) ?: return false
+        if (triedAt[pool.name] == tip) return false
+        triedAt[pool.name] = tip
+        out.text("${GitSource.split(spec)?.first ?: spec} $how")
+        if (!openGit(spec, saved.at, saved.deltaScope, out)) return false
+        triedAt.remove(pool.name)
+        focus.restoreFocus(saved.focus, out)
+        return true
+    }
+
+    /** The commit [spec]'s line is at now, or null while there is none to open: cheap, as it reads only refs. */
+    private fun tipOf(spec: String): String? {
+        val (path, line) = GitSource.split(spec) ?: return null
+        val dir = runCatching { Paths.get(state.expandHome(path)) }.getOrNull() ?: return null
+        if (!Files.isDirectory(dir)) return null
+        return runCatching {
+            GitSource.open(dir).use { source -> source.resolve(line.ifEmpty { source.headLine() ?: return@use null })?.id?.name }
+        }.getOrNull()
     }
 
     /**

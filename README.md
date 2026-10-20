@@ -404,6 +404,13 @@ its own revision, not the one traced.
 A workspace saves each git pool's source, the commit it was left at and its scope.
 The next start restores it at that commit rather than the branch tip, and `:at
 branch/out` catches up. A source that has gone is reported and stays saved.
+
+The repository is also watched while the session runs, for a test run that deletes
+and rebuilds it. A git pool whose directory or commit has gone is emptied, saying
+so once, rather than answering from what is no longer on disk; once its line has a
+commit again it opens at the tip and finds its focus again. A pool whose commit is
+still there never moves by itself.
+
 Moving to a neighbouring revision parses only the files whose content differs.
 
 The motivating case, a sync tool's registries, and the design are in

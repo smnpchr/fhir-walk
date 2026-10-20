@@ -645,4 +645,75 @@ class GitPoolTest {
         assertContains(all, registry.m1.short)
         assertContains(session.run(":log +${Int.MAX_VALUE}"), "only 5 commit(s) on branch/out")
     }
+
+    // ------------------------------------------- a repository that goes and comes back
+
+    /** What a test run that rebuilds the registry leaves: another history at the same path, its tip holding [ids]. */
+    private fun rebuild(vararg ids: String) {
+        registry.root.toFile().deleteRecursively()
+        org.eclipse.jgit.api.Git.init().setDirectory(registry.root.toFile()).setInitialBranch("branch/out").call().use { git ->
+            ids.forEach { id ->
+                val file = registry.import.resolve("Patient/$id.json")
+                Files.createDirectories(file.parent)
+                Files.writeString(file, """{"resourceType":"Patient","id":"$id"}""")
+                git.add().addFilepattern(".").call()
+                git.commit().setMessage("add $id").setAuthor("t", "t@example.org").setCommitter("t", "t@example.org").call()
+            }
+        }
+    }
+
+    @Test
+    fun `a git pool whose repository is deleted is emptied and kept`() {
+        val session = opened()
+        registry.root.toFile().deleteRecursively()
+        val gone = session.run("Patient.id")
+        assertContains(gone, "${registry.import} is gone — pool spec emptied, to open again once it is back")
+        assertContains(gone, "pool is empty")
+        // Said once, not before every line.
+        assertFalse(session.run("Patient.id").contains("is gone"))
+        assertContains(session.run(":pools"), "unavailable: ${registry.spec}")
+        val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
+        assertTrue("source\t${registry.spec}" in state, state.toString())
+    }
+
+    @Test
+    fun `a deleted repository that comes back opens at the tip of its line`() {
+        val session = opened()
+        registry.root.toFile().deleteRecursively()
+        session.run("Patient.id")
+        // A repository with no commit on the line yet stays quietly unavailable.
+        org.eclipse.jgit.api.Git.init().setDirectory(registry.root.toFile()).setInitialBranch("branch/out").call().close()
+        assertFalse(session.run("Patient.id").contains("is back"))
+        rebuild("p1", "p2")
+        val back = session.run("Patient.id")
+        assertContains(back, "${registry.import} is back")
+        assertContains(back, "2 of 2 resource(s) matched")
+        assertContains(session.run(":pools"), "${registry.spec} at ")
+    }
+
+    @Test
+    fun `a repository rebuilt between two lines is read again from its tip`() {
+        val session = opened()
+        session.run(":focus Patient/9999")
+        rebuild("p1")
+        val replaced = session.run("Patient.id")
+        assertContains(replaced, "${registry.import} was replaced")
+        assertContains(replaced, "${registry.out4.short} is gone")
+        assertContains(replaced, "1 of 1 resource(s) matched")
+        assertFalse(replaced.contains("emptied"), replaced)
+    }
+
+    @Test
+    fun `a pool whose commit is still there does not move when its line does`() {
+        val session = opened()
+        registry.root.resolve("import/Patient/extra.json").also { Files.createDirectories(it.parent) }
+            .let { Files.writeString(it, """{"resourceType":"Patient","id":"extra"}""") }
+        org.eclipse.jgit.api.Git.open(registry.root.toFile()).use { git ->
+            git.add().addFilepattern(".").call()
+            git.commit().setMessage("more").setAuthor("t", "t@example.org").setCommitter("t", "t@example.org").call()
+        }
+        val output = session.run(":pool")
+        assertContains(output, "at ${registry.out4.short} on branch/out")
+        assertFalse(output.contains("replaced") || output.contains("is back"), output)
+    }
 }
