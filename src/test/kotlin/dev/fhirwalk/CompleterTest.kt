@@ -190,6 +190,30 @@ class CompleterTest {
     }
 
     @Test
+    fun `load completes paths as a shell would`() {
+        val dir = createTempDirectory("fhir-walk-paths")
+        val home = System.getProperty("user.home")
+        try {
+            listOf(".hidden", "visible", "Mixed").forEach { Files.createDirectory(dir.resolve(it)) }
+            // Hidden entries only once a dot is typed, so they cannot crowd out the rest.
+            assertEquals(listOf("$dir/Mixed/", "$dir/visible/"), values(":load $dir/"))
+            assertEquals(listOf("$dir/.hidden/"), values(":load $dir/.h"))
+            // The reader matches ignoring case, so the listing must too.
+            assertEquals(listOf("$dir/Mixed/"), values(":load $dir/mi"))
+            // No listing returns . or .., so typed without a slash they would go nowhere.
+            assertEquals("$dir/../", values(":load $dir/..").first())
+            assertTrue("$dir/./" in values(":load $dir/."))
+            // ~ is looked up as home but inserted as typed.
+            System.setProperty("user.home", dir.toString())
+            assertEquals(listOf("~/visible/"), values(":load ~/v"))
+            assertEquals(listOf("~/"), values(":load ~"))
+        } finally {
+            System.setProperty("user.home", home)
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `an empty prompt offers the resource types the pool actually holds`() {
         val byName = candidates("").associateBy { it.value() }
         assertEquals("resource types (in pool)", byName.getValue("Patient").group())

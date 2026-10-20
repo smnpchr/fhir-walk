@@ -267,17 +267,29 @@ class FhirPathCompleter(
      * last `/`. Narrowed before the cap, or a directory of more than MAX_ROWS entries
      * would offer an arbitrary few. The directory is kept as typed: JLine matches
      * candidates against the word, so `sam` must be offered `samples/`, not `./samples/`.
+     *
+     * As in a shell: `~` is the home directory, hidden entries wait for a leading `.`,
+     * and `.`, `..` and `~` -- which no listing returns -- are offered with their
+     * slash. Names match ignoring case, as the reader does.
      */
     private fun completePath(partial: String, candidates: MutableList<Candidate>) {
+        // Expanded only to look; what is inserted keeps the `~` as typed.
+        fun expand(path: String) = if (path.startsWith("~")) System.getProperty("user.home") + path.drop(1) else path
         val typedDir = partial.substring(0, partial.lastIndexOf('/') + 1)
         val namePrefix = partial.substring(typedDir.length)
-        val dir: Path = runCatching { Paths.get(typedDir.ifEmpty { "." }) }.getOrNull() ?: return
+        val unlisted = namePrefix == "." || namePrefix == ".." || partial == "~"
+        if (unlisted) candidates += Candidate("$partial/", "$partial/", "files", null, null, null, false)
+        val dir: Path = runCatching { Paths.get(expand(typedDir).ifEmpty { "." }) }.getOrNull() ?: return
         if (!Files.isDirectory(dir)) return
+        val showHidden = namePrefix.startsWith(".")
         runCatching {
             Files.list(dir).use { stream ->
-                stream.filter { it.fileName.toString().startsWith(namePrefix) }
+                stream.filter {
+                    val name = it.fileName.toString()
+                    name.startsWith(namePrefix, ignoreCase = true) && (showHidden || !name.startsWith("."))
+                }
                     .sorted()
-                    .limit(MAX_ROWS.toLong())
+                    .limit((MAX_ROWS - if (unlisted) 1 else 0).toLong())
                     .forEach { entry ->
                         val isDir = Files.isDirectory(entry)
                         val value = typedDir + entry.fileName + if (isDir) "/" else ""
