@@ -189,12 +189,14 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
             // A git pool's contents are its revision, so it reads that again in the new version.
             for (pool in old.pools) {
                 session.switchTo(pool.name)
-                session.current.unavailable = pool.unavailable
+                pool.unavailable?.let { git.unavailable(session.current, it) }
                 val gitPool = pool.git ?: continue
                 if (!git.openGit(gitPool.spec, gitPool.commit.id.name, gitPool.deltaScope, out)) {
                     // Kept, as at startup: saved again rather than lost, to open once it can.
-                    session.current.unavailable =
-                        SavedPool(pool.name, source = gitPool.spec, at = gitPool.commit.id.name, deltaScope = gitPool.deltaScope)
+                    git.unavailable(
+                        session.current,
+                        SavedPool(pool.name, source = gitPool.spec, at = gitPool.commit.id.name, deltaScope = gitPool.deltaScope),
+                    )
                 }
             }
             session.switchTo(old.current.name)

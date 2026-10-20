@@ -153,7 +153,12 @@ class Repl(
                 break
             }
             val input = line?.trim().orEmpty()
-            if (input.isEmpty()) continue
+            if (input.isEmpty()) {
+                // Enter on its own is how to ask whether a git pool's repository changed.
+                show(out) { checkSources(it) }
+                out.flush()
+                continue
+            }
             try {
                 if (!dispatch(input, out)) break
             } catch (e: Exception) {
@@ -246,6 +251,9 @@ class Repl(
     }
 
     private fun dispatch(input: String, out: Output): Boolean {
+        // The repository may have gone while the prompt waited; nothing should answer
+        // from it. Once per line: each check opens every git pool's repository afresh.
+        checkSources(out)
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so
             // beats handing the whole line to the FHIRPath parser -- unless the word is
@@ -281,6 +289,11 @@ class Repl(
         } finally {
             workspaceCommands.saveState(out)
         }
+    }
+
+    /** See [GitCommands.checkSources]. */
+    private fun checkSources(out: Output) {
+        if (gitCommands.checkSources(out)) workspaceCommands.saveState(out)
     }
 
     /**

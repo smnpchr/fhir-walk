@@ -33,6 +33,8 @@ class GitSource private constructor(
     val subpath: String,
     /** The directory, absolute: how the source is named back to the user. */
     val path: Path,
+    /** The repository's `.git`, which tells it from one enclosing it. */
+    val gitDir: Path,
 ) : AutoCloseable {
 
     data class Commit(val id: ObjectId, val time: Instant, val subject: String, val parent: ObjectId?) {
@@ -52,6 +54,9 @@ class GitSource private constructor(
     }
 
     fun commit(id: ObjectId): Commit = RevWalk(repository).use { walk -> commitOf(walk.parseCommit(id)) }
+
+    /** Whether the repository still holds [id]: not once it is deleted, or replaced by one with another history. */
+    fun has(id: ObjectId): Boolean = runCatching { repository.objectDatabase.has(id) }.getOrDefault(false)
 
     /**
      * Plain ids, not the walk's [RevCommit]s: those keep their message and every
@@ -215,7 +220,7 @@ class GitSource private constructor(
                 throw GitSourceException("a bare repository has no directory to point at: $directory")
             }
             val subpath = repository.workTree.toPath().toRealPath().relativize(real).toString().replace('\\', '/')
-            return GitSource(repository, subpath, real)
+            return GitSource(repository, subpath, real, repository.directory.toPath().toAbsolutePath().normalize())
         }
     }
 }
