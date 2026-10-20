@@ -61,7 +61,7 @@ internal class WorkspaceCommands(
                 if (git.openGit(pool.source, pool.at, pool.deltaScope, out)) {
                     focus.restoreFocus(pool.focus, out)
                 } else {
-                    session.current.unavailable = pool
+                    git.unavailable(session.current, pool)
                     out.line { error("  kept in the workspace, to open once it is back") }
                 }
                 continue

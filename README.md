@@ -408,8 +408,9 @@ branch/out` catches up. A source that has gone is reported and stays saved.
 The repository is also watched while the session runs, for a test run that deletes
 and rebuilds it. A git pool whose directory or commit has gone is emptied, saying
 so once, rather than answering from what is no longer on disk; once its line has a
-commit again it opens at the tip and finds its focus again. A pool whose commit is
-still there never moves by itself.
+commit again it opens -- at the commit it was at if that is still there, else at
+the tip -- and finds its focus again. A pool whose commit is still there never
+moves by itself. Enter on an empty line checks without running anything.
 
 Moving to a neighbouring revision parses only the files whose content differs.
 

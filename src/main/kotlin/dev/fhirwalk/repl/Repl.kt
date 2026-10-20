@@ -145,9 +145,6 @@ class Repl(
         out.flush()
 
         while (true) {
-            // Before the prompt too, so it shows where the pool is now.
-            show(out) { checkSources(it) }
-            out.flush()
             val line = try {
                 reader.readLine(prompt())
             } catch (e: UserInterruptException) {
@@ -156,7 +153,12 @@ class Repl(
                 break
             }
             val input = line?.trim().orEmpty()
-            if (input.isEmpty()) continue
+            if (input.isEmpty()) {
+                // Enter on its own is how to ask whether a git pool's repository changed.
+                show(out) { checkSources(it) }
+                out.flush()
+                continue
+            }
             try {
                 if (!dispatch(input, out)) break
             } catch (e: Exception) {
@@ -249,7 +251,8 @@ class Repl(
     }
 
     private fun dispatch(input: String, out: Output): Boolean {
-        // The repository may have gone while the prompt waited; nothing should answer from it.
+        // The repository may have gone while the prompt waited; nothing should answer
+        // from it. Once per line: each check opens every git pool's repository afresh.
         checkSources(out)
         if (!input.startsWith(":")) {
             // `all Specimen.subject` is a dropped colon, not an expression. Saying so

@@ -65,11 +65,14 @@ class GitPool(
     /**
      * Whether the directory and the commit the pool is at are still there: a test
      * run may delete the repository, or rebuild it with another history, between
-     * two prompts. Asked of the repository opened afresh: the one held open remembers
-     * objects it has seen, and answers for a commit that a rebuild took away.
+     * two lines. Asked of the repository opened afresh: the one held open remembers
+     * objects it has seen, and answers for a commit that a rebuild took away. A
+     * directory whose own `.git` has gone opens as an enclosing repository, which
+     * does not count.
      */
-    val readable: Boolean get() =
-        Files.isDirectory(source.path) && runCatching { GitSource.open(source.path).use { it.has(commit.id) } }.getOrDefault(false)
+    val readable: Boolean get() = Files.isDirectory(source.path) && runCatching {
+        GitSource.open(source.path).use { it.gitDir == source.gitDir && it.has(commit.id) }
+    }.getOrDefault(false)
 
     /** `~/fp/registry/in/import@branch/out`, as the workspace saves it. */
     val spec: String get() = "${source.path}@$line"

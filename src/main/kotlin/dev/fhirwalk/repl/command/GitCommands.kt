@@ -12,9 +12,11 @@ import dev.fhirwalk.repl.Pool
 import dev.fhirwalk.repl.SavedPool
 import dev.fhirwalk.repl.Session
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.WeakHashMap
 
 /** A git pool: opening one at a revision, moving it along its line, and reading its history. */
 internal class GitCommands(private val state: ReplState, private val focus: FocusCommands) : CommandGroup {
@@ -42,7 +44,7 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
      *
      * @return false when it could not be opened; what went wrong has been said.
      */
-    fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output): Boolean {
+    fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output, gitDir: Path? = null): Boolean {
         val (path, revision) = GitSource.split(spec) ?: run {
             out.error("$spec names no revision — dir@rev, e.g. registry/in/import@branch/out")
             return false
@@ -51,6 +53,15 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
             GitSource.open(Paths.get(state.expandHome(path)).toAbsolutePath().normalize())
         } catch (e: GitSourceException) {
             out.error("${e.message}")
+            return false
+        } catch (e: Exception) {
+            // A directory deleted while it is being opened.
+            out.error("cannot open $path: ${e.message ?: e.javaClass.simpleName}")
+            return false
+        }
+        if (gitDir != null && source.gitDir != gitDir) {
+            source.close()
+            out.error("${source.path} is in $gitDir no longer, but in ${source.gitDir}")
             return false
         }
         // `dir@` follows whatever branch HEAD is on; the line saved is that branch, so
@@ -94,16 +105,33 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         return true
     }
 
-    /** The line's tip each unavailable pool was last tried at, so one that still fails is not read again before every prompt. */
-    private val triedAt = HashMap<String, String>()
+    /**
+     * What [checkSources] remembers of an unavailable pool: the tip it was last tried
+     * at, so one that still fails is not read again before every line, and the
+     * repository it was emptied from, so that while that one is gone an enclosing
+     * repository is not taken for it. By the pool itself, not its name: a pool closed
+     * and opened again under the same name starts afresh.
+     */
+    private class Watch(var triedAt: String? = null, val gitDir: Path? = null)
+
+    private val watched = WeakHashMap<Pool, Watch>()
+
+    /**
+     * For a pool made unavailable because [openGit] just failed: what it was tried at,
+     * so the next check does not say it is back and fail the same way again.
+     */
+    fun unavailable(pool: Pool, saved: SavedPool) {
+        pool.unavailable = saved
+        watched[pool] = Watch(triedAt = saved.source?.let { tipOf(it, null) })
+    }
 
     /**
      * Notices a git pool's repository going and coming back, as a test run that
-     * deletes and rebuilds it does between two prompts. A pool whose directory or
+     * deletes and rebuilds it does between two lines. A pool whose directory or
      * commit has gone is emptied, rather than answering from what is no longer on
-     * disk, and kept as [Pool.unavailable]; an unavailable pool opens again at the
-     * tip of its line once that line has a commit. A pool whose commit is still there
-     * never moves.
+     * disk, and kept as [Pool.unavailable]; an unavailable pool opens again once its
+     * line has a commit -- at the one it was at if that is still there, else at the
+     * tip. A pool whose commit is still there never moves.
      *
      * @return whether any pool changed, so the workspace state is saved.
      */
@@ -113,14 +141,21 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         try {
             for (pool in session.pools) {
                 session.switchTo(pool.name)
-                val git = pool.git
-                val replaced = git != null && !git.readable
-                if (replaced) empty(pool, git!!, out)
-                val reopened = pool.unavailable?.let { reopen(pool, it, if (replaced) "was replaced" else "is back", out) } == true
-                if (!replaced && !reopened) continue
+                // A repository half deleted or half written can fail any read; the
+                // check must never take the session down with it.
+                val moved = try {
+                    check(pool, out)
+                } catch (e: Exception) {
+                    out.error("cannot check ${state.poolName()}: ${e.message ?: e.javaClass.simpleName}")
+                    false
+                }
+                if (!moved) continue
                 changed = true
-                // Rows picked from the current pool no longer name what it holds.
-                if (pool.name == current) state.lastPicks = null
+                // Rows picked or listed from the current pool no longer name what it holds.
+                if (pool.name == current) {
+                    state.lastPicks = null
+                    state.lastListing = null
+                }
             }
         } finally {
             session.switchTo(current)
@@ -128,7 +163,28 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         return changed
     }
 
-    private fun empty(pool: Pool, git: GitPool, out: Output) {
+    /** @return whether the pool was emptied or opened again. */
+    private fun check(pool: Pool, out: Output): Boolean {
+        val git = pool.git
+        val replaced = git != null && !git.readable
+        if (replaced) empty(pool, git!!)
+        val saved = pool.unavailable ?: return replaced
+        if (reopen(pool, saved, if (replaced) "was replaced" else "is back", out)) return true
+        if (replaced) {
+            val gitDir = watched[pool]?.gitDir
+            val why = when {
+                !Files.isDirectory(git!!.source.path) -> "${git.source.path} is gone"
+                gitDir != null && !Files.isDirectory(gitDir) -> "$gitDir is gone"
+                tipOf(git.spec, gitDir) == null -> "${git.source.path} holds no commit of ${git.lineLabel} now"
+                // The reopen said why; it is tried again when the line moves.
+                else -> null
+            }
+            out.error("${why?.let { "$it — " }.orEmpty()}${state.poolName()} emptied, to open again once it is back")
+        }
+        return replaced
+    }
+
+    private fun empty(pool: Pool, git: GitPool) {
         pool.unavailable = SavedPool(
             pool.name,
             focus = focus.focusSteps(pool.focus),
@@ -140,33 +196,35 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         pool.focus = null
         pool.pool.clear()
         git.source.close()
-        triedAt.remove(pool.name)
-        // Said only when it is not about to open again: then that says it all.
-        if (tipOf(git.spec) == null) {
-            val why = if (Files.isDirectory(git.source.path)) "holds no commit of ${git.lineLabel} now" else "is gone"
-            out.error("${git.source.path} $why — ${state.poolName()} emptied, to open again once it is back")
-        }
+        watched[pool] = Watch(gitDir = git.source.gitDir)
     }
 
     private fun reopen(pool: Pool, saved: SavedPool, how: String, out: Output): Boolean {
         val spec = saved.source ?: return false
-        val tip = tipOf(spec) ?: return false
-        if (triedAt[pool.name] == tip) return false
-        triedAt[pool.name] = tip
+        val watch = watched.getOrPut(pool) { Watch() }
+        val tip = tipOf(spec, watch.gitDir) ?: return false
+        if (watch.triedAt == tip) return false
+        watch.triedAt = tip
         out.text("${GitSource.split(spec)?.first ?: spec} $how")
-        if (!openGit(spec, saved.at, saved.deltaScope, out)) return false
-        triedAt.remove(pool.name)
+        if (!openGit(spec, saved.at, saved.deltaScope, out, watch.gitDir)) return false
+        watched.remove(pool)
         focus.restoreFocus(saved.focus, out)
         return true
     }
 
-    /** The commit [spec]'s line is at now, or null while there is none to open: cheap, as it reads only refs. */
-    private fun tipOf(spec: String): String? {
+    /**
+     * The commit [spec]'s line is at now, or null while there is none to open: cheap,
+     * as it reads only refs. With [gitDir], only in that repository.
+     */
+    private fun tipOf(spec: String, gitDir: Path?): String? {
         val (path, line) = GitSource.split(spec) ?: return null
         val dir = runCatching { Paths.get(state.expandHome(path)) }.getOrNull() ?: return null
         if (!Files.isDirectory(dir)) return null
         return runCatching {
-            GitSource.open(dir).use { source -> source.resolve(line.ifEmpty { source.headLine() ?: return@use null })?.id?.name }
+            GitSource.open(dir).use { source ->
+                if (gitDir != null && source.gitDir != gitDir) return@use null
+                source.resolve(line.ifEmpty { source.headLine() ?: return@use null })?.id?.name
+            }
         }.getOrNull()
     }
 
