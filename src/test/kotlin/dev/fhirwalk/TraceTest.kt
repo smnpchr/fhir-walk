@@ -95,9 +95,32 @@ class TraceTest {
         assertEquals(expected, rowsOf(":log Patient/p1").map { it.first })
         val trace = rowsOf(":trace Patient/p1")
         assertEquals(expected, trace.map { it.first })
-        assertEquals(listOf("deleted", "modified", "modified", "modified", "added"), trace.map { it.second.substringBefore(' ') })
-        // Whitespace inside a string is part of the value, on the row too.
-        assertTrue("Anna  Muster" in trace.last().second, trace.last().second)
+        // Each modifying commit says what it changed; a reorder is told from a change.
+        assertEquals(
+            listOf(
+                "deleted",
+                "modified  ~name.given (order only)",
+                "modified  ~name.family, +name.given",
+                "modified  ~name.text",
+                "added",
+            ),
+            trace.map { it.second },
+        )
+    }
+
+    @Test
+    fun `more puts what changed above each version of the resource`() {
+        repl.outputOf(":trace Patient/p1")
+        val whole = repl.outputOf(":more").lines()
+        val renaming = whole.indexOfFirst { renamed.name.take(7) in it }
+        assertEquals(listOf("~name.family", "+name.given"), whole.subList(renaming + 1, renaming + 3).map { it.trim() })
+        assertEquals("Patient", whole[renaming + 3].trim())
+    }
+
+    @Test
+    fun `an expression's answer stays on its row as it reads, whitespace in strings included`() {
+        val rows = rowsOf(":trace Patient/p1 name.text")
+        assertTrue("Anna  Muster" in rows.last().second, rows.last().second)
     }
 
     @Test

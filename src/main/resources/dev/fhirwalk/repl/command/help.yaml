@@ -82,9 +82,11 @@ commands:
           that changed the resource elsewhere is left out. A focused element is
           traced the same way, by the steps that reached it. :trace Specimen/s1
           alone traces the whole resource: the commits :log Specimen/s1 lists,
-          each with what it holds. :more prints each answer whole, a resource as
-          pretty-printed JSON. resolve() is refused: it would read the pool at
-          its own revision, not the one traced.
+          each with the paths it changed, ~type.coding.code or +note.text, and
+          a reorder told apart: ~extension (order only). :more prints each
+          answer whole, a resource as pretty-printed JSON under what changed.
+          resolve() is refused: it would read the pool at its own revision,
+          not the one traced.
         topic: git
       - name: ":delta"
         args: ""
@@ -225,7 +227,7 @@ topics:
       everything; :delta lists it, :scope all goes back to the whole pool.
       :log Specimen/s1 lists the commits that changed one resource, and
       :trace Specimen/s1 type.coding.code how an answer changed across them;
-      :trace Specimen/s1 alone, how the resource itself did.
+      :trace Specimen/s1 alone, which elements each commit changed in it.
 
       Each counts a different kind of change. :log alone goes by the files
       git changed, so a reformat counts. :log Specimen/s1 and :trace

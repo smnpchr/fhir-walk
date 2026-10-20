@@ -546,9 +546,8 @@ class GitPoolTest {
         val output = session.repl.outputOf(":trace Specimen/30012")
         val rows = rowsOf(output)
         assertEquals(listOf(registry.out3, registry.out1, registry.m1).map { it.short }, rows.map { it.first })
-        assertTrue(rows.first().second.startsWith("modified  {"), rows.first().second)
-        assertContains(rows.first().second, "CITRATE_PLASMA")
-        assertTrue(rows.last().second.startsWith("added     {"), rows.last().second)
+        // out1 mapped the type to the central system; out3 fixed only its code.
+        assertEquals(listOf("modified  ~type.coding.code", "modified  ~type.coding.system, ~type.coding.code", "added"), rows.map { it.second })
         assertContains(output.lines().first(), "Specimen/30012 on branch/out, newest first — 3 change(s) in 3 commit(s)")
         // With a focus, :trace alone traces the focused resource.
         session.run(":focus Specimen/30012")

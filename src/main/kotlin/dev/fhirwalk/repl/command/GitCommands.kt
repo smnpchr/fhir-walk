@@ -5,7 +5,9 @@ import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.GitSourceException
+import dev.fhirwalk.pool.ResourceDiff
 import dev.fhirwalk.pool.ResourceHistory
+import org.hl7.fhir.instance.model.api.IBaseResource
 import dev.fhirwalk.repl.GitPool
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
@@ -265,9 +267,10 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
      * alone, so the pool stays where it is. With a focus, `:trace <expr>` traces the
      * focused resource, or the focused element by the steps that reached it.
      *
-     * With no expression the answer is the resource itself (or the focused element),
-     * so every commit that changed its content is a row. Each row is a preview;
-     * `:more` prints every answer whole, as pretty-printed JSON.
+     * With no expression the answer is the resource itself, so every commit that
+     * changed its content is a row, saying what it changed: the paths of the
+     * elements, see [ResourceDiff]. `:more` prints every answer whole, as
+     * pretty-printed JSON, a resource's under what changed in it.
      */
     private fun trace(argument: String, out: Output) {
         val git = gitPool(out) ?: return
@@ -314,6 +317,8 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         // Oldest first, so each answer can say what it replaced.
         var before: String? = null
         var beforeExactly: String? = null
+        var beforeResource: IBaseResource? = null
+        val diff = ResourceDiff(session.ctx)
         val traced = mutableListOf<Traced>()
         for (change in changes.asReversed()) {
             val outcome = change.resource?.let { resource ->
@@ -330,9 +335,15 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
             // compared whole: its one-line form runs whitespace together, which a
             // string's value may differ by.
             if (expression != null && exactly == beforeExactly && change.kind != GitSource.Kind.ADDED) continue
-            traced += Traced(change, outcome, answer, was = before)
+            val differences = if (expression == null && change.kind == GitSource.Kind.MODIFIED) {
+                beforeResource?.let { previous -> change.resource?.let { diff.between(previous, it) } }
+            } else {
+                null
+            }
+            traced += Traced(change, outcome, answer, was = before, differences = differences)
             before = answer
             beforeExactly = exactly
+            beforeResource = change.resource
         }
         traced.reverse()
         val what = expression?.let { "  $it" }.orEmpty()
@@ -341,11 +352,18 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
             rows = traced.map { row ->
                 commitRow(git, row.change.commit) {
                     if (expression == null) {
-                        // A resource's answer is the whole of it: what happened says more than what it was.
-                        count(row.kind.padEnd(8))
-                        if (row.outcome != null) {
-                            +"  "
-                            shrink(row.answer, Output.Kind.PREVIEW, cutsEnd = true)
+                        // A resource's answer is the whole of it: what changed in it says
+                        // more than what it holds, which :more prints.
+                        val differences = row.differences
+                        // Padded only for what follows, so a row ends where its text does.
+                        count(if (differences == null) row.kind else row.kind.padEnd(8))
+                        when {
+                            differences == null -> Unit
+                            differences.isEmpty() -> hint("  no element differs — :more shows both")
+                            else -> {
+                                +"  "
+                                shrink(differences.joinToString(", ") { described(it, label) })
+                            }
                         }
                     } else {
                         when (row.outcome) {
@@ -360,6 +378,7 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
             // Each answer whole under its commit; what it was is the row below.
             full = traced.flatMap { row ->
                 listOf(commitRow(git, row.change.commit) { count(row.kind) }) +
+                    row.differences.orEmpty().map { Output.line { +"      "; +described(it, label) } } +
                     when (val outcome = row.outcome) {
                         null -> emptyList()
                         is Outcome.Failure -> listOf(Output.line { +"      "; error(row.answer) })
@@ -381,10 +400,34 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
     }
 
     /**
+     * `~type.coding.code`, `+note.text`, `-extension('…').value`, `~extension (order
+     * only)`: a difference, signed as `:delta` signs its rows, with its path from
+     * below the resource's type.
+     */
+    private fun described(difference: ResourceDiff.Difference, label: String): String {
+        val path = difference.path.removePrefix("${label.substringBefore('/')}.")
+        return when (difference.kind) {
+            ResourceDiff.Kind.ADDED -> "+$path"
+            ResourceDiff.Kind.REMOVED -> "-$path"
+            ResourceDiff.Kind.CHANGED -> "~$path"
+            ResourceDiff.Kind.REORDERED -> "~$path (order only)"
+        }
+    }
+
+    /**
      * A commit in a trace: what [change] made the answer, as [answer] reads it on one
      * line, and what it [was] before, if anything.
+     *
+     * @param differences what a modifying commit changed in the resource, when the
+     *   whole resource is traced; null otherwise.
      */
-    private class Traced(val change: ResourceHistory.Change, val outcome: Outcome?, val answer: String, val was: String?) {
+    private class Traced(
+        val change: ResourceHistory.Change,
+        val outcome: Outcome?,
+        val answer: String,
+        val was: String?,
+        val differences: List<ResourceDiff.Difference>? = null,
+    ) {
         val came: Boolean get() = change.kind == GitSource.Kind.ADDED
 
         /** `added`, `modified`, `deleted`, as `:log <label>` says. */
