@@ -130,6 +130,8 @@ Type a FHIRPath expression, or:
 | `:more` | reprint the last listing in full, nothing shortened |
 | `:limit [rows\|off]` | rows per listing before the rest waits for `:more` |
 | `:fhir [version]` | switch FHIR version (resets the pool) |
+| `:help [command]` | the commands, grouped; with a command, more about it |
+| `:manual [topic]` | how they fit together, one topic at a time; alone, the topics; `all` for the lot |
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
 across the pool.
@@ -536,6 +538,9 @@ repl/      Repl, FhirPathParser, Render
            Workspace, SavedState            what outlives a session
            ExpressionLog, NameStore,        its files, on WatchedFile /
            ViewStore, KeyedStore            KeyedStore
+repl/command/ Command, ReplState            the command contract, shared state
+           *Commands                        the commands, a group per file
+           Manual                           :help and :manual, from help.yaml
 ```
 
 Everything outside `model/` takes a `FhirContext` and is version-agnostic by
@@ -584,6 +589,9 @@ Three HAPI dependencies are optional in its POM but required in practice:
 HAPI-2200), and `hapi-fhir-validation-resources-*`, without which `ofType()`/`as()`
 fail with HAPI-0255. The Kotlin plugin must stay at or above the stdlib HAPI pulls in
 transitively via okhttp.
+
+`jackson-dataformat-yaml` (with SnakeYAML) reads `help.yaml`, the text of `:help`
+and `:manual`; it is a parser and talks to nothing.
 
 JGit reads git pools. It ships transport code, but fhir-walk only opens local
 repositories and reads trees, blobs and diffs from them.

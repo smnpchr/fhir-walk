@@ -177,6 +177,12 @@ produces confusing results that look like product bugs.
   the printer. `out.text` is for plain lines only: no command calls `Style` or
   measures the window (only `run()`'s last-resort crash line writes to the terminal
   itself). Never truncate output without an expansion path.
+- Commands live in `repl/command/`: each is a `Command` (`Command.kt`) in one of
+  the `*Commands` groups, which share a `ReplState`; `Repl` only reads lines and
+  dispatches them. A command's usage, summary, details and manual topic are text
+  in `src/main/resources/dev/fhirwalk/repl/command/help.yaml`, not in code. Adding a command
+  means an entry there too: `Repl` refuses to start when the two disagree. Quote a
+  YAML value holding ` #` — unquoted, the rest of the line is a comment.
 - Candidate `value` is what gets inserted (including any closing `')`); `displ` is what
   the menu shows. Keep them distinct, and assert on the right one in tests.
 - Keep candidate lists under 100 entries — past that JLine asks "see all N

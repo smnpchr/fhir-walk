@@ -45,6 +45,8 @@ class FhirPathCompleter(
     private val gitSpec: (String) -> Pair<String, String>? = { GitSource.split(it) },
     /** The current git pool's commits, newest first, for `:at`. */
     private val commits: () -> List<CommitChoice> = { emptyList() },
+    /** The manual's topics for `:manual`, each with its title as [CommandInfo.doc]. */
+    private val topics: () -> List<CommandInfo> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -197,6 +199,12 @@ class FhirPathCompleter(
                 2 -> recordedColumns(lastToken, emptySet(), MAX_ROWS, candidates)
             }
             ":unname-expr" -> if (arguments.size == 1) names(lastToken, emptySet(), MAX_ROWS, candidates)
+            ":help" -> if (arguments.size == 1) {
+                commands().forEach { candidates += commandCand(it.name, it.name, "commands", it.doc) }
+            }
+            ":manual" -> if (arguments.size == 1) {
+                topics().forEach { candidates += commandCand(it.name, it.name, "topics", it.doc) }
+            }
         }
     }
 

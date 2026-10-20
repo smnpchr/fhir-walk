@@ -1,0 +1,244 @@
+# What :help and :manual print. Edit the text here; no code needs to change.
+#
+# commands: every :command, in groups, in the order :help lists them and TAB offers
+#   them. Each has
+#     name     what is typed; must match a command the REPL defines (a test checks)
+#     args     how its arguments are written, shown after the name
+#     summary  one line, shown by :help and in the TAB menu
+#     details  optional; more, shown by :help <command>
+#     topic    optional; the :manual topic that explains it in context
+#
+# Quote a one-line value that holds " #" or ": ", as several here are: unquoted, YAML
+# reads " #" as the start of a comment and silently drops the rest of the line.
+#
+# topics: the manual, one topic per subject, printed by :manual <name>. The text is
+#   printed as it stands here, so keep lines under about 76 characters.
+
+commands:
+  - group: Pools
+    commands:
+      - name: ":load"
+        args: "<path>"
+        summary: import a file, bundle, NDJSON or directory tree
+        topic: pools
+      - name: ":pool"
+        args: "[name]"
+        summary: switch pool; alone, what is in the current one
+        topic: pools
+      - name: ":pools"
+        args: ""
+        summary: the open pools, their sizes and paths
+        topic: pools
+      - name: ":open"
+        args: "<name> [path|dir@[rev]]"
+        summary: "add a pool and switch to it: path loads, dir@rev is a git revision, dir@ its current branch"
+        details: |
+          :open specimen adds an empty pool; :open specimen <path> loads into it.
+          :open in registry/in/import@branch/out opens a directory of a git
+          repository at a revision; a bare @ follows the branch HEAD is on.
+        topic: pools
+      - name: ":close"
+        args: "<name>"
+        summary: drop a pool
+        topic: pools
+      - name: ":fhir"
+        args: "[version]"
+        summary: switch FHIR version (resets the pool)
+        details: |
+          Loaded pools keep their names and lose their contents; git pools read
+          their revision again in the new version.
+
+  - group: Git history
+    commands:
+      - name: ":log"
+        args: "[label] [n] [+skip]"
+        summary: a git pool's line, newest first, with what each commit changed; with a label, the commits that changed that resource
+        details: |
+          :log 10 +20 is the 21st to 30th commit back; :log Specimen/s1 lists the
+          commits that changed that resource.
+        topic: git
+      - name: ":at"
+        args: "<rev|date>"
+        summary: move a git pool to a revision, or to its line as of a date (2026-03-11); TAB lists commits by date
+        details: |
+          A revision is a branch, tag, id or branch~2; a date such as 2026-03-11
+          moves to the line as it was then.
+        topic: git
+      - name: ":step"
+        args: "[-n|+n]"
+        summary: move a git pool along its line; alone, one commit back
+        details: |
+          -1 is one commit back, +1 one forward along the line.
+        topic: git
+      - name: ":trace"
+        args: "[label] <expr>"
+        summary: how an expression's answer for one resource changed along a git pool's line; with a focus, the focused one
+        details: |
+          :trace Specimen/s1 type.coding.code lists the commits where the answer
+          changed, with what it was before. resolve() is refused: it would read the
+          pool at its own revision, not the one traced.
+        topic: git
+      - name: ":delta"
+        args: ""
+        summary: what this revision added, modified and deleted
+        topic: git
+      - name: ":scope"
+        args: "[delta|all]"
+        summary: run pool-wide over the delta only, or over everything
+        topic: git
+
+  - group: Evaluating
+    commands:
+      - name: ":focus"
+        args: "[label|#index|expr|[n]|..]"
+        summary: evaluate against one resource or element
+        details: |
+          Alone, it clears the focus; .. steps back to the previous one.
+        topic: focus
+      - name: ":all"
+        args: "<expr>"
+        summary: evaluate across the whole pool
+        topic: evaluating
+      - name: ":why"
+        args: "[expr]"
+        summary: find the step where the expression goes empty
+        topic: evaluating
+      - name: ":ext"
+        args: "[path]"
+        summary: extension URLs observed in the pool
+        topic: completion
+
+  - group: Recorded expressions and views
+    commands:
+      - name: ":history"
+        args: "[filter]"
+        summary: recorded pool-wide expressions, newest first
+        topic: recording
+      - name: ":view"
+        args: "#n|name|@view …"
+        summary: "a table: one row per resource, a column per recorded expression"
+        details: |
+          Numbers come from :history, names from :name-expr, views from :name-view.
+        topic: recording
+      - name: ":name-expr"
+        args: "[name [#n]]"
+        summary: "name the expression just run, or #n, for :view; alone, list"
+        topic: recording
+      - name: ":unname-expr"
+        args: "<name>"
+        summary: forget an expression's name
+        topic: recording
+      - name: ":name-view"
+        args: "[view]"
+        summary: name and save the last :view, to rerun as :view @view; alone, list
+        topic: recording
+      - name: ":unname-view"
+        args: "<view>"
+        summary: forget a saved view
+        topic: recording
+
+  - group: Session
+    commands:
+      - name: ":workspace"
+        args: "[name]"
+        summary: switch workspace; alone, show it and list the others
+        topic: workspaces
+      - name: ":more"
+        args: ""
+        summary: reprint the last listing in full, nothing shortened
+        topic: listings
+      - name: ":limit"
+        args: "[rows|off]"
+        summary: rows per listing before the rest waits for :more
+        topic: listings
+      - name: ":help"
+        args: "[command]"
+        summary: this list; with a command, more about it
+      - name: ":manual"
+        args: "[topic]"
+        summary: how it all fits together; alone, the topics
+      - name: ":quit"
+        args: ""
+        summary: exit
+
+topics:
+  - name: evaluating
+    title: Where an expression runs
+    text: |
+      With a focus set, an expression runs against that resource;
+      with no focus it runs across the whole pool.
+
+      :why with no expression re-diagnoses the last one you ran, so the
+      hint printed after an empty result can be followed by just :why.
+
+  - name: focus
+    title: Focusing on a resource or an element
+    text: |
+      :focus also takes an expression: it runs against the current focus
+      (or the pool) and its one result becomes the focus, which may be an
+      element. Expressions then start from that element — coding.code,
+      not Observation.code.coding — and :focus .. steps back up.
+      :more right after :focus prints the focused value in full.
+      :focus [n] picks row n of the last numbered listing, e.g. when
+      an expression matched several values.
+
+  - name: recording
+    title: Recorded expressions, names and views
+    text: |
+      A pool-wide expression that matches something is recorded, once, in
+      the workspace; :history lists them by number. :view #3 #5
+      tabulates them: one row per resource of the type they start from,
+      one column each. Columns must yield primitives, e.g. name.family
+      rather than name; several values in one cell are joined with ", ".
+      :name-expr family right after a pool-wide expression names it;
+      :name-expr family #1 names a recorded one. Then :view family birth #3
+      works and the column is titled family. A name holds the expression
+      itself, not its number.
+      :name-view people saves the last :view; :view @people reruns it.
+
+  - name: pools
+    title: Several pools
+    text: |
+      Several pools can be open at once, each with its own census and focus;
+      resolve() stays inside the pool. :open specimen <path> adds one and
+      switches to it, :pool <name> switches, :pools lists them. Recorded
+      expressions, names and views are shared, so :view @people runs in any.
+
+  - name: git
+    title: Pools from git revisions
+    text: |
+      A pool can be a directory in a git repository at a revision, read
+      without checking anything out: :open in registry/in/import@branch/out.
+      A bare @ opens the branch HEAD is on; TAB after the @ lists revisions.
+      TAB after :at lists the line's commits by date, newest first.
+      :log lists its line, :step -1 and :step +1 move along it, :at <rev>
+      jumps. Moving sets the scope to the delta, so pool-wide expressions and
+      :view run over what that commit changed, while resolve() still sees
+      everything; :delta lists it, :scope all goes back to the whole pool.
+      :log Specimen/s1 lists the commits that changed one resource, and
+      :trace Specimen/s1 type.coding.code how an answer changed across them.
+
+  - name: workspaces
+    title: Workspaces
+    text: |
+      A workspace keeps the recorded expressions, names and views, the
+      up-arrow history, and where the session was left: FHIR version,
+      pools, :limit and focus, all restored at the next start. The default is ~/.fhir-walk; start with
+      --workspace <name>, or :workspace <name> to switch. --fresh starts
+      empty and keeps the saved state until something changes.
+
+  - name: listings
+    title: Long listings
+    text: |
+      A listing fills the window and keeps the rest for :more, which
+      reprints it whole with no value shortened. :limit off prints
+      everything up front and lets the terminal scroll.
+
+  - name: completion
+    title: Completion
+    text: |
+      TAB completes, including after :all and :why. On an empty line it
+      lists the pool's resource types; after a '.' the elements and
+      functions available there, with the ones present in the pool first;
+      inside extension('…') the URLs observed on that element.
+      Up/Down or further TABs walk the candidates; Enter takes the one shown.

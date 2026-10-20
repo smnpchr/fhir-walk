@@ -45,6 +45,9 @@ dependencies {
     // in by hapi-fhir-base; declared because we now use it directly. No version: the
     // one HAPI's constraints resolve to.
     implementation("com.fasterxml.jackson.core:jackson-databind")
+    // Reads help.yaml, the text of :help and :manual. A parser (it brings SnakeYAML)
+    // that talks to nothing; versioned by the same Jackson BOM as databind.
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml")
 
     // Reads a local registry's history: trees, blobs and diffs from the object
     // database. It contains transport code, but none of it runs unless called, and
