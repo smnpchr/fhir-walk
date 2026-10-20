@@ -378,10 +378,10 @@ resource, or the focused element by the steps that reached it. TAB completes the
 expression against the resource the label names.
 
 Without an expression, `:trace Specimen/30012` (or `:trace` alone, with a resource
-in focus) traces the resource itself: the commits `:log Specimen/30012` lists, each saying
-whether it added, modified or deleted the resource, and what a modification changed
-in it -- the paths of the elements, as you would type them, signed as `:delta` signs
-its rows:
+in focus) traces the resource itself: the commits `:log Specimen/30012` lists, each
+saying whether it added, modified or deleted the resource, and what a modification
+changed in it -- the paths of the elements, as you would type them, signed as
+`:delta` signs its rows:
 
 ```
 r4:in@4844b16(24)> :trace Specimen/30012
@@ -391,9 +391,13 @@ Specimen/30012 on branch/out, newest first — 3 change(s) in 3 commit(s) that t
   8b6cbb9  2026-10-01 11:00  added
 ```
 
-A reorder is told apart from a change: the same values in another order, or the same
-extensions in another order, read `~extension (order only)`. That is often the whole
-of a commit from an exporter that writes extensions in no fixed order.
+The versions are compared as trees, each repetition in its place, so a reorder is
+told apart from a change. Repetitions in another order, whole, read as a reorder of
+the element: `~type.coding (order only)`, `~name.given (order only)`. Extensions in
+another order read `~extension (order only)` -- often the whole of a commit from an
+exporter that writes them in no fixed order. Codes swapped between two codings are
+a change, `~type.coding.code`, and so is a value of another type that reads the
+same.
 With an element in focus, `:trace` alone traces the element's content, as an
 expression on the steps that reached it. As with any trace, `:more` prints every
 answer whole, a resource or element as pretty-printed JSON under its commit -- a

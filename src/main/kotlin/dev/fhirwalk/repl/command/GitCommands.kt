@@ -7,7 +7,6 @@ import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.GitSourceException
 import dev.fhirwalk.pool.ResourceDiff
 import dev.fhirwalk.pool.ResourceHistory
-import org.hl7.fhir.instance.model.api.IBaseResource
 import dev.fhirwalk.repl.GitPool
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
@@ -317,7 +316,6 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         // Oldest first, so each answer can say what it replaced.
         var before: String? = null
         var beforeExactly: String? = null
-        var beforeResource: IBaseResource? = null
         val diff = ResourceDiff(session.ctx)
         val traced = mutableListOf<Traced>()
         for (change in changes.asReversed()) {
@@ -335,15 +333,14 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
             // compared whole: its one-line form runs whitespace together, which a
             // string's value may differ by.
             if (expression != null && exactly == beforeExactly && change.kind != GitSource.Kind.ADDED) continue
-            val differences = if (expression == null && change.kind == GitSource.Kind.MODIFIED) {
-                beforeResource?.let { previous -> change.resource?.let { diff.between(previous, it) } }
+            val differences = if (expression == null) {
+                change.before?.let { previous -> change.resource?.let { diff.between(previous, it) } }
             } else {
                 null
             }
             traced += Traced(change, outcome, answer, was = before, differences = differences)
             before = answer
             beforeExactly = exactly
-            beforeResource = change.resource
         }
         traced.reverse()
         val what = expression?.let { "  $it" }.orEmpty()

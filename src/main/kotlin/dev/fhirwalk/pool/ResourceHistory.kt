@@ -28,8 +28,13 @@ class ResourceHistory(
     private val problem: (String) -> Unit = {},
 ) {
 
-    /** @param resource the resource as [commit] left it; null when [commit] deleted it. */
-    class Change(val commit: GitSource.Commit, val kind: GitSource.Kind, val resource: IBaseResource?)
+    /**
+     * @param resource the resource as [commit] left it; null when [commit] deleted it.
+     * @param before the resource as [commit] found it, when it modified it: the
+     *   version it changed, which is the one to compare with even when the resource
+     *   was in more than one file.
+     */
+    class Change(val commit: GitSource.Commit, val kind: GitSource.Kind, val resource: IBaseResource?, val before: IBaseResource? = null)
 
     private val json by lazy { ctx.newJsonParser() }
 
@@ -71,7 +76,7 @@ class ResourceHistory(
                 after.isEmpty() -> Change(commit, GitSource.Kind.DELETED, null)
                 // Another resource in the same file changed, or this one moved file.
                 same(before.first(), after.first()) -> null
-                else -> Change(commit, GitSource.Kind.MODIFIED, after.first())
+                else -> Change(commit, GitSource.Kind.MODIFIED, after.first(), before.first())
             }
         }
     }
