@@ -12,7 +12,8 @@
 # reads " #" as the start of a comment and silently drops the rest of the line.
 #
 # topics: the manual, one topic per subject, printed by :manual <name>. The text is
-#   printed as it stands here, so keep lines under about 76 characters.
+#   printed as it stands here, so keep its lines, and those of details, to 76
+#   characters (a test checks). "all" is taken: :manual all prints every topic.
 
 commands:
   - group: Pools
@@ -223,9 +224,10 @@ topics:
     text: |
       A workspace keeps the recorded expressions, names and views, the
       up-arrow history, and where the session was left: FHIR version,
-      pools, :limit and focus, all restored at the next start. The default is ~/.fhir-walk; start with
-      --workspace <name>, or :workspace <name> to switch. --fresh starts
-      empty and keeps the saved state until something changes.
+      pools, :limit and focus, all restored at the next start. The default
+      is ~/.fhir-walk; start with --workspace <name>, or :workspace <name>
+      to switch. --fresh starts empty and keeps the saved state until
+      something changes.
 
   - name: listings
     title: Long listings

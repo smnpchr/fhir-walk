@@ -33,8 +33,23 @@ internal class Manual(val groups: List<Group>, val topics: List<Topic>) {
 
     fun topic(name: String): Topic? = topics.firstOrNull { it.name.equals(name, ignoreCase = true) }
 
+    /**
+     * Fails unless the manual documents exactly the commands [defined]: a command
+     * missing here would be absent from `:help` and the TAB menu, an entry with no
+     * command would offer one that does not exist.
+     */
+    fun requireDocuments(defined: Set<String>) {
+        val documented = commands.map { it.name }.toSet()
+        check(documented == defined) {
+            "$RESOURCE and the commands disagree: undocumented ${defined - documented}, no such command ${documented - defined}"
+        }
+    }
+
     companion object {
         private const val RESOURCE = "help.yaml"
+
+        /** What `:manual` takes for every topic at once. */
+        const val ALL = "all"
 
         /** The manual shipped with the build. A broken one fails at startup, not at `:help`. */
         fun load(): Manual {
@@ -43,6 +58,9 @@ internal class Manual(val groups: List<Group>, val topics: List<Topic>) {
             return stream.use { parse(ObjectMapper(YAMLFactory()).readTree(it)) }
         }
 
+        /** A manual from [yaml] written as help.yaml is; for tests. */
+        fun parse(yaml: String): Manual = parse(ObjectMapper(YAMLFactory()).readTree(yaml))
+
         private fun parse(root: JsonNode): Manual {
             val groups = root.path("commands").map { group ->
                 Group(
@@ -50,7 +68,7 @@ internal class Manual(val groups: List<Group>, val topics: List<Topic>) {
                     group.path("commands").map { command ->
                         CommandDoc(
                             command.field("name"),
-                            command.path("args").asText(""),
+                            command.fieldOrNull("args").orEmpty(),
                             command.field("summary"),
                             command.fieldOrNull("details"),
                             command.fieldOrNull("topic"),
@@ -61,17 +79,32 @@ internal class Manual(val groups: List<Group>, val topics: List<Topic>) {
             val topics = root.path("topics").map { topic ->
                 Topic(topic.field("name"), topic.field("title"), topic.field("text").trimEnd().lines())
             }
+            val commands = groups.flatMap { it.commands }
+            duplicates(commands.map { it.name })?.let { throw IllegalArgumentException("$RESOURCE: $it documented twice") }
+            duplicates(topics.map { it.name.lowercase() })?.let { throw IllegalArgumentException("$RESOURCE: topic $it given twice") }
+            // `:manual all` prints every topic, so one called that could never be shown.
+            require(topics.none { it.name.equals(ALL, ignoreCase = true) }) { "$RESOURCE: a topic cannot be called $ALL" }
             val names = topics.map { it.name }.toSet()
-            groups.flatMap { it.commands }.forEach { doc ->
+            commands.forEach { doc ->
                 require(doc.topic == null || doc.topic in names) { "$RESOURCE: ${doc.name} refers to no topic ${doc.topic}" }
             }
             return Manual(groups, topics)
         }
 
+        private fun duplicates(names: List<String>): String? =
+            names.groupingBy { it }.eachCount().filterValues { it > 1 }.keys.firstOrNull()
+
         private fun JsonNode.field(field: String): String =
             fieldOrNull(field) ?: throw IllegalArgumentException("$RESOURCE: an entry has no $field: $this")
 
-        private fun JsonNode.fieldOrNull(field: String): String? =
-            get(field)?.takeIf { !it.isNull }?.asText()?.trimEnd()?.takeIf { it.isNotEmpty() }
+        /**
+         * Text only: an unquoted `[n]` is a YAML list and `a: b` a map, which would
+         * otherwise read as missing rather than as written wrongly.
+         */
+        private fun JsonNode.fieldOrNull(field: String): String? {
+            val value = get(field)?.takeIf { !it.isNull } ?: return null
+            require(value.isValueNode) { "$RESOURCE: $field is not text — quote it: $this" }
+            return value.asText().trimEnd().takeIf { it.isNotEmpty() }
+        }
     }
 }

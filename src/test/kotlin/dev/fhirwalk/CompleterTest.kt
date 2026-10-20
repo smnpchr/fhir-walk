@@ -479,6 +479,23 @@ class CompleterTest {
         assertTrue(completer.values(":all Patient.").contains("name"))
     }
 
+    @Test
+    fun `help completes a command in the spelling typed, and manual its topics`() {
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS },
+            topics = { listOf(FhirPathCompleter.CommandInfo("git", "", "Pools from git revisions")) },
+        )
+        fun complete(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        // JLine narrows by the word typed, so `lo` must be offered `load`, not `:load`.
+        val bare = complete(":help lo")
+        assertTrue("load" in bare.map { it.value() }, "${bare.map { it.value() }}")
+        assertTrue(":load" in bare.map { it.displ() })
+        assertTrue(":load" in complete(":help :lo").map { it.value() })
+        assertEquals(listOf("git"), complete(":manual g").map { it.value() })
+    }
+
     private companion object {
         /** Stands in for the REPL's own command list. */
         val COMMANDS = listOf(

@@ -72,15 +72,18 @@ class Repl(
 
     private val manual = Manual.load()
 
-    private val evaluate = EvaluateCommands(state)
-    private val focus = FocusCommands(state)
-    private val git = GitCommands(state, focus)
-    private val pools = PoolCommands(state, git)
-    private val workspace = WorkspaceCommands(state, pools, git, focus)
+    private val evaluateCommands = EvaluateCommands(state)
+    private val focusCommands = FocusCommands(state)
+    private val gitCommands = GitCommands(state, focusCommands)
+    private val poolCommands = PoolCommands(state, gitCommands)
+    private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 
     private val commands: List<Command> = listOf(
-        pools, git, evaluate, focus, RecordCommands(state), workspace, DisplayCommands(state),
-        HelpCommands(manual) { aliases },
+        poolCommands, gitCommands, evaluateCommands, focusCommands, RecordCommands(state), workspaceCommands,
+        DisplayCommands(state),
+        // Asked for only when :help runs; the aliases include :help's own, so they
+        // cannot be known before this list is.
+        HelpCommands(manual, RENAMED) { aliases },
     ).flatMap { it.commands } + command(":quit", ":exit", ":q", exits = true) { _, _ -> }
 
     /** Every spelling that runs a command, the aliases included, to the command. */
@@ -91,11 +94,7 @@ class Repl(
         commands.flatMap { command -> command.aliases.map { it to command.name } }.toMap()
 
     init {
-        val documented = manual.commands.map { it.name }.toSet()
-        val defined = commands.map { it.name }.toSet()
-        check(documented == defined) {
-            "help.yaml and the commands disagree: undocumented ${defined - documented}, no such command ${documented - defined}"
-        }
+        manual.requireDocuments(commands.map { it.name }.toSet())
     }
 
     /** For the TAB menu, in the order `:help` lists them. */
@@ -115,7 +114,7 @@ class Repl(
                 { session.pools.map { it.name } }, { session.current.git?.source?.refNames().orEmpty() },
                 { dir -> runCatching { GitSource.refNamesAt(Paths.get(state.expandHome(dir))) }.getOrDefault(emptyList()) },
                 state::gitSpecOf,
-                git::commitChoices,
+                gitCommands::commitChoices,
                 { manual.topics.map { FhirPathCompleter.CommandInfo(it.name, "", it.title) } },
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
@@ -131,7 +130,7 @@ class Repl(
             option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
         }
         state.reader = reader
-        show(out) { workspace.useLineHistory(reader, it) }
+        show(out) { workspaceCommands.useLineHistory(reader, it) }
         bindArrowKeys(reader)
         state.style = Style.detect(terminal)
 
@@ -160,7 +159,7 @@ class Repl(
             } catch (e: Exception) {
                 out.println(state.style.error("! ${e.message ?: e.javaClass.simpleName}"))
             }
-            show(out) { workspace.attachPendingHistory(reader, it) }
+            show(out) { workspaceCommands.attachPendingHistory(reader, it) }
             out.flush()
         }
         out.println("bye")
@@ -181,9 +180,9 @@ class Repl(
         val where = if (state.workspace.name == Workspaces.DEFAULT) "" else "workspace ${state.workspace.name}, "
         out.text("${where}FHIR ${session.version.id.uppercase()}")
         state.reportStorageProblems(out)
-        workspace.restore(restoring, out)
-        initialPaths.forEach { pools.load(it, out) }
-        workspace.saveState(out)
+        workspaceCommands.restore(restoring, out)
+        initialPaths.forEach { poolCommands.load(it, out) }
+        workspaceCommands.saveState(out)
     }
 
     /**
@@ -232,7 +231,7 @@ class Repl(
      * The current git pool's line, for TAB after `:at`; see [GitCommands.commitChoices].
      * Internal so tests can check what the menu would offer.
      */
-    internal fun commitChoices(): List<FhirPathCompleter.CommitChoice> = git.commitChoices()
+    internal fun commitChoices(): List<FhirPathCompleter.CommitChoice> = gitCommands.commitChoices()
 
     /** Prints what [say] says, as everything is printed: fitted, coloured, and kept for `:more`. */
     private fun show(out: PrintWriter, say: (Output) -> Unit) = show(Output().also(say), out)
@@ -258,7 +257,7 @@ class Repl(
                 out.error("not a FHIRPath expression — did you mean  $command${input.drop(firstWord.length)}")
                 return true
             }
-            evaluate.evaluate(input, out)
+            evaluateCommands.evaluate(input, out)
             return true
         }
         val name = input.substringBefore(' ')
@@ -280,7 +279,7 @@ class Repl(
             }
             return true
         } finally {
-            workspace.saveState(out)
+            workspaceCommands.saveState(out)
         }
     }
 
@@ -324,9 +323,9 @@ class Repl(
         }
     }
 
-    private companion object {
-        const val MIN_VALUE_WIDTH = Printer.MIN_VALUE_WIDTH
-        const val MIN_ROW_LIMIT = 8
+    internal companion object {
+        private const val MIN_VALUE_WIDTH = Printer.MIN_VALUE_WIDTH
+        private const val MIN_ROW_LIMIT = 8
 
         /** The naming commands' old spellings, before each said what it names (#29). */
         val RENAMED = mapOf(
@@ -340,7 +339,7 @@ class Repl(
          * The two encodings an arrow key arrives in, depending on whether
          * application-cursor-keys mode took effect: CSI (ESC [ A) or SS3 (ESC O A).
          */
-        const val ESC_CSI = "\u001b["
-        const val ESC_SS3 = "\u001bO"
+        private const val ESC_CSI = "\u001b["
+        private const val ESC_SS3 = "\u001bO"
     }
 }

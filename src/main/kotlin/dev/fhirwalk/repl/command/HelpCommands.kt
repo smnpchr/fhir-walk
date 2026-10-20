@@ -6,9 +6,15 @@ import dev.fhirwalk.repl.Output
  * `:help`, the commands, and `:manual`, how they fit together: kept apart so the
  * command list is not scrolled away by the prose after it. The text is [manual]'s.
  *
+ * @param renamed commands' old spellings to their new ones, so `:help name` says
+ *   what `:name` became, as typing it does.
  * @param aliases each command's other spellings, so `:help :q` finds `:quit`.
  */
-internal class HelpCommands(private val manual: Manual, private val aliases: () -> Map<String, String>) : CommandGroup {
+internal class HelpCommands(
+    private val manual: Manual,
+    private val renamed: Map<String, String>,
+    private val aliases: () -> Map<String, String>,
+) : CommandGroup {
 
     override val commands = listOf(
         command(":help", ":?") { argument, out -> if (argument.isBlank()) help(out) else helpOn(argument, out) },
@@ -27,13 +33,18 @@ internal class HelpCommands(private val manual: Manual, private val aliases: () 
         out.hint(":help <command> for more on one, :manual for how they fit together")
     }
 
-    /** `:help focus`, `:help :focus`, `:help :q`: one command, and where the manual explains it. */
+    /**
+     * `:help focus`, `:help :focus`, `:help :q`: one command, and where the manual
+     * explains it. In any case, as `:manual` and TAB take it.
+     */
     private fun helpOn(argument: String, out: Output) {
-        val typed = if (argument.startsWith(":")) argument else ":$argument"
-        val command = manual.command(aliases()[typed] ?: typed) ?: run {
+        val typed = (if (argument.startsWith(":")) argument else ":$argument").lowercase()
+        val now = renamed[typed]
+        val command = manual.command(now ?: aliases()[typed] ?: typed) ?: run {
             out.text("no command $typed — :help lists them")
             return
         }
+        now?.let { out.text("$typed is now $it") }
         out.line { usage(command, 0) }
         out.text("  ${command.summary}")
         command.details?.let { details ->
@@ -51,11 +62,11 @@ internal class HelpCommands(private val manual: Manual, private val aliases: () 
         val width = manual.topics.maxOf { it.name.length } + 2
         manual.topics.forEach { topic -> out.line { +"  "; label(topic.name.padEnd(width)); +topic.title } }
         out.text("")
-        out.hint(":manual <topic> prints one, :manual all the lot")
+        out.hint(":manual <topic> prints one, :manual ${Manual.ALL} the lot")
     }
 
     private fun topic(argument: String, out: Output) {
-        val shown = if (argument.equals("all", ignoreCase = true)) {
+        val shown = if (argument.equals(Manual.ALL, ignoreCase = true)) {
             manual.topics
         } else {
             listOf(

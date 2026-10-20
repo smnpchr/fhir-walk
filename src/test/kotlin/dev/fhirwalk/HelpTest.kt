@@ -3,8 +3,10 @@ package dev.fhirwalk
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Workspaces
+import dev.fhirwalk.repl.command.Manual
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -42,7 +44,55 @@ class HelpTest {
         assertContains(lines(":help nope"), "no command :nope")
         // Unquoted, the " #n" in it would start a YAML comment and cut it short.
         assertContains(lines(":help name-expr"), "or #n, for :view; alone, list")
+        // In any case, as :manual and TAB take it.
+        assertEquals(lines(":help load"), lines(":help LOAD"))
     }
+
+    @Test
+    fun `help on an old spelling says what it became`() {
+        val help = lines(":help name")
+        assertContains(help, ":name is now :name-expr")
+        assertContains(help, ":name-expr [name [#n]]")
+    }
+
+    @Test
+    fun `the shipped manual keeps its lines to the width it asks for`() {
+        val manual = Manual.load()
+        val long = manual.topics.flatMap { it.text } +
+            manual.commands.flatMap { it.details?.lines().orEmpty().map { line -> "  $line" } }
+        assertEquals(emptyList(), long.filter { it.length > 76 })
+    }
+
+    @Test
+    fun `a manual that does not match the commands fails, saying which`() {
+        val manual = Manual.parse(manual(":load", ":pool"))
+        manual.requireDocuments(setOf(":load", ":pool"))
+        val failure = assertFailsWith<IllegalStateException> { manual.requireDocuments(setOf(":load", ":quit")) }
+        assertContains(listOf(failure.message.orEmpty()), "undocumented [:quit], no such command [:pool]")
+    }
+
+    @Test
+    fun `a manual written wrongly fails when read`() {
+        fun fails(yaml: String, expected: String) {
+            val failure = assertFailsWith<IllegalArgumentException> { Manual.parse(yaml) }
+            assertContains(listOf(failure.message.orEmpty()), expected)
+        }
+        fails(manual(":load", ":load"), ":load documented twice")
+        fails(manual(":load") + topic("git") + topic("Git"), "topic git given twice")
+        fails(manual(":load") + topic("all"), "cannot be called all")
+        fails(manual(":load", topic = "nope"), ":load refers to no topic nope")
+        // Unquoted, YAML reads [n] as a list: say so rather than that it is missing.
+        fails(manual(":load").replace("args: \"\"", "args: [n]"), "args is not text")
+    }
+
+    private fun manual(vararg names: String, topic: String? = null): String =
+        "commands:\n  - group: Pools\n    commands:\n" + names.joinToString("") { name ->
+            "      - name: \"$name\"\n        args: \"\"\n        summary: does $name\n" +
+                (topic?.let { "        topic: $it\n" } ?: "")
+        } + "topics:\n"
+
+    private fun topic(name: String): String =
+        "  - name: $name\n    title: About $name\n    text: |\n      Some text.\n"
 
     @Test
     fun `the manual lists its topics and prints one, or all`() {

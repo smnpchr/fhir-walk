@@ -21,7 +21,7 @@ import org.jline.reader.LineReader
 /**
  * What the commands share: the session and workspace they act on, what the last
  * commands left behind for the next one, and the helpers more than one group uses.
- * Each [CommandGroup] holds the one [Repl] made.
+ * Each [CommandGroup] holds the one [dev.fhirwalk.repl.Repl] made.
  */
 internal class ReplState(
     val workspaces: Workspaces,
@@ -44,7 +44,7 @@ internal class ReplState(
     /** The columns of the last `:view`, for `:name-view`. */
     var lastView: List<ViewBuilder.Column>? = null
 
-    /** Null until [Repl.run] has built it; the tests drive the commands without one. */
+    /** Null until [dev.fhirwalk.repl.Repl.run] has built it; the tests drive the commands without one. */
     var reader: LineReader? = null
 
     /**
@@ -93,12 +93,12 @@ internal class ReplState(
     /** Rows printed per listing before the rest is held for `:more`; 0 = unlimited. */
     var rowLimit = DEFAULT_ROW_LIMIT
 
-    /** What [rowLimit] is without a `:limit`: the window's height, once [Repl.run] knows it. */
+    /** What [rowLimit] is without a `:limit`: the window's height, once [dev.fhirwalk.repl.Repl.run] knows it. */
     var windowRowLimit = DEFAULT_ROW_LIMIT
 
     var columns = DEFAULT_COLUMNS
 
-    /** Plain until [Repl.run] has a terminal to ask; see [Style.detect]. */
+    /** Plain until [dev.fhirwalk.repl.Repl.run] has a terminal to ask; see [Style.detect]. */
     var style = Style.PLAIN
 
     // ------------------------------------------------------------------- storage
