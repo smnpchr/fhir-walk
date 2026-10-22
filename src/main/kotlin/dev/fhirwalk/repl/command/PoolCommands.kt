@@ -185,35 +185,43 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
         val files = Files.walk(root).use { stream ->
             stream.asSequence().filter { it.isRegularFile() && session.importer.reads(it.name) }.sortedBy { it.toString() }.toList()
         }
+        // Already open by path, not by name: a name depends on the other files there,
+        // so one that arrives can rename all of them.
+        val open = session.pools.flatMapTo(HashSet()) { it.loadedPaths }
+        val (known, arrived) = files.partition { it.toString() in open }
         // Parsed before anything is named, so a stray file that is no Bundle does not
         // keep the names from dropping what every bundle's path ends in.
         val problems = mutableListOf<String>()
-        val bundles = files.mapNotNull { file ->
+        var notBundles = 0
+        // `bundle.json: …` says nothing where every bundle is called that.
+        fun where(file: Path) = root.relativize(file).parent?.let { "$it/" }.orEmpty()
+        val bundles = arrived.mapNotNull { file ->
             val report = Importer.Report()
             val parsed = runCatching { session.importer.parse(file.name, file.readText(), report) }.getOrElse {
-                problems += "${file.name}: unreadable (${it.message})"
+                problems += "${where(file)}${file.name}: unreadable (${it.message})"
                 return@mapNotNull null
             }
-            Triple(file, parsed, report).takeIf { report.bundles > 0 }
-        }
-        val notBundles = files.size - bundles.size - problems.size
-        val opened = mutableListOf<String>()
-        var already = 0
-        for ((bundle, name) in bundles.zip(poolNames(root, bundles.map { it.first }))) {
-            val (file, parsed, report) = bundle
-            val path = file.toString()
-            val existing = session.pool(name)
-            if (existing != null) {
-                if (existing.loadedPaths == listOf(path)) already++ else problems += "$name: a pool of that name is already open, holding something else"
-                continue
+            when {
+                report.bundles > 0 -> Triple(file, parsed, report)
+                // A Bundle that would not parse, or parses only in another version.
+                report.problems.isNotEmpty() -> null.also { problems += report.problems.map { "${where(file)}$it" } }
+                else -> null.also { notBundles++ }
             }
+        }
+        // The open ones are named along, so the new names drop what they all share.
+        val named = (known + bundles.map { it.first }).sortedBy { it.toString() }
+        val names = named.zip(poolNames(root, named, session.pools.map { it.name }.toSet())).toMap()
+        val opened = mutableListOf<String>()
+        for ((file, parsed, report) in bundles) {
+            val name = names.getValue(file)
             val pool = session.open(name)!!
             parsed.forEach { pool.pool.add(it.resource, it.fullUrl, it.origin) }
             pool.pool.settleReferences()
-            pool.loadedPaths += path
+            pool.loadedPaths += file.toString()
             opened += name
             problems += report.problems.map { "$name: $it" }
         }
+        val already = known.size
         val header = buildList {
             add(
                 when (opened.size) {
@@ -254,7 +262,7 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
         val (closed, kept) = reasons.partition { (pool, _) -> session.close(pool.name) }
         if (session.current.name != before) state.lastPicks = null
         val header = buildList {
-            add("pruned ${closed.size} pool(s)")
+            if (closed.isNotEmpty()) add("pruned ${closed.size} pool(s)")
             if (kept.isNotEmpty()) add("kept ${kept.single().first.name}, the only pool left")
             if (session.current.name != before) add("now in pool ${session.current.name}")
         }.joinToString("; ")
@@ -273,13 +281,15 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
 
     /** `30d` or `12h` back from now, or the start of a date: `2026-10`, `2026-10-01`. */
     private fun cutOff(text: String, out: Output): Instant? {
-        AGE.matchEntire(text)?.let { match ->
-            val (n, unit) = match.destructured
-            return Instant.now().minus(if (unit == "d") Duration.ofDays(n.toLong()) else Duration.ofHours(n.toLong()))
-        }
         val start = try {
-            state.commitTimes.start(text)
+            AGE.matchEntire(text)?.let { match ->
+                val (n, unit) = match.destructured
+                val count = n.toLongOrNull() ?: throw ArithmeticException()
+                Instant.now().minus(if (unit == "d") Duration.ofDays(count) else Duration.ofHours(count))
+            } ?: state.commitTimes.start(text)
         } catch (e: DateTimeException) {
+            null
+        } catch (e: ArithmeticException) {
             null
         }
         if (start == null) out.text("not a cut-off: $text — an age (30d, 12h) or a date (2026-10-01)")
@@ -355,20 +365,20 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
          * joined by `-`, less the extension and any trailing segment every path ends
          * in, such as the `bundle.json` of each `<pipe>/<run>/bundle.json`. What a
          * name cannot hold becomes `-`; one that would start other than with a letter
-         * gets a `b`, and a name that comes twice a number.
+         * gets a `b`, and a name that comes twice, or is in [taken], a number.
          */
-        fun poolNames(root: Path, files: List<Path>): List<String> {
+        fun poolNames(root: Path, files: List<Path>, taken: Set<String> = emptySet()): List<String> {
             val parts = files.map { file ->
                 val segments = root.relativize(file).map { it.toString() }
                 segments.dropLast(1) + segments.last().substringBeforeLast('.')
             }
             var common = 0
             while (parts.size > 1 && parts.all { it.size > common + 1 } && parts.map { it[it.size - 1 - common] }.distinct().size == 1) common++
-            val taken = mutableSetOf<String>()
+            val used = taken.toMutableSet()
             return parts.map { segments ->
                 val base = segments.dropLast(common).joinToString("-").replace(UNNAMEABLE, "-").ifEmpty { "bundle" }
                     .let { if (it.first() in 'a'..'z' || it.first() in 'A'..'Z') it else "b$it" }
-                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base-$it" }.first { taken.add(it) }
+                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base-$it" }.first { used.add(it) }
             }
         }
 

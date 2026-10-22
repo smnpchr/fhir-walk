@@ -13,6 +13,8 @@ import java.nio.file.attribute.FileTime
 import java.time.Instant
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteRecursively
+import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -116,13 +118,19 @@ class PoolsTest {
     }
 
     /** `publish/archive/<pipe>/<date>-<publishId>/bundle.json`, as a pipe archives what it sent, and a stray resource. */
+    @TempDir
+    lateinit var root: Path
+
     private fun archive(): Path {
-        val root = Files.createTempDirectory("archive")
         for (run in listOf("specimen/2026-10-20T12:00:00Z-p1", "specimen/2026-10-21T12:00:00Z-p2", "rate/2026-10-21T13:00:00Z-p3")) {
             Files.copy(Paths.get("samples/basic/bundle.json"), root.resolve(run).createDirectories().resolve("bundle.json"))
         }
         Files.copy(Paths.get("samples/basic/tree/encounter.json"), root.resolve("rate/encounter.json"))
         return root
+    }
+
+    private fun bundle(run: String) {
+        Files.copy(Paths.get("samples/basic/bundle.json"), root.resolve(run).createDirectories().resolve("bundle.json"))
     }
 
     @Test
@@ -148,6 +156,7 @@ class PoolsTest {
         assertEquals(listOf("bundle"), names("bundle.json"))
         assertEquals(listOf("b2026-10-20", "b2026-10-21"), names("2026-10-20/bundle.json", "2026-10-21/bundle.json"))
         assertEquals(listOf("a-b", "a-b-2"), names("a.b.json", "a b.json"))
+        assertEquals(listOf("pool-2"), PoolCommands.poolNames(root, listOf(root.resolve("pool.json")), setOf("pool")))
     }
 
     @OptIn(kotlin.io.path.ExperimentalPathApi::class)
@@ -168,5 +177,47 @@ class PoolsTest {
         assertContains(pruned, "specimen-2026-10-20T12-00-00Z-p1")
         assertContains(run(":pools"), "specimen-2026-10-21T12-00-00Z-p2")
         assertContains(run(":prune soon"), "not a cut-off: soon")
+    }
+
+    @Test
+    fun `a bundle that arrives later is opened alone, though it changes what the names share`() {
+        bundle("specimen/r1")
+        assertContains(run(":open-bundles $root"), "opened pool specimen-r1-bundle")
+        bundle("specimen/r2")
+        assertContains(run(":open-bundles $root"), "opened pool specimen-r2; 1 already open")
+        root.resolve("specimen/r3").createDirectories().resolve("bundle-v2.json")
+            .writeText(Files.readString(Paths.get("samples/basic/bundle.json")))
+        assertContains(run(":open-bundles $root"), "opened pool specimen-r3-bundle-v2; 2 already open")
+    }
+
+    @Test
+    fun `a bundle that will not parse is a problem, not a file skipped`() {
+        bundle("specimen/r1")
+        root.resolve("specimen/r2").createDirectories().resolve("bundle.json").writeText("""{"resourceType":"Bundle","entry":[""")
+        val opened = run(":open-bundles $root")
+        assertContains(opened, "opened pool specimen-r1")
+        assertFalse(opened.contains("not a Bundle"), opened)
+        assertContains(opened, "! specimen/r2/bundle.json: ")
+    }
+
+    @Test
+    fun `an ndjson file holding a Bundle is not one`() {
+        val line = Files.readString(Paths.get("samples/basic/bundle.json")).replace(Regex("\\s*\n\\s*"), "")
+        root.resolve("export.ndjson").writeText(line + "\n")
+        assertContains(run(":open-bundles $root"), "no new pools; 1 file(s) skipped, not a Bundle")
+    }
+
+    @OptIn(kotlin.io.path.ExperimentalPathApi::class)
+    @Test
+    fun `prune keeps the only pool left`() {
+        val alone = Repl(FhirVersion.R4, emptyList(), Workspaces(null))
+        fun run(line: String) = StringWriter().also { text -> PrintWriter(text).use { alone.dispatch(line, it) } }.toString()
+        bundle("specimen/r1")
+        run(":open-bundles $root")
+        run(":close pool")
+        root.resolve("specimen").deleteRecursively()
+        assertContains(run(":prune"), "kept specimen-r1-bundle, the only pool left")
+        assertContains(run(":prune 99999999999999999999d"), "not a cut-off")
+        assertContains(run(":prune 9999999999999999d"), "not a cut-off")
     }
 }

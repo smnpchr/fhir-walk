@@ -111,7 +111,7 @@ Type a FHIRPath expression, or:
 | `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
 | `:close <name>` | drop a pool |
 | `:open-bundles <dir>` | a pool for each Bundle under a directory, named by its path |
-| `:prune [30d\|date]` | close loaded pools whose files are gone, or older than a cut-off |
+| `:prune [30d\|12h\|date]` | close loaded pools whose files are gone, or older than a cut-off |
 | `:log [label] [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back; with a label, only the commits that changed that resource |
 | `:trace [label] [expr]` | how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
