@@ -42,6 +42,24 @@ commands:
         args: "<name>"
         summary: drop a pool
         topic: pools
+      - name: ":open-bundles"
+        args: "<dir>"
+        summary: a pool for each Bundle under a directory, named by its path
+        details: |
+          archive/specimen/2026-10-20T12:00Z-p1/bundle.json opens as pool
+          specimen-2026-10-20T12-00Z-p1: the path less the extension, and less
+          what every path ends in. Files that are not a Bundle are skipped. Run
+          it again to open the bundles that have arrived since.
+        topic: pools
+      - name: ":prune"
+        args: "[30d|12h|date]"
+        summary: close loaded pools whose files are gone, or older than a cut-off
+        details: |
+          Alone, it closes the pools none of whose paths exist any more. With an
+          age or a date it also closes those not modified since: :prune 30d,
+          :prune 2026-10-01. Git pools are left alone; they reopen when their
+          repository comes back.
+        topic: pools
       - name: ":fhir"
         args: "[version]"
         summary: switch FHIR version (resets the pool)
@@ -211,6 +229,11 @@ topics:
       resolve() stays inside the pool. :open specimen <path> adds one and
       switches to it, :pool <name> switches, :pools lists them. Recorded
       expressions, names and views are shared, so :view @people runs in any.
+
+      :open-bundles archive opens one pool per Bundle in a tree of exports,
+      each named by its path, and keeps the bundle's entry order: #0 is its
+      first entry. :prune closes those whose files have gone, and with
+      :prune 30d those older than that too.
 
   - name: git
     title: Pools from git revisions

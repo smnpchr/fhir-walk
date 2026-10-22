@@ -32,21 +32,30 @@ class CommitTimes(private val zone: ZoneId = ZoneId.systemDefault()) {
      * its year, which no commit id has. Throws [java.time.DateTimeException] for one
      * shaped like a date that is none, such as `2026-13`.
      */
-    fun end(text: String): Instant? {
+    fun end(text: String): Instant? = period(text)?.second?.let(::instant)
+
+    /**
+     * When the period [text] names begins, as [end] reads it: what `:prune` keeps
+     * from. Null when it is not shaped like a date.
+     */
+    fun start(text: String): Instant? = period(text)?.first?.let(::instant)
+
+    private fun period(text: String): Pair<LocalDateTime, LocalDateTime>? {
         val match = DATE.matchEntire(text) ?: return null
         val (year, month, day, hour, min, sec) = match.destructured
-        val end = when {
-            day.isEmpty() -> YearMonth.of(year.toInt(), month.toInt()).plusMonths(1).atDay(1).atStartOfDay()
-            hour.isEmpty() -> LocalDate.of(year.toInt(), month.toInt(), day.toInt()).plusDays(1).atStartOfDay()
+        return when {
+            day.isEmpty() -> YearMonth.of(year.toInt(), month.toInt()).atDay(1).atStartOfDay().let { it to it.plusMonths(1) }
+            hour.isEmpty() -> LocalDate.of(year.toInt(), month.toInt(), day.toInt()).atStartOfDay().let { it to it.plusDays(1) }
             else -> {
                 val start = LocalDateTime.of(year.toInt(), month.toInt(), day.toInt(), hour.toInt(), min.ifEmpty { "0" }.toInt(), sec.ifEmpty { "0" }.toInt())
-                start.plus(1, if (sec.isNotEmpty()) ChronoUnit.SECONDS else if (min.isNotEmpty()) ChronoUnit.MINUTES else ChronoUnit.HOURS)
+                start to start.plus(1, if (sec.isNotEmpty()) ChronoUnit.SECONDS else if (min.isNotEmpty()) ChronoUnit.MINUTES else ChronoUnit.HOURS)
             }
         }
-        // Where a local time comes twice, as when clocks go back, the end is the later
-        // of the two: the period has not ended until both have passed.
-        return end.atZone(zone).withLaterOffsetAtOverlap().toInstant()
     }
+
+    // Where a local time comes twice, as when clocks go back, it is the later of the
+    // two: a period has not ended until both have passed.
+    private fun instant(time: LocalDateTime): Instant = time.atZone(zone).withLaterOffsetAtOverlap().toInstant()
 
     /** The commit of [history] (newest first) that the line stood at when [end] came. */
     fun asOf(history: List<GitSource.Commit>, end: Instant): GitSource.Commit? = history.firstOrNull { it.time < end }
@@ -70,7 +79,9 @@ class CommitTimes(private val zone: ZoneId = ZoneId.systemDefault()) {
     }
 
     /** As `:log` shows a commit's time; [end] reads it back, space and all. */
-    fun shown(commit: GitSource.Commit): String = display.format(commit.time)
+    fun shown(commit: GitSource.Commit): String = shown(commit.time)
+
+    fun shown(time: Instant): String = display.format(time)
 
     private companion object {
         val DATE = Regex("""(\d{4})-(\d{2})(?:-(\d{2})(?:[T ](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?)?""")

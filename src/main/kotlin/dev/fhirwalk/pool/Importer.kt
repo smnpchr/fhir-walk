@@ -29,6 +29,8 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     data class Report(
         var files: Int = 0,
         var resources: Int = 0,
+        /** Files that were a Bundle, as against a single resource or NDJSON. */
+        var bundles: Int = 0,
         val problems: MutableList<String> = mutableListOf(),
     ) {
         fun summary(): String = buildString {
@@ -149,6 +151,7 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         depth: Int = 0,
     ) {
         if (resource is org.hl7.fhir.instance.model.api.IBaseBundle && depth < MAX_BUNDLE_DEPTH) {
+            if (depth == 0) report.bundles++
             val entries = runCatching { BundleUtil.toListOfEntries(ctx, resource) }.getOrElse {
                 report.problems += "$origin: unreadable bundle (${it.message?.take(80)})"
                 return

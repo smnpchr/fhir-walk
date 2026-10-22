@@ -2,13 +2,24 @@ package dev.fhirwalk.repl.command
 
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
+import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.repl.KeyedStore
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Pool
 import dev.fhirwalk.repl.SavedPool
 import dev.fhirwalk.repl.Session
 import dev.fhirwalk.repl.abbreviate
+import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
+import java.time.DateTimeException
+import java.time.Duration
+import java.time.Instant
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.streams.asSequence
 
 /** Loading into pools, opening and switching them, and the FHIR version they are all read in. */
 internal class PoolCommands(private val state: ReplState, private val git: GitCommands) : CommandGroup {
@@ -21,6 +32,8 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
         command(":pools") { _, out -> listPools(out) },
         command(":open", run = ::openPool),
         command(":close", run = ::closePool),
+        command(":open-bundles", run = ::openBundles),
+        command(":prune", run = ::prune),
         command(":fhir", run = ::switchVersion),
     )
 
@@ -154,6 +167,134 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
         }
     }
 
+    /**
+     * A pool for each Bundle under a directory, named by its path, so a tree of
+     * exports can be compared one bundle at a time; resolve() stays inside each.
+     * Run again, it opens only what has arrived since.
+     */
+    private fun openBundles(argument: String, out: Output) {
+        if (argument.isBlank()) {
+            out.text("usage: :open-bundles <dir>")
+            return
+        }
+        val root = Paths.get(state.expandHome(argument.trim())).toAbsolutePath().normalize()
+        if (!root.isDirectory()) {
+            out.text("not a directory: ${argument.trim()}")
+            return
+        }
+        val files = Files.walk(root).use { stream ->
+            stream.asSequence().filter { it.isRegularFile() && session.importer.reads(it.name) }.sortedBy { it.toString() }.toList()
+        }
+        // Parsed before anything is named, so a stray file that is no Bundle does not
+        // keep the names from dropping what every bundle's path ends in.
+        val problems = mutableListOf<String>()
+        val bundles = files.mapNotNull { file ->
+            val report = Importer.Report()
+            val parsed = runCatching { session.importer.parse(file.name, file.readText(), report) }.getOrElse {
+                problems += "${file.name}: unreadable (${it.message})"
+                return@mapNotNull null
+            }
+            Triple(file, parsed, report).takeIf { report.bundles > 0 }
+        }
+        val notBundles = files.size - bundles.size - problems.size
+        val opened = mutableListOf<String>()
+        var already = 0
+        for ((bundle, name) in bundles.zip(poolNames(root, bundles.map { it.first }))) {
+            val (file, parsed, report) = bundle
+            val path = file.toString()
+            val existing = session.pool(name)
+            if (existing != null) {
+                if (existing.loadedPaths == listOf(path)) already++ else problems += "$name: a pool of that name is already open, holding something else"
+                continue
+            }
+            val pool = session.open(name)!!
+            parsed.forEach { pool.pool.add(it.resource, it.fullUrl, it.origin) }
+            pool.pool.settleReferences()
+            pool.loadedPaths += path
+            opened += name
+            problems += report.problems.map { "$name: $it" }
+        }
+        val header = buildList {
+            add(
+                when (opened.size) {
+                    0 -> "no new pools"
+                    1 -> "opened pool ${opened.single()}"
+                    else -> "opened ${opened.size} pools, ${opened.first()} … ${opened.last()}"
+                },
+            )
+            if (already > 0) add("$already already open")
+            if (notBundles > 0) add("$notBundles file(s) skipped, not a Bundle")
+        }.joinToString("; ")
+        val hint = if (opened.isNotEmpty()) " — :pools lists them, :pool <name> switches" else ""
+        state.withProblems(out, header + hint, problems)
+    }
+
+    /**
+     * Closes the loaded pools whose paths have all gone, and with a cut-off those not
+     * modified since. Git pools are left alone: they are watched, and reopen when
+     * their repository comes back.
+     */
+    private fun prune(argument: String, out: Output) {
+        val cutOff = if (argument.isBlank()) null else cutOff(argument.trim(), out) ?: return
+        val loaded = session.pools.filter { it.git == null && it.unavailable == null && it.loadedPaths.isNotEmpty() }
+        val reasons = loaded.mapNotNull { pool ->
+            val present = pool.loadedPaths.map { Paths.get(it) }.filter { Files.exists(it) }
+            when {
+                present.isEmpty() -> pool to "gone"
+                cutOff == null -> null
+                else -> present.maxOf(::modified).takeIf { it < cutOff }?.let { pool to "modified ${state.commitTimes.shown(it)}" }
+            }
+        }
+        if (reasons.isEmpty()) {
+            val newer = cutOff?.let { " and modified since ${argument.trim()}" }.orEmpty()
+            out.text("nothing to prune — ${loaded.size} loaded pool(s), all present$newer")
+            return
+        }
+        val before = session.current.name
+        val (closed, kept) = reasons.partition { (pool, _) -> session.close(pool.name) }
+        if (session.current.name != before) state.lastPicks = null
+        val header = buildList {
+            add("pruned ${closed.size} pool(s)")
+            if (kept.isNotEmpty()) add("kept ${kept.single().first.name}, the only pool left")
+            if (session.current.name != before) add("now in pool ${session.current.name}")
+        }.joinToString("; ")
+        out.listing(
+            listOf(Output.text(header)),
+            closed.map { (pool, reason) ->
+                Output.line {
+                    +"  "
+                    label(pool.name)
+                    +"  "
+                    hint(reason)
+                }
+            },
+        )
+    }
+
+    /** `30d` or `12h` back from now, or the start of a date: `2026-10`, `2026-10-01`. */
+    private fun cutOff(text: String, out: Output): Instant? {
+        AGE.matchEntire(text)?.let { match ->
+            val (n, unit) = match.destructured
+            return Instant.now().minus(if (unit == "d") Duration.ofDays(n.toLong()) else Duration.ofHours(n.toLong()))
+        }
+        val start = try {
+            state.commitTimes.start(text)
+        } catch (e: DateTimeException) {
+            null
+        }
+        if (start == null) out.text("not a cut-off: $text — an age (30d, 12h) or a date (2026-10-01)")
+        return start
+    }
+
+    /** A file's modification time; a directory's is that of the newest file in it that would load. */
+    private fun modified(path: Path): Instant {
+        if (!path.isDirectory()) return Files.getLastModifiedTime(path).toInstant()
+        return Files.walk(path).use { stream ->
+            stream.asSequence().filter { it.isRegularFile() && session.importer.reads(it.name) }
+                .maxOfOrNull { Files.getLastModifiedTime(it).toInstant() }
+        } ?: Files.getLastModifiedTime(path).toInstant()
+    }
+
     private fun sourceOf(pool: Pool): String {
         pool.git?.let { return "${it.source.path}@${it.lineLabel} at ${it.commit.short}" }
         pool.unavailable?.let { return "unavailable: ${it.source}" }
@@ -204,5 +345,33 @@ internal class PoolCommands(private val state: ReplState, private val git: GitCo
         } catch (e: FhirVersionUnavailable) {
             out.error("${e.message}")
         }
+    }
+
+    internal companion object {
+        private val AGE = Regex("""(\d+)([dh])""")
+
+        /**
+         * A pool name for each of [files] under [root], from its path: the segments
+         * joined by `-`, less the extension and any trailing segment every path ends
+         * in, such as the `bundle.json` of each `<pipe>/<run>/bundle.json`. What a
+         * name cannot hold becomes `-`; one that would start other than with a letter
+         * gets a `b`, and a name that comes twice a number.
+         */
+        fun poolNames(root: Path, files: List<Path>): List<String> {
+            val parts = files.map { file ->
+                val segments = root.relativize(file).map { it.toString() }
+                segments.dropLast(1) + segments.last().substringBeforeLast('.')
+            }
+            var common = 0
+            while (parts.size > 1 && parts.all { it.size > common + 1 } && parts.map { it[it.size - 1 - common] }.distinct().size == 1) common++
+            val taken = mutableSetOf<String>()
+            return parts.map { segments ->
+                val base = segments.dropLast(common).joinToString("-").replace(UNNAMEABLE, "-").ifEmpty { "bundle" }
+                    .let { if (it.first() in 'a'..'z' || it.first() in 'A'..'Z') it else "b$it" }
+                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base-$it" }.first { taken.add(it) }
+            }
+        }
+
+        private val UNNAMEABLE = Regex("[^A-Za-z0-9_-]")
     }
 }
