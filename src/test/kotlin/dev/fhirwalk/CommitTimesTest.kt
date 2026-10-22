@@ -31,6 +31,14 @@ class CommitTimesTest {
     }
 
     @Test
+    fun `a date names the start of its period too, for a cut-off`() {
+        assertEquals(Instant.parse("2026-03-01T00:00:00Z"), times.start("2026-03"))
+        assertEquals(Instant.parse("2026-03-11T00:00:00Z"), times.start("2026-03-11"))
+        assertEquals(Instant.parse("2026-03-11T11:00:00Z"), times.start("2026-03-11T11:00"))
+        assertNull(times.start("30d"))
+    }
+
+    @Test
     fun `what has no dash after a year is not a date, so it can be a revision`() {
         assertNull(times.end("2026"), "could be an id prefix")
         assertNull(times.end("3f2a1c0"))

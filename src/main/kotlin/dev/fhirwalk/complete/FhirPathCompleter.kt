@@ -108,7 +108,7 @@ class FhirPathCompleter(
             ":fhir" -> FhirVersion.entries.forEach {
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
-            ":load" -> completePath(lastToken, candidates)
+            ":load", ":open-bundles" -> completePath(lastToken, candidates)
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
