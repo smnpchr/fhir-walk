@@ -47,6 +47,10 @@ class FhirPathCompleter(
     private val commits: () -> List<CommitChoice> = { emptyList() },
     /** The manual's topics for `:manual`, each with its title as [CommandInfo.doc]. */
     private val topics: () -> List<CommandInfo> = { emptyList() },
+    /** The meta pools defined, for `:meta` and `:unmeta`. */
+    private val metas: () -> List<String> = { emptyList() },
+    /** The current meta pool's bundles, for `:scope`; empty in any other pool. */
+    private val members: () -> List<String> = { emptyList() },
 ) : Completer {
 
     data class CommandInfo(val name: String, val args: String, val doc: String)
@@ -108,7 +112,23 @@ class FhirPathCompleter(
             ":fhir" -> FhirVersion.entries.forEach {
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
-            ":load", ":open-bundles" -> completePath(lastToken, candidates)
+            ":load" -> completePath(lastToken, candidates)
+            ":meta" -> when (arguments.size) {
+                1 -> metas().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it, it, "meta pools", null)
+                }
+                2 -> completePath(lastToken, candidates)
+                3 -> cutOffs(candidates)
+            }
+            ":unmeta" -> if (arguments.size == 1) {
+                metas().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    candidates += commandCand(it, it, "meta pools", null)
+                }
+            }
+            ":cutoff" -> if (arguments.size == 1) {
+                cutOffs(candidates)
+                candidates += commandCand("none", "none", "cut-off", "every bundle")
+            }
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
@@ -143,6 +163,12 @@ class FhirPathCompleter(
                 pools().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "pools", null)
                 }
+                // One not read yet is offered too: :pool says how to read it.
+                if (command == ":pool") {
+                    (metas() - pools().toSet()).filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                        candidates += commandCand(it, it, "meta pools", "not read — :meta $it")
+                    }
+                }
             }
             // The commits are what you step to, newest first; the branches and tags
             // follow, a few, to switch the line.
@@ -171,7 +197,14 @@ class FhirPathCompleter(
                 refs.forEach { candidates += commandCand(it, it, MenuGroups.BRANCHES, null) }
             }
             ":scope" -> if (arguments.size == 1) {
-                candidates += commandCand("delta", "delta", "scope", "what this revision changed")
+                val bundles = members()
+                if (bundles.isEmpty()) {
+                    candidates += commandCand("delta", "delta", "scope", "what this revision changed")
+                } else {
+                    bundles.filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                        candidates += commandCand(it, it, "bundles", null)
+                    }
+                }
                 candidates += commandCand("all", "all", "scope", "the whole pool")
             }
             // The name is new, so there is nothing to offer for it; then a path, or past
@@ -585,6 +618,11 @@ class FhirPathCompleter(
     /** Commands and their arguments are words, so a trailing space is right here. */
     private fun commandCand(value: String, display: String, group: String, descr: String?) =
         Candidate(value, display, group, descr, null, null, true)
+
+    private fun cutOffs(candidates: MutableList<Candidate>) {
+        candidates += commandCand("30d", "30d", "cut-off", "bundles modified in the last 30 days")
+        candidates += commandCand("12h", "12h", "cut-off", "in the last 12 hours")
+    }
 
     private companion object {
 

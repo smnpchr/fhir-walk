@@ -125,7 +125,7 @@ class StateFile(file: Path?) {
 
 /**
  * Everything a session keeps between runs, in one directory: the expression log,
- * names, saved views, the saved state and the line editor's history.
+ * names, saved views, meta pool definitions, the saved state and the line editor's history.
  *
  * Separate workspaces keep separate datasets apart -- the expressions worth keeping
  * for one pool are noise against another.
@@ -136,12 +136,13 @@ class Workspace(val name: String, val dir: Path?) {
     val log = ExpressionLog(dir?.resolve("expressions"))
     val names = NameStore(dir?.resolve("names"))
     val views = ViewStore(dir?.resolve("views"))
+    val metas = MetaStore(dir?.resolve("metas"))
     val state = StateFile(dir?.resolve("state"))
 
     /** For JLine's up-arrow history; null keeps it in memory. */
     val lineHistory: Path? = dir?.resolve("line-history")
 
-    val problems: List<String> get() = listOfNotNull(log.problem, names.problem, views.problem, state.problem)
+    val problems: List<String> get() = listOfNotNull(log.problem, names.problem, views.problem, metas.problem, state.problem)
 }
 
 /**

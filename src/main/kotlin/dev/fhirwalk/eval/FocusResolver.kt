@@ -93,14 +93,25 @@ class FocusResolver(
         // the bare id of some resource, so only full labels count then.
         val target = pool.find(argument, bareIds = current == null)
             ?: pool.all().firstOrNull { it.label == argument }
+            ?: inOnePart(argument, bareIds = current == null)
         if (target != null) return Resolution.Focused(Focus.of(target, current))
         return byExpression(argument, current)
+    }
+
+    /**
+     * In a meta pool scoped to one bundle, `Patient/p1` is that bundle's: a label
+     * there names its bundle, but with the scope on one, which it is goes without saying.
+     */
+    private fun inOnePart(argument: String, bareIds: Boolean): PooledResource? {
+        if (pool.parts.isEmpty() || pool.scope == null) return null
+        val part = pool.inScope().mapTo(HashSet()) { it.part }.singleOrNull() ?: return null
+        return pool.find("$part:$argument", bareIds)
     }
 
     private fun byExpression(expression: String, current: Focus?): Resolution {
         evaluator.validate(expression)?.let { return Resolution.Invalid(it) }
         val found = if (current != null) {
-            when (val outcome = evaluator.evaluate(current.node, expression)) {
+            when (val outcome = evaluator.evaluate(current.node, expression, current.resource.resource)) {
                 is Outcome.Failure -> return Resolution.Failed(outcome.message)
                 is Outcome.Values -> found(current.resource, outcome.values)
             }

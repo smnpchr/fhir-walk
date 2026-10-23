@@ -111,6 +111,9 @@ class Pool(val name: String, ctx: FhirContext, render: Render) {
      */
     var unavailable: SavedPool? = null
 
+    /** Set when the pool is a meta pool: its bundles are read from a definition, not loaded or saved. */
+    var meta: MetaPool? = null
+
     companion object {
         /** The pool a session starts with, and the one everything went into before there were several. */
         const val DEFAULT = "pool"

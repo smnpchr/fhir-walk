@@ -10,6 +10,7 @@ import dev.fhirwalk.repl.command.FocusCommands
 import dev.fhirwalk.repl.command.GitCommands
 import dev.fhirwalk.repl.command.HelpCommands
 import dev.fhirwalk.repl.command.Manual
+import dev.fhirwalk.repl.command.MetaCommands
 import dev.fhirwalk.repl.command.PoolCommands
 import dev.fhirwalk.repl.command.RecordCommands
 import dev.fhirwalk.repl.command.ReplState
@@ -75,11 +76,12 @@ class Repl(
     private val evaluateCommands = EvaluateCommands(state)
     private val focusCommands = FocusCommands(state)
     private val gitCommands = GitCommands(state, focusCommands)
-    private val poolCommands = PoolCommands(state, gitCommands)
+    private val metaCommands = MetaCommands(state)
+    private val poolCommands = PoolCommands(state, gitCommands, metaCommands)
     private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 
     private val commands: List<Command> = listOf(
-        poolCommands, gitCommands, evaluateCommands, focusCommands, RecordCommands(state), workspaceCommands,
+        poolCommands, metaCommands, gitCommands, evaluateCommands, focusCommands, RecordCommands(state), workspaceCommands,
         DisplayCommands(state),
         // Asked for only when :help runs; the aliases include :help's own, so they
         // cannot be known before this list is.
@@ -116,6 +118,8 @@ class Repl(
                 state::gitSpecOf,
                 gitCommands::commitChoices,
                 { manual.topics.map { FhirPathCompleter.CommandInfo(it.name, "", it.title) } },
+                { state.workspace.metas.all().keys.toList() },
+                { session.current.meta?.members?.map { it.name }.orEmpty() },
             )
             // AUTO_LIST prints a passive list that arrow keys cannot touch, so it
             // costs an extra TAB before anything is navigable -- press an arrow at a
@@ -192,17 +196,19 @@ class Repl(
 
     /**
      * The pool's name goes before a focus once there are several to tell apart, or
-     * when it is a git pool, whose revision always shows. With the scope on the
-     * delta, the delta's size stands where the pool's would.
+     * when it is a git pool, whose revision always shows, or a meta pool. With the
+     * scope on the delta, the delta's size stands where the pool's would; on one
+     * bundle of a meta pool, the bundle's name and size.
      */
     private fun prompt(): String {
         val git = session.current.git
-        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty()
+        val meta = session.current.meta
+        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty() + meta?.scoped?.let { "/$it" }.orEmpty()
         val focus = session.focus?.label?.let { abbreviate(it, ReplState.PROMPT_WIDTH) }
         val scope = when {
             focus == null && git?.deltaScope == true -> "$where Δ${git.delta.size}"
-            focus == null -> "$where(${session.pool.size})"
-            session.pools.size > 1 || git != null -> "$where:$focus"
+            focus == null -> "$where(${session.pool.inScope().size})"
+            session.pools.size > 1 || git != null || meta != null -> "$where:$focus"
             else -> focus
         }
         return "${session.version.id}:$scope> "
@@ -279,6 +285,7 @@ class Repl(
                     command.run(argument, out)
                     return !command.exits
                 }
+                name in RETIRED -> out.error("$name is gone — ${RETIRED.getValue(name)}")
                 name in RENAMED -> {
                     val now = RENAMED.getValue(name)
                     out.error("$name is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}")
@@ -346,6 +353,12 @@ class Repl(
             ":unname" to ":unname-expr",
             ":save" to ":name-view",
             ":unsave" to ":unname-view",
+        )
+
+        /** Commands that went without a like-for-like successor, with what does their job now (#50). */
+        val RETIRED = mapOf(
+            ":open-bundles" to "a tree of bundles is one meta pool: :meta <name> <dir> [cut-off]",
+            ":prune" to "a meta pool's :cutoff 30d leaves out older bundles; :close drops a pool",
         )
 
         /**

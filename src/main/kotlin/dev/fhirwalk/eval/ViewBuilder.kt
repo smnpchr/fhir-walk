@@ -91,7 +91,7 @@ class ViewBuilder(
         val resources = pool.inScope(type)
         if (resources.isEmpty()) {
             if (pool.scope != null && pool.ofType(type).isNotEmpty()) {
-                return Result.Refused("no $type in the delta — :scope all for the whole pool")
+                return Result.Refused("no $type in the scope — :scope all for the whole pool")
             }
             return Result.Refused("no $type in the pool — it holds ${pool.types().joinToString(", ")}")
         }

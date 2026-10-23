@@ -53,7 +53,10 @@ class Census {
      * (see `ResourcePool.settleReferences`). Unresolved ones stay queued for a later
      * load to settle.
      */
-    val pendingReferences: MutableList<Pair<String, IIdType>> = mutableListOf()
+    val pendingReferences: MutableList<Pending> = mutableListOf()
+
+    /** A reference not yet typed, with the resource it sits in, which is where `resolve()` starts from. */
+    data class Pending(val path: String, val reference: IIdType, val from: IBaseResource)
 
     /** path -> Coding.system -> count. */
     val codeSystems: MutableMap<String, MutableMap<String, Int>> = linkedMapOf()
@@ -172,7 +175,11 @@ class Census {
  */
 class CensusWalker(private val ctx: FhirContext, private val census: Census) {
 
+    /** The resource being walked, which a pending reference is resolved from. */
+    private var root: IBaseResource? = null
+
     fun visit(resource: IBaseResource, type: String) {
+        root = resource
         resource.meta?.profile?.forEach { profile ->
             profile.valueAsString?.let { url ->
                 census.profiles.getOrPut(type) { linkedMapOf() }.merge(url, 1, Int::plus)
@@ -225,7 +232,7 @@ class CensusWalker(private val ctx: FhirContext, private val census: Census) {
             val target = reference?.resourceType?.takeIf { it.isNotBlank() } ?: declaredType(element)
             when {
                 target != null -> census.referenceTargets.getOrPut(path) { linkedMapOf() }.merge(target, 1, Int::plus)
-                !reference?.value.isNullOrBlank() -> census.pendingReferences += path to reference!!
+                !reference?.value.isNullOrBlank() -> census.pendingReferences += Census.Pending(path, reference!!, root!!)
             }
         }
         if (element is IPrimitiveType<*> && typeName(element) in VALUE_TYPES) {

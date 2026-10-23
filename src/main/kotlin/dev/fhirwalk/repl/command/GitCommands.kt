@@ -7,6 +7,7 @@ import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.GitSourceException
 import dev.fhirwalk.pool.ResourceHistory
 import dev.fhirwalk.repl.GitPool
+import dev.fhirwalk.repl.MetaPool
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Pool
 import dev.fhirwalk.repl.SavedPool
@@ -606,6 +607,10 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
     }
 
     private fun scope(argument: String, out: Output) {
+        session.current.meta?.let {
+            memberScope(it, argument, out)
+            return
+        }
         val git = session.current.git
         when (argument.lowercase()) {
             "" -> out.text(
@@ -625,6 +630,27 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
                 out.text("scope: all ${session.pool.size} resource(s)")
             }
             else -> out.text("usage: :scope [delta|all]")
+        }
+    }
+
+    /** In a meta pool the scope is a bundle: `:scope specimen-r1`, and `:scope all` for every one. */
+    private fun memberScope(meta: MetaPool, argument: String, out: Output) {
+        val pool = session.pool
+        when {
+            argument.isBlank() -> out.text(
+                meta.scoped?.let { "scope: bundle $it, ${pool.inScope().size} of ${pool.size} resource(s) — :scope all for every bundle" }
+                    ?: "scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s) — :scope <bundle> for one, :members lists them",
+            )
+            argument.equals("all", ignoreCase = true) -> {
+                meta.scope(pool, null)
+                out.text("scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s)")
+            }
+            meta.members.none { it.name == argument } ->
+                out.text("no bundle $argument in ${state.poolName()} — :members lists them; a delta belongs to a git pool")
+            else -> {
+                meta.scope(pool, argument)
+                out.text("scope: bundle $argument, ${pool.inScope().size} resource(s) — :scope all for every bundle")
+            }
         }
     }
 
