@@ -376,6 +376,29 @@ class CompleterTest {
     }
 
     @Test
+    fun `meta pools complete by name, and their bundles after scope`() {
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS },
+            pools = { listOf("pool") },
+            metas = { listOf("exports", "older") },
+            members = { listOf("specimen-r1", "specimen-r2") },
+        )
+        fun values(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+
+        assertEquals(listOf("exports"), values(":meta ex"))
+        assertEquals(listOf("older"), values(":unmeta o"))
+        assertEquals(setOf("30d", "12h"), values(":meta exports archive ").toSet())
+        assertEquals(setOf("30d", "12h", "none"), values(":cutoff ").toSet())
+        assertEquals(setOf("specimen-r1", "specimen-r2", "all"), values(":scope ").toSet())
+        assertTrue("delta" !in values(":scope "))
+        // Not read yet: :pool offers it, and says how; :close has nothing to close.
+        assertEquals(setOf("pool", "exports", "older"), values(":pool ").toSet())
+        assertEquals(listOf("pool"), values(":close "))
+    }
+
+    @Test
     fun `view completion stays under the menu threshold with many views and names`() {
         val recorded = (1..30).map { "Patient.id.where(\$this != 'x$it')" }
         val named = (1..50).associate { "n$it" to "Patient.id" }

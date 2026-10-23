@@ -54,7 +54,10 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
         val cutOff = last.takeIf { it.isNotEmpty() && MetaPool.since(it, state.commitTimes) != null }
         val dir = Paths.get(state.expandHome(if (cutOff == null) rest else rest.dropLast(last.length).trim())).toAbsolutePath().normalize()
         if (!dir.isDirectory()) {
-            out.text("not a directory: $dir")
+            // `archive 30days` is a directory and a mistyped cut-off, not a directory called that.
+            val before = rest.dropLast(last.length).trim()
+            val mistyped = cutOff == null && last.isNotEmpty() && Paths.get(state.expandHome(before)).isDirectory()
+            out.text(if (mistyped) "not a cut-off: $last — an age (30d, 12h) or a date (2026-10-01)" else "not a directory: $dir")
             return
         }
         val definition = MetaDefinition(dir.toString(), cutOff)
@@ -102,13 +105,22 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
             return
         }
         state.reportStorageProblems(out)
-        val closed = session.pool(name)?.takeIf { it.meta != null }?.let {
+        val closed = session.pool(name)?.takeIf { it.meta != null }?.let { pool ->
             // There is always a pool to evaluate against.
             if (session.pools.size == 1) session.open(Pool.DEFAULT)
             val wasCurrent = session.current.name == name
-            session.close(name)
             if (wasCurrent) state.lastPicks = null
-            if (wasCurrent) " — closed it, now in pool ${session.current.name}" else " — closed it"
+            when {
+                !session.close(name) -> {
+                    // The only pool, and called what a new one would be: it stays, emptied.
+                    pool.meta = null
+                    pool.focus = null
+                    pool.pool.clear()
+                    " — emptied pool $name, the only one"
+                }
+                wasCurrent -> " — closed it, now in pool ${session.current.name}"
+                else -> " — closed it"
+            }
         }.orEmpty()
         out.text("forgot meta pool $name (${describe(before)})$closed")
     }
@@ -202,11 +214,16 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
         val cutOff = meta.definition.cutOff
         val since = cutOff?.let { MetaPool.since(it, state.commitTimes) }
         val scan = meta.scan(pool.importer, pool.pool, since)
+        if (scan.missing) {
+            out.error("meta pool ${pool.name}: ${meta.definition.dir} is not a directory — kept, to read once it is back")
+            return
+        }
         val header = buildList {
             add("meta pool ${pool.name}: ${scan.members} bundle(s), ${pool.pool.size} resource(s)")
             if (scan.older > 0) add("${scan.older} older than $cutOff")
             if (cutOff != null && since == null) add("$cutOff is not a cut-off, so every bundle is read")
             if (scan.skipped > 0) add("${scan.skipped} file(s) skipped, not a Bundle")
+            scan.unscoped?.let { add("scope on $it dropped, no longer a bundle here") }
         }.joinToString("; ") + note
         state.withProblems(out, header, scan.problems)
     }

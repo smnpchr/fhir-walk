@@ -118,6 +118,7 @@ class FhirPathCompleter(
                     candidates += commandCand(it, it, "meta pools", null)
                 }
                 2 -> completePath(lastToken, candidates)
+                3 -> cutOffs(candidates)
             }
             ":unmeta" -> if (arguments.size == 1) {
                 metas().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
@@ -125,7 +126,7 @@ class FhirPathCompleter(
                 }
             }
             ":cutoff" -> if (arguments.size == 1) {
-                candidates += commandCand("30d", "30d", "cut-off", "bundles modified in the last 30 days")
+                cutOffs(candidates)
                 candidates += commandCand("none", "none", "cut-off", "every bundle")
             }
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
@@ -161,6 +162,12 @@ class FhirPathCompleter(
             ":pool", ":close" -> if (arguments.size == 1) {
                 pools().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "pools", null)
+                }
+                // One not read yet is offered too: :pool says how to read it.
+                if (command == ":pool") {
+                    (metas() - pools().toSet()).filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                        candidates += commandCand(it, it, "meta pools", "not read — :meta $it")
+                    }
                 }
             }
             // The commits are what you step to, newest first; the branches and tags
@@ -611,6 +618,11 @@ class FhirPathCompleter(
     /** Commands and their arguments are words, so a trailing space is right here. */
     private fun commandCand(value: String, display: String, group: String, descr: String?) =
         Candidate(value, display, group, descr, null, null, true)
+
+    private fun cutOffs(candidates: MutableList<Candidate>) {
+        candidates += commandCand("30d", "30d", "cut-off", "bundles modified in the last 30 days")
+        candidates += commandCand("12h", "12h", "cut-off", "in the last 12 hours")
+    }
 
     private companion object {
 

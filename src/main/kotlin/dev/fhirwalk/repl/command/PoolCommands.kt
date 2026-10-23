@@ -3,7 +3,6 @@ package dev.fhirwalk.repl.command
 import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.model.FhirVersionUnavailable
 import dev.fhirwalk.repl.KeyedStore
-import dev.fhirwalk.repl.MetaPool
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Pool
 import dev.fhirwalk.repl.SavedPool
@@ -209,11 +208,10 @@ internal class PoolCommands(
                 session.switchTo(pool.name)
                 pool.unavailable?.let { git.unavailable(session.current, it) }
                 pool.meta?.let { before ->
-                    // Its definition, read in the new version; the bundle it was scoped to stays.
-                    val fresh = MetaPool(before.definition)
+                    // Read in the new version, still scoped as it was.
+                    val fresh = before.unread()
                     session.current.meta = fresh
                     meta.read(session.current, fresh, out)
-                    before.scoped?.takeIf { name -> fresh.members.any { it.name == name } }?.let { fresh.scope(session.pool, it) }
                 }
                 val gitPool = pool.git ?: continue
                 if (!git.openGit(gitPool.spec, gitPool.commit.id.name, gitPool.deltaScope, out)) {

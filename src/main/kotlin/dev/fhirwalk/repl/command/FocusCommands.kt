@@ -62,7 +62,13 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
                 // The hint points at :why, which should not need the expression retyped.
                 state.lastExpression = argument
                 val label = if (resolution.couldBeLabel) "not a pool label, and " else ""
-                out.text("$label$argument yields nothing — :why")
+                // A label there names its bundle, which is easily missed when typing one.
+                val meta = if (resolution.couldBeLabel && session.current.meta != null) {
+                    "; in a meta pool a label names its bundle, <bundle>:$argument — :members lists them"
+                } else {
+                    ""
+                }
+                out.text("$label$argument yields nothing — :why$meta")
             }
             is Resolution.Several -> {
                 val results = resolution.picks.results

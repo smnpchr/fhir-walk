@@ -2,16 +2,18 @@ package dev.fhirwalk.repl
 
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.ResourcePool
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.DateTimeException
 import java.time.Duration
 import java.time.Instant
 import kotlin.io.path.extension
-import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
-import kotlin.streams.asSequence
 
 /**
  * What a meta pool is: the directory its bundles are under, and how old a bundle
@@ -58,8 +60,8 @@ class MetaStore(file: Path?) {
  * again whenever asked, and never restored at startup.
  *
  * A member is a file that is one Bundle, modified no earlier than the cut-off;
- * anything else under the directory is skipped. A member's resources are kept
- * between scans while its file is unchanged, so moving the cut-off parses only
+ * anything else under the directory is skipped. What a file was found to be is
+ * kept between scans while it is unchanged, so moving the cut-off parses only
  * what it lets in.
  */
 class MetaPool(var definition: MetaDefinition) {
@@ -67,87 +69,130 @@ class MetaPool(var definition: MetaDefinition) {
     /** A bundle in the pool, named by its path below the directory; see [names]. */
     data class Member(val name: String, val path: Path, val modified: Instant, val resources: Int)
 
-    /** What a [scan] found. */
+    /**
+     * What a [scan] found.
+     *
+     * @param missing the directory is not there, and the pool was left as it was.
+     * @param unscoped the bundle the scope was on, when it is no longer a member.
+     */
     data class Scan(
         val members: Int,
         val older: Int,
         val skipped: Int,
         val problems: List<String>,
+        val missing: Boolean = false,
+        val unscoped: String? = null,
     )
 
     var members: List<Member> = emptyList()
         private set
 
-    /** The member pool-wide evaluation is narrowed to, by `:scope <member>`; null for all of them. */
-    var scoped: String? = null
-        private set
+    /**
+     * The file pool-wide evaluation is narrowed to, by `:scope <member>`. Kept by
+     * path, not by name: a name depends on the other files there, so one that
+     * arrives can give another bundle the name scoped to.
+     */
+    private var scopedPath: Path? = null
 
-    private val parsed = HashMap<Path, Pair<Instant, List<Importer.Parsed>>>()
+    /** The member pool-wide evaluation is narrowed to; null for all of them. */
+    val scoped: String? get() = scopedPath?.let { path -> members.firstOrNull { it.path == path }?.name }
+
+    /**
+     * A file as a scan found it: a member's resources, or null for one that is no
+     * Bundle or would not parse, with what went wrong.
+     */
+    private class Read(val modified: Instant, val resources: List<Importer.Parsed>?, val problems: List<String>)
+
+    private val reads = HashMap<Path, Read>()
 
     val dir: Path get() = Paths.get(definition.dir)
 
     /**
+     * The same definition and scope, with nothing read yet: what `:fhir` reads in
+     * the new version, since resources parsed in the old one are of no use there.
+     */
+    fun unread(): MetaPool = MetaPool(definition).also { it.scopedPath = scopedPath }
+
+    /**
      * Reads the directory again and fills [pool] with the members, from scratch: a
-     * part cannot be taken out of a pool, and the census has to forget it too.
+     * part cannot be taken out of a pool, and the census has to forget it too. A
+     * directory that has gone leaves the pool as it was; one below it that cannot be
+     * read is a problem, and the rest is read.
      *
      * @param since the cut-off as of now; null for every bundle.
      */
     fun scan(importer: Importer, pool: ResourcePool, since: Instant?): Scan {
         val root = dir
-        val files = Files.walk(root).use { stream ->
-            stream.asSequence()
-                .filter { it.isRegularFile() && importer.reads(it.fileName.toString()) && it.extension.lowercase() !in STREAMS }
-                .sortedBy { it.toString() }
-                .toList()
-        }
+        if (!Files.isDirectory(root)) return Scan(members.size, 0, 0, emptyList(), missing = true)
         val problems = mutableListOf<String>()
+        val files = mutableListOf<Path>()
+        Files.walkFileTree(
+            root,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (attrs.isRegularFile && importer.reads(file.fileName.toString()) && file.extension.lowercase() !in STREAMS) files.add(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                    problems += "${root.relativize(file)}: unreadable (${exc.message})"
+                    return FileVisitResult.CONTINUE
+                }
+            },
+        )
+        files.sortBy { it.toString() }
         var older = 0
         var skipped = 0
-        val kept = mutableListOf<Triple<Path, Instant, List<Importer.Parsed>>>()
+        val inRange = HashMap<Path, Read>()
         for (file in files) {
             val modified = runCatching { Files.getLastModifiedTime(file).toInstant() }.getOrNull() ?: continue
             if (since != null && modified < since) {
                 older++
                 continue
             }
-            val relative = root.relativize(file).toString()
-            val cached = parsed[file]?.takeIf { it.first == modified }?.second
-            val resources = cached ?: run {
-                val report = Importer.Report()
-                val read = runCatching { importer.parse(relative, file.readText(), report) }.getOrElse {
-                    problems += "$relative: unreadable (${it.message})"
-                    return@run null
-                }
-                when {
-                    report.bundles > 0 -> read.also { problems += report.problems }
-                    // A Bundle that would not parse, or parses only in another version.
-                    report.problems.isNotEmpty() -> null.also { problems += report.problems }
-                    else -> null.also { skipped++ }
-                }
-            } ?: continue
-            kept += Triple(file, modified, resources)
+            val read = reads[file]?.takeIf { it.modified == modified } ?: read(importer, root, file, modified)
+            inRange[file] = read
+            problems += read.problems
+            if (read.resources == null && read.problems.isEmpty()) skipped++
         }
-        // Only the members are kept: what the cut-off drops is parsed again if it comes back.
-        parsed.clear()
-        kept.forEach { (file, modified, resources) -> parsed[file] = modified to resources }
+        // Only what is in range is kept: what the cut-off drops is parsed again if it comes back.
+        reads.clear()
+        reads.putAll(inRange)
 
+        val kept = files.filter { inRange[it]?.resources != null }
+        val before = scoped
         pool.clear()
-        val named = names(root, kept.map { it.first })
-        members = kept.mapIndexed { idx, (file, modified, resources) ->
-            val name = named[idx]
-            resources.forEach { pool.add(it.resource, it.fullUrl, it.origin, name) }
-            Member(name, file, modified, resources.size)
+        val named = names(root, kept)
+        members = kept.mapIndexed { idx, file ->
+            val read = inRange.getValue(file)
+            read.resources!!.forEach { pool.add(it.resource, it.fullUrl, it.origin, named[idx]) }
+            Member(named[idx], file, read.modified, read.resources.size)
         }
         pool.settleReferences()
-        // Kept across a scan while its member is still there.
-        scope(pool, scoped?.takeIf { name -> members.any { it.name == name } })
-        return Scan(members.size, older, skipped, problems)
+        // Kept across a scan while its file is still a member.
+        if (scopedPath != null && members.none { it.path == scopedPath }) scopedPath = null
+        applyScope(pool)
+        return Scan(members.size, older, skipped, problems, unscoped = before?.takeIf { scopedPath == null })
+    }
+
+    private fun read(importer: Importer, root: Path, file: Path, modified: Instant): Read {
+        val relative = root.relativize(file).toString()
+        val report = Importer.Report()
+        val parsed = runCatching { importer.parse(relative, file.readText(), report) }.getOrElse {
+            return Read(modified, null, listOf("$relative: unreadable (${it.message})"))
+        }
+        // A Bundle that would not parse, or parses only in another version, has problems and no resources.
+        return Read(modified, parsed.takeIf { report.bundles > 0 }, report.problems.toList())
     }
 
     /** Narrows pool-wide evaluation to [member], or with null widens it to all of them. */
     fun scope(pool: ResourcePool, member: String?) {
-        scoped = member
-        pool.scope = member?.let { name -> pool.all().filterTo(HashSet()) { it.part == name } }
+        scopedPath = member?.let { name -> members.first { it.name == name }.path }
+        applyScope(pool)
+    }
+
+    private fun applyScope(pool: ResourcePool) {
+        pool.scope = scoped?.let { name -> pool.all().filterTo(HashSet()) { it.part == name } }
     }
 
     companion object {

@@ -154,6 +154,91 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `a scope follows its file when the names change, and goes with it`() {
+        root.resolve("a").createDirectories().resolve("x.json").writeText(bundle)
+        root.resolve("b").createDirectories().resolve("x.json").writeText(bundle)
+        run(":meta exports $root")
+        run(":scope a")
+        // A file arriving at the top renames them all: a.json is now `a`.
+        root.resolve("a.json").writeText(bundle)
+        run(":meta exports")
+        assertContains(run(":scope"), "scope: bundle a-x")
+        Files.delete(root.resolve("a/x.json"))
+        assertContains(run(":meta exports"), "scope on a-x dropped")
+        assertContains(run(":scope"), "scope: all 2 bundle(s)")
+    }
+
+    @Test
+    fun `a directory that has gone is kept, and does not stop a version switch`() {
+        val root = archive()
+        run(":meta exports $root")
+        run(":scope specimen-r2")
+        assertContains(run(":fhir r5"), "meta pool exports: 2 bundle(s)")
+        assertContains(run(":scope"), "scope: bundle specimen-r2")
+        root.toFile().deleteRecursively()
+        val switched = run(":fhir r4")
+        assertContains(switched, "switched to FHIR R4")
+        assertContains(switched, "is not a directory — kept, to read once it is back")
+        assertContains(run(":pools"), "meta: $root")
+        assertContains(run(":meta exports"), "is not a directory")
+    }
+
+    @Test
+    fun `a directory below that cannot be read is a problem, and the rest is read`() {
+        val root = archive()
+        val locked = root.resolve("locked").createDirectories()
+        locked.resolve("bundle.json").writeText(bundle)
+        locked.toFile().setReadable(false)
+        try {
+            val read = run(":meta exports $root")
+            assertContains(read, "meta pool exports: 2 bundle(s)")
+            assertContains(read, "! locked: unreadable")
+        } finally {
+            locked.toFile().setReadable(true)
+        }
+    }
+
+    @Test
+    fun `a broken bundle is reported on every read, though parsed once`() {
+        root.resolve("r1").createDirectories().resolve("bundle.json").writeText(bundle)
+        root.resolve("r2").createDirectories().resolve("bundle.json").writeText("""{"resourceType":"Bundle","entry":[""")
+        assertContains(run(":meta exports $root"), "! r2/bundle.json: ")
+        assertContains(run(":meta exports"), "! r2/bundle.json: ")
+    }
+
+    @Test
+    fun `forgetting the only pool, a meta pool called pool, empties it`() {
+        val alone = repl()
+        alone.run(":meta x ${archive()}")
+        alone.run(":close pool")
+        alone.run(":meta pool $root")
+        alone.run(":close x")
+        assertContains(alone.run(":unmeta pool"), "emptied pool pool, the only one")
+        val pools = alone.run(":pools")
+        assertContains(pools, "nothing loaded")
+        assertFalse(pools.contains("meta:"), pools)
+    }
+
+    @Test
+    fun `a label in a meta pool names its bundle, unless the scope is on one`() {
+        run(":meta exports ${archive()}")
+        assertContains(run(":focus Patient/pat1"), "<bundle>:Patient/pat1")
+        run(":scope specimen-r1")
+        assertContains(run(":focus Patient/pat1"), "specimen-r1:Patient/pat1")
+    }
+
+    @Test
+    fun `a mistyped cut-off is not taken for part of the directory`() {
+        assertContains(run(":meta exports ${archive()} 30days"), "not a cut-off: 30days")
+    }
+
+    @Test
+    fun `the commands a meta pool replaced say what does their job now`() {
+        assertContains(run(":open-bundles $root"), ":open-bundles is gone — a tree of bundles is one meta pool")
+        assertContains(run(":prune 30d"), ":prune is gone")
+    }
+
+    @Test
     fun `a bundle is named from what tells the paths apart`() {
         val root = Paths.get("/a")
         fun names(vararg files: String) = MetaPool.names(root, files.map { root.resolve(it) })

@@ -285,6 +285,7 @@ class Repl(
                     command.run(argument, out)
                     return !command.exits
                 }
+                name in RETIRED -> out.error("$name is gone — ${RETIRED.getValue(name)}")
                 name in RENAMED -> {
                     val now = RENAMED.getValue(name)
                     out.error("$name is now $now — did you mean  $now${argument.let { if (it.isEmpty()) "" else " $it" }}")
@@ -352,6 +353,12 @@ class Repl(
             ":unname" to ":unname-expr",
             ":save" to ":name-view",
             ":unsave" to ":unname-view",
+        )
+
+        /** Commands that went without a like-for-like successor, with what does their job now (#50). */
+        val RETIRED = mapOf(
+            ":open-bundles" to "a tree of bundles is one meta pool: :meta <name> <dir> [cut-off]",
+            ":prune" to "a meta pool's :cutoff 30d leaves out older bundles; :close drops a pool",
         )
 
         /**
