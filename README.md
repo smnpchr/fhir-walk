@@ -110,14 +110,16 @@ Type a FHIRPath expression, or:
 | `:pools` | the open pools, their sizes and paths |
 | `:open <name> [path]` | add a pool, switch to it, and load `path` into it |
 | `:close <name>` | drop a pool |
-| `:open-bundles <dir>` | a pool for each Bundle under a directory, named by its path |
-| `:prune [30d\|12h\|date]` | close loaded pools whose files are gone, or older than a cut-off |
+| `:meta [name [dir [cut-off]]]` | a meta pool: the bundles under a directory, read when asked for; alone, list them |
+| `:unmeta <name>` | forget a meta pool's definition, closing it |
+| `:cutoff [30d\|12h\|date\|none]` | the meta pool's cut-off: how recently a bundle was modified to count |
+| `:members [text]` | the meta pool's bundles, their sizes and when they were modified |
 | `:log [label] [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back; with a label, only the commits that changed that resource |
 | `:trace [label] [expr]` | how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
 | `:delta` | what this revision added, modified and deleted |
-| `:scope [delta\|all]` | run pool-wide over the delta only, or over everything |
+| `:scope [delta\|bundle\|all]` | run pool-wide over the delta only, one bundle of a meta pool, or everything |
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
@@ -304,6 +306,37 @@ before a focus: `r4:tree:Observation/obs2>`.
 
 Recorded expressions, names and saved views belong to the workspace, not to a pool,
 so `:view @people` runs in any of them. `:fhir` keeps the pools and empties them all.
+
+### Meta pools: a directory of bundles
+
+A tree of exported bundles (`<pipe>/<date>-<publishId>/bundle.json`) is one *meta
+pool*: every Bundle under the directory is a part of it, so `resolve()` stays inside
+the bundle a resource came from while an expression runs over all of them.
+
+```
+r4:pool(0)> :meta exports archive 2026-10-01
+meta pool exports: 82 bundle(s), 3526 resource(s); 68 older than 2026-10-01
+r4:exports(3526)> Observation.where(id='obs1').subject.resolve().name.family
+82 of 3526 resource(s) matched, in 82 of 82 bundle(s)
+  consent-2026-10-01-p118:Observation/obs1 Mustermann
+  consent-2026-10-01-p90:Observation/obs1 Mustermann
+  … 80 more of 82 — :more
+r4:exports(3526)> :scope donor-2026-10-09-p68
+scope: bundle donor-2026-10-09-p68, 43 resource(s) — :scope all for every bundle
+r4:exports/donor-2026-10-09-p68(43)> Patient.id
+2 of 43 resource(s) matched
+  donor-2026-10-09-p68:Patient/pat1 pat1
+  donor-2026-10-09-p68:Patient/pat2 pat2
+```
+
+The definition (name, directory, cut-off) is saved in the workspace; the bundles are
+read only by `:meta exports`, never at startup, so a large archive costs nothing until
+it is asked for. The cut-off is by file modification time: an age (`30d`, `12h`),
+which moves on with the clock, a date, or `none`. `:cutoff` moves it and reads again,
+parsing only the bundles it lets in. A bundle is named by its path less the
+extension and what every path ends in; a resource's label carries it
+(`specimen-r1:Patient/p1`), and `:members` lists them. Files that are not one Bundle
+are skipped.
 
 ### Pools from git revisions
 
@@ -562,6 +595,7 @@ complete/  FhirPathCompleter                merges both axes into JLine candidat
 repl/      Repl, FhirPathParser, Render
            Session, Pool                    per version; per pool, several
            GitPool                          a pool's revision, line and scope
+           MetaPool, MetaStore              a directory of bundles, as one pool
            Workspace, SavedState            what outlives a session
            ExpressionLog, NameStore,        its files, on WatchedFile /
            ViewStore, KeyedStore            KeyedStore

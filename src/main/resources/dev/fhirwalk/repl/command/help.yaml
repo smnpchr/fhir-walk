@@ -42,24 +42,31 @@ commands:
         args: "<name>"
         summary: drop a pool
         topic: pools
-      - name: ":open-bundles"
-        args: "<dir>"
-        summary: a pool for each Bundle under a directory, named by its path
+      - name: ":meta"
+        args: "[name [dir [cut-off]]]"
+        summary: "a meta pool: the bundles under a directory, read when asked for"
         details: |
-          archive/specimen/2026-10-20T12:00Z-p1/bundle.json opens as pool
-          specimen-2026-10-20T12-00Z-p1: the path less the extension, and less
-          what every path ends in. Files that are not a Bundle are skipped. Run
-          it again to open the bundles that have arrived since.
-        topic: pools
-      - name: ":prune"
-        args: "[30d|12h|date]"
-        summary: close loaded pools whose files are gone, or older than a cut-off
+          :meta exports archive 30d defines meta pool exports over the bundles
+          under archive modified in the last 30 days, and reads it. :meta exports
+          reads it again, :meta alone lists them. The definition is saved; the
+          bundles are read only on :meta, never at startup.
+        topic: meta
+      - name: ":unmeta"
+        args: "<name>"
+        summary: forget a meta pool's definition, closing it
+        topic: meta
+      - name: ":cutoff"
+        args: "[30d|12h|date|none]"
+        summary: "the meta pool's cut-off: how recently a bundle was modified to count"
         details: |
-          Alone, it closes the pools none of whose paths exist any more. With an
-          age or a date it also closes those not modified since: :prune 30d,
-          :prune 2026-10-01. Git pools are left alone; they reopen when their
-          repository comes back.
-        topic: pools
+          :cutoff 30d keeps the bundles modified in the last 30 days, :cutoff
+          2026-10-01 those since then, :cutoff none all of them. The bundles are
+          read again, and only those it lets in are parsed.
+        topic: meta
+      - name: ":members"
+        args: "[text]"
+        summary: the meta pool's bundles, their sizes and when they were modified
+        topic: meta
       - name: ":fhir"
         args: "[version]"
         summary: switch FHIR version (resets the pool)
@@ -109,8 +116,8 @@ commands:
         summary: what this revision added, modified and deleted
         topic: git
       - name: ":scope"
-        args: "[delta|all]"
-        summary: run pool-wide over the delta only, or over everything
+        args: "[delta|bundle|all]"
+        summary: run pool-wide over the delta only, one bundle of a meta pool, or everything
         topic: git
 
   - group: Evaluating
@@ -230,10 +237,29 @@ topics:
       switches to it, :pool <name> switches, :pools lists them. Recorded
       expressions, names and views are shared, so :view @people runs in any.
 
-      :open-bundles archive opens one pool per Bundle in a tree of exports,
-      each named by its path, and keeps the bundle's entry order: #0 is its
-      first entry. :prune closes those whose files have gone, and with
-      :prune 30d those older than that too.
+      A tree of exported bundles is a meta pool rather than many pools; see
+      :manual meta.
+
+  - name: meta
+    title: Meta pools
+    text: |
+      A meta pool holds every Bundle under a directory, each as a part of
+      one pool: resolve() stays inside the bundle a resource came from,
+      while an expression runs over all of them. :meta exports archive 30d
+      defines one and reads it; the definition is saved, the bundles are
+      read only when :meta exports asks for them, never at startup.
+
+      Each bundle is named by its path less the extension and what every
+      path ends in: archive/specimen/2026-10-20-p1/bundle.json is
+      specimen-2026-10-20-p1. A resource's label carries it,
+      specimen-2026-10-20-p1:Patient/p1, so :focus and the rows of :all tell
+      the bundles apart, and :all says in how many bundles it matched. The
+      bundle's entry order is kept: #0 is the first entry of the first one.
+
+      The cut-off is by file modification time: :cutoff 30d, :cutoff
+      2026-10-01, :cutoff none. Files that are not one Bundle are skipped.
+      :members lists the bundles; :scope specimen-r1 runs pool-wide over one,
+      :scope all over every one again.
 
   - name: git
     title: Pools from git revisions

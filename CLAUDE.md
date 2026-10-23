@@ -104,6 +104,14 @@ when extending the walker.
   pool breaks the prompt and the saved state. An unreadable *blob* is softer: it is
   reported as a problem for its file, like a parse error, and the move goes ahead.
   `:log` shows a commit whose changes cannot be read as `Δ?`.
+- **A meta pool is one `ResourcePool` with parts**, one per bundle
+  (`PooledResource.part`). Its keys carry the part, so `resolve()` only finds a
+  target in the bundle of the resource being evaluated, which HAPI never passes
+  (it hands over the Reference element only). That is why `Evaluator.evaluate`
+  takes `within`: pass the focus's resource when evaluating an element, or
+  `resolve()` in a meta pool finds nothing. Its definition lives in the
+  workspace's `metas` file, never in the state file; it is read on `:meta`, not
+  at startup.
 - **A forward step has to be found from the line's tip**: a commit does not know
   its children. Back follows first parents and always works.
 

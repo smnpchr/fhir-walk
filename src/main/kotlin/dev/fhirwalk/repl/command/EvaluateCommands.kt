@@ -41,7 +41,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             evaluateAll(expression, out)
             return
         }
-        when (val outcome = session.evaluator.evaluate(focus.node, expression)) {
+        when (val outcome = session.evaluator.evaluate(focus.node, expression, focus.resource.resource)) {
             is Outcome.Failure -> out.error("${outcome.message}")
             is Outcome.Values -> {
                 if (outcome.values.isEmpty()) {
@@ -65,8 +65,13 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
         state.nameable = null
         if (state.reportSyntaxError(expression, out)) return
         val result = session.evaluator.evaluateAll(expression)
+        val meta = session.current.meta
         val header = Output.line {
             +"${result.hits.size} of ${result.considered} resource(s) matched"
+            // A meta pool's rows are labelled by bundle; how many bundles is the answer as often.
+            if (meta != null && meta.scoped == null) {
+                +", in ${result.hits.mapTo(HashSet()) { it.resource.part }.size} of ${meta.members.size} bundle(s)"
+            }
             if (result.errors > 0) error("; ${result.errors} error(s): ${result.firstError}")
         }
         // Matching something is the bar: a misspelt element parses fine and only
@@ -132,7 +137,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
         // A relative step is rooted at the focus, then stripped of where()/[n] the way
         // the census spells it: "how many Observations populate code.coding.foo" is
         // the question, not how many share this one's indexes.
-        val diagnosis = session.prefixWalker.diagnose(focus.node, expression) { prefix ->
+        val diagnosis = session.prefixWalker.diagnose(focus.node, expression, focus.resource.resource) { prefix ->
             val rooted = session.focus?.absolute(prefix)
             if (rooted == null || rooted == prefix) prefix else session.navigator.censusPath(rooted)
         }

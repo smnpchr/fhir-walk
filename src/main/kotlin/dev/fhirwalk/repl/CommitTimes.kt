@@ -35,8 +35,8 @@ class CommitTimes(private val zone: ZoneId = ZoneId.systemDefault()) {
     fun end(text: String): Instant? = period(text)?.second?.let(::instant)
 
     /**
-     * When the period [text] names begins, as [end] reads it: what `:prune` keeps
-     * from. Null when it is not shaped like a date.
+     * When the period [text] names begins, as [end] reads it: what a meta pool's
+     * cut-off keeps from. Null when it is not shaped like a date.
      */
     fun start(text: String): Instant? = period(text)?.first?.let(::instant)
 

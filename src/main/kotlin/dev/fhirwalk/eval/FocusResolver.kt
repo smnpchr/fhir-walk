@@ -100,7 +100,7 @@ class FocusResolver(
     private fun byExpression(expression: String, current: Focus?): Resolution {
         evaluator.validate(expression)?.let { return Resolution.Invalid(it) }
         val found = if (current != null) {
-            when (val outcome = evaluator.evaluate(current.node, expression)) {
+            when (val outcome = evaluator.evaluate(current.node, expression, current.resource.resource)) {
                 is Outcome.Failure -> return Resolution.Failed(outcome.message)
                 is Outcome.Values -> found(current.resource, outcome.values)
             }

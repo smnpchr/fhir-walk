@@ -114,6 +114,7 @@ internal class ReplState(
         log.entries()
         names.all()
         views.all()
+        workspace.metas.all()
         workspace.problems.filter { reportedProblems.add(it) }.forEach {
             out.error("$it — changes are kept for this session only")
         }

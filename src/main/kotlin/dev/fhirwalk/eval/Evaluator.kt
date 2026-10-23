@@ -6,6 +6,7 @@ import ca.uhn.fhir.fhirpath.IFhirPathEvaluationContext
 import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.pool.ResourcePool
 import org.hl7.fhir.instance.model.api.IBase
+import org.hl7.fhir.instance.model.api.IBaseResource
 import org.hl7.fhir.instance.model.api.IIdType
 
 /**
@@ -15,10 +16,16 @@ import org.hl7.fhir.instance.model.api.IIdType
  * `IHostApplicationServices`, so this one class makes `resolve()` work across every
  * supported FHIR version -- and across every file and bundle in the pool, which no
  * single-resource evaluator can do.
+ *
+ * HAPI hands over only the Reference element, not the resource it sits in, so the
+ * [Evaluator] says which resource it is evaluating: in a meta pool that decides the
+ * bundle the reference is resolved in.
  */
 class PoolEvaluationContext(private val pool: ResourcePool) : IFhirPathEvaluationContext {
+    var within: IBaseResource? = null
+
     override fun resolveReference(theReference: IIdType?, theContext: IBase?): IBase? =
-        pool.resolve(theReference)
+        pool.resolve(theReference, within)
 }
 
 sealed interface Outcome {
@@ -31,16 +38,20 @@ data class Hit(val resource: PooledResource, val values: List<IBase>)
 
 class Evaluator(private val ctx: FhirContext, private val pool: ResourcePool) {
 
+    private val context = PoolEvaluationContext(pool)
+
     private val fhirPath: IFhirPath = ctx.newFhirPath().apply {
-        setEvaluationContext(PoolEvaluationContext(pool))
+        setEvaluationContext(context)
     }
 
     /**
      * @param input a resource, or any element inside one. HAPI takes either; with an
      *   element there is no focus resource, so `%resource` fails.
+     * @param within the pool resource [input] is or sits in, where `resolve()` starts.
      */
-    fun evaluate(input: IBase, expression: String): Outcome =
+    fun evaluate(input: IBase, expression: String, within: IBaseResource? = input as? IBaseResource): Outcome =
         try {
+            context.within = within
             Outcome.Values(fhirPath.evaluate(input, expression, IBase::class.java))
         } catch (e: Exception) {
             Outcome.Failure(readable(e))

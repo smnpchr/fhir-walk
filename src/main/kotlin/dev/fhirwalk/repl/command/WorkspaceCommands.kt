@@ -82,11 +82,13 @@ internal class WorkspaceCommands(
         state.lastSaved = stateNow()
     }
 
-    private fun stateNow(): SavedState =
-        SavedState(
+    /** Meta pools are left out: their definitions are saved apart, and are read only when asked for. */
+    private fun stateNow(): SavedState {
+        val saved = session.pools.filter { it.meta == null }
+        return SavedState(
             session.version.id,
             state.limitSet,
-            session.pools.map { pool ->
+            saved.map { pool ->
                 val git = pool.git
                 pool.unavailable ?: SavedPool(
                     pool.name,
@@ -97,8 +99,9 @@ internal class WorkspaceCommands(
                     deltaScope = git?.deltaScope == true,
                 )
             },
-            session.current.name,
+            session.current.takeIf { it.meta == null }?.name ?: saved.firstOrNull()?.name,
         )
+    }
 
     /** Writes the state when it has changed since it was last written or restored. */
     fun saveState(out: Output) {

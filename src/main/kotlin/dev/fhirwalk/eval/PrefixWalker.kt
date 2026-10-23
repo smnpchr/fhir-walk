@@ -3,6 +3,7 @@ package dev.fhirwalk.eval
 import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.pool.ResourcePool
 import org.hl7.fhir.instance.model.api.IBase
+import org.hl7.fhir.instance.model.api.IBaseResource
 
 /**
  * Answers "why is my expression empty" by evaluating successive prefixes and
@@ -37,8 +38,14 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
      * @param poolWide the expression to count across the pool for a prefix. Coverage
      *   is looked up by root resource type, so a path relative to a focus has to be
      *   rooted first; by default the prefix is taken as already rooted.
+     * @param within the pool resource [input] is or sits in; see [Evaluator.evaluate].
      */
-    fun diagnose(input: IBase, expression: String, poolWide: (String) -> String = { it }): Diagnosis {
+    fun diagnose(
+        input: IBase,
+        expression: String,
+        within: IBaseResource? = input as? IBaseResource,
+        poolWide: (String) -> String = { it },
+    ): Diagnosis {
         val prefixes = FhirPathTokenizer.prefixes(expression)
         val steps = mutableListOf<Step>()
         var firstEmpty: Int? = null
@@ -49,7 +56,7 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
                 steps += Step(prefix, null, null, null, reached = false)
                 continue
             }
-            when (val outcome = evaluator.evaluate(input, prefix)) {
+            when (val outcome = evaluator.evaluate(input, prefix, within)) {
                 is Outcome.Failure -> {
                     steps += Step(prefix, null, null, outcome.message, reached = true)
                     firstEmpty = idx
