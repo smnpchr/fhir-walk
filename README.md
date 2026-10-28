@@ -667,6 +667,13 @@ build/install/fhir-walk/bin/fhir-walk samples/basic
 
 Requires JDK 21.
 
+To install it as a `fhir-walk` command, run `./install.sh` as yourself (it asks for
+sudo only to copy the files). By default the app goes into `/usr/local/lib/fhir-walk`
+and the command into `/usr/local/bin`. Pass `--opt` to put the app in `/opt/fhir-walk`
+instead, or `--prefix DIR` to use another prefix. Running it again replaces the
+installed version, and `--uninstall` removes it. Neither touches `~/.fhir-walk`, so
+workspaces and line history carry over.
+
 **Use the start script, not `./gradlew run`.** Gradle does not hand the process a
 TTY, so JLine falls back to a dumb terminal and TAB completion is silently disabled
 (it warns about this on startup). `gradle run` is still useful for piping a script of
