@@ -15,13 +15,16 @@
 # Bash's strict mode: -e stops at the first failing command, -u treats an unset
 # variable as an error rather than an empty string, and pipefail makes a pipeline
 # fail when any part of it fails, not only the last. One catch: a command on the
-# left of && or || is exempt from -e, so "rm x && ok" fails silently. Hence the
-# "cmd || die" pattern below.
+# left of && or || is exempt from -e, so in "rm x && ok" a failing rm does not
+# stop the script. That is what makes "[[ test ]] && die" safe. And because an
+# exit caused by -e prints nothing, failures that matter are written as
+# 'cmd || die "message"'.
 set -euo pipefail
 
 APP=fhir-walk
 # The script's own directory, wherever it is called from. BASH_SOURCE[0] is this
-# file's path; cd -P resolves symlinks, and pwd prints the result.
+# file's path; cd -P resolves symlinked directories in that path (not a symlink
+# to the script itself), and pwd prints the result.
 SRC=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # ---------------------------------------------------------------- presentation
@@ -48,7 +51,12 @@ spin() {
     log=$(mktemp "${TMPDIR:-/tmp}/$APP-install.XXXXXX")
     # A trailing & runs the command in the background; $! is its process id.
     "$@" >"$log" 2>&1 &
-    local pid=$! frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
+    local pid=$! frames='|/-\' i=0
+    # Bash counts characters by the locale: outside UTF-8 each braille frame is
+    # three bytes, which the substring below would print one at a time.
+    case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
+        *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' ;;
+    esac
     if [[ -t 1 ]]; then
         # kill -0 sends no signal; it only asks whether the process still exists.
         while kill -0 "$pid" 2>/dev/null; do
@@ -72,7 +80,8 @@ spin() {
 
 usage() {
     # The help text is the header comment above: sed prints lines 2-13 of this
-    # file with their "# " stripped, so the two can never drift apart.
+    # file with their "# " stripped, so the help text cannot go stale, as long as
+    # the header stays on lines 2-13 (change the range if it grows).
     sed -n '2,13s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"
     cat <<EOF
 
@@ -89,7 +98,8 @@ EOF
 # ---------------------------------------------------------------- arguments
 
 # The usual option loop: $# counts the remaining arguments, case matches the
-# first, and shift drops it. An option with a value shifts once more.
+# first, and shift drops it. An option whose value is a separate argument
+# (--prefix DIR) shifts once more; --prefix=DIR is a single argument.
 prefix=/usr/local prefix_given=0 layout=prefix build=1 force=0 action=install
 while (($#)); do
     case $1 in
@@ -115,8 +125,8 @@ data_dir=$owner_home/.fhir-walk
 
 [[ $prefix_given == 1 && $layout == opt ]] && die "--opt and --prefix exclude each other"
 [[ -n $prefix ]] || die "--prefix needs a directory"
-# Bash expands ~ only at the start of a word, not after "--prefix=", so it is
-# done by hand. ${prefix#"~"} is the value with the leading ~ removed.
+# The calling shell expands ~ only at the start of a word or after the = of an
+# assignment, and "--prefix=~/x" is neither, so it is done here by hand. ${prefix#"~"} is the value with the leading ~ removed.
 [[ $prefix == "~" || $prefix == "~/"* ]] && prefix=$owner_home${prefix#"~"}
 # Absolute and normalised, so the link resolves and the standard layouts compare
 # equal. -m allows a path that does not exist yet; -- ends the options, in case
