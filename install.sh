@@ -68,11 +68,11 @@ EOF
 
 # ---------------------------------------------------------------- arguments
 
-prefix=/usr/local layout=prefix build=1 force=0 action=install
+prefix=/usr/local prefix_given=0 layout=prefix build=1 force=0 action=install
 while (($#)); do
     case $1 in
-        --prefix)    [[ -n ${2:-} ]] || die "--prefix needs a directory"; prefix=${2%/}; shift ;;
-        --prefix=*)  prefix=${1#*=}; prefix=${prefix%/} ;;
+        --prefix)    (($# > 1)) || die "--prefix needs a directory"; prefix=$2 prefix_given=1; shift ;;
+        --prefix=*)  prefix=${1#*=} prefix_given=1 ;;
         --opt)       layout=opt ;;
         --no-build)  build=0 ;;
         --force)     force=1 ;;
@@ -82,6 +82,19 @@ while (($#)); do
     esac
     shift
 done
+
+# The user behind sudo, if any: whose home ~ and the session data are.
+owner=${SUDO_USER:-$(id -un)}
+owner_home=$(getent passwd "$owner" 2>/dev/null | cut -d: -f6) || true
+owner_home=${owner_home:-$HOME}
+data_dir=$owner_home/.fhir-walk
+
+[[ $prefix_given == 1 && $layout == opt ]] && die "--opt and --prefix exclude each other"
+[[ -n $prefix ]] || die "--prefix needs a directory"
+[[ $prefix == "~" || $prefix == "~/"* ]] && prefix=$owner_home${prefix#"~"}
+# Absolute and normalised, so the link resolves and the standard layouts compare equal.
+prefix=$(realpath -m -- "$prefix")
+[[ $prefix != / ]] || die "--prefix / would install into /lib and /bin, which belong to the system"
 
 if [[ $layout == opt ]]; then
     app_dir=/opt/$APP bin_dir=/usr/local/bin
@@ -95,26 +108,22 @@ link=$bin_dir/$APP
 known=("$app_dir")
 [[ $app_dir == /usr/local/lib/$APP || $app_dir == /opt/$APP ]] &&
     known=(/usr/local/lib/$APP /opt/$APP)
-links=("$link")
-[[ $link != /usr/local/bin/$APP ]] || links=(/usr/local/bin/$APP)
 
-# The user whose session data we report on: the one behind sudo, if any.
-owner=${SUDO_USER:-$(id -un)}
-owner_home=$(getent passwd "$owner" | cut -d: -f6)
-data_dir=${owner_home:-$HOME}/.fhir-walk
-
-# sudo only where the target is not writable by us.
-needs_root() {
-    local d
-    for d in "$@"; do
-        while [[ ! -e $d ]]; do d=$(dirname "$d"); done
-        [[ -w $d ]] || return 0
+# sudo only where we cannot write. Removing or creating a directory takes its
+# parent, and removing an install takes the install itself; decided once, up
+# front, because the answer changes as soon as an old copy is gone.
+writable() {
+    local d=$1
+    while [[ ! -e $d ]]; do d=$(dirname "$d"); done
+    [[ -w $d ]]
+}
+use_sudo=0
+if [[ $EUID -ne 0 ]]; then
+    for d in "${known[@]}" "${known[@]%/*}" "$bin_dir"; do
+        writable "$d" || use_sudo=1
     done
-    return 1
-}
-priv() {
-    if [[ $EUID -ne 0 ]] && needs_root "${known[@]}" "$bin_dir"; then sudo "$@"; else "$@"; fi
-}
+fi
+priv() { if ((use_sudo)); then sudo "$@"; else "$@"; fi; }
 
 # The version an install holds, read from its main jar's name.
 version_of() {
@@ -147,16 +156,16 @@ report_data() {
 if [[ $action == uninstall ]]; then
     printf '\n%s%s uninstall%s\n\n' "$B" "$APP" "$N"
     found=0
-    for l in "${links[@]}"; do
-        if [[ -L $l ]] && { ours "$l" || [[ ! -e $l ]]; }; then
-            priv rm -f "$l" && ok "removed $l"
-        fi
-    done
+    if [[ -L $link ]] && { ours "$link" || [[ ! -e $link ]]; }; then
+        priv rm -f "$link" || die "could not remove $link"
+        ok "removed $link"
+    fi
     for d in "${known[@]}"; do
         [[ -d $d ]] || continue
         found=1
         v=$(version_of "$d" || true)
-        priv rm -rf "$d" && ok "removed $d ${v:+(${B}$v${N})}"
+        priv rm -rf "$d" || die "could not remove $d"
+        ok "removed $d ${v:+(${B}$v${N})}"
     done
     ((found)) || warn "no installation found in ${known[*]}"
     report_data
@@ -192,8 +201,14 @@ dist=$SRC/build/install/$APP
 if ((build)); then
     step "Building"
     gradle=("$SRC/gradlew" -p "$SRC" -q --console=plain installDist)
-    # Never build as root: it would leave root-owned files in the checkout.
-    if [[ $EUID -eq 0 && -n ${SUDO_USER:-} ]]; then gradle=(sudo -u "$SUDO_USER" "${gradle[@]}"); fi
+    # As root, build as the checkout's owner, or the build leaves root-owned files
+    # in it. runuser keeps the environment (JAVA_HOME, PATH), which sudo -u resets.
+    builder=$(stat -c %U "$SRC")
+    if [[ $EUID -eq 0 && $builder != root ]]; then
+        if command -v runuser >/dev/null; then gradle=(runuser -u "$builder" -- "${gradle[@]}")
+        else gradle=(sudo -E -u "$builder" "${gradle[@]}")
+        fi
+    fi
     spin "gradle installDist" "${gradle[@]}"
 fi
 [[ -x $dist/bin/$APP ]] || die "no build in $dist; run without --no-build"
@@ -209,28 +224,34 @@ if ((${#previous[@]})); then
 else
     step "Installing"
 fi
-if [[ $EUID -ne 0 ]] && needs_root "${known[@]}" "$bin_dir"; then
-    info "${D}sudo is needed to write ${app_dir%/*} and $bin_dir${N}"
-fi
+((use_sudo)) && info "${D}sudo is needed to write ${app_dir%/*} and $bin_dir${N}"
 
-for d in "${previous[@]}"; do priv rm -rf "$d" && ok "removed $d"; done
-priv mkdir -p "${app_dir%/*}" "$bin_dir"
-priv cp -R "$dist" "$app_dir"
-priv rm -f "$app_dir/bin/$APP.bat"
-priv chmod -R u=rwX,go=rX "$app_dir"
-priv ln -sfn "$app_dir/bin/$APP" "$link"
+for d in "${previous[@]}"; do
+    priv rm -rf "$d" || die "could not remove $d"
+    ok "removed $d"
+done
+# cp -R into an existing directory would nest the copy one level down.
+[[ ! -e $app_dir ]] || die "$app_dir is still there; not copying into it"
+{ priv mkdir -p "${app_dir%/*}" "$bin_dir" &&
+  priv cp -R "$dist" "$app_dir" &&
+  priv rm -f "$app_dir/bin/$APP.bat" &&
+  priv chmod -R u=rwX,go=rX "$app_dir"; } || die "could not copy to $app_dir; run again to retry"
 ok "installed $app_dir"
+priv ln -sfn "$app_dir/bin/$APP" "$link" || die "could not link $link"
 ok "linked $link"
 
 report_data
 
-case ":$PATH:" in
-    *":$bin_dir:"*) ;;
-    *) warn "$bin_dir is not on your PATH" ;;
-esac
-resolved=$(command -v "$APP" 2>/dev/null || true)
-if [[ -n $resolved && $resolved != "$link" ]]; then
-    warn "'$APP' on your PATH is $resolved, which shadows $link"
+# Under sudo or su, PATH is root's, not the one the command will be run from.
+if [[ $EUID -ne 0 ]]; then
+    case ":$PATH:" in
+        *":$bin_dir:"*) ;;
+        *) warn "$bin_dir is not on your PATH" ;;
+    esac
+    resolved=$(command -v "$APP" 2>/dev/null || true)
+    if [[ -n $resolved && $resolved != "$link" ]]; then
+        warn "'$APP' on your PATH is $resolved, which shadows $link"
+    fi
 fi
 
 printf '\n%sDone.%s Run %s%s <path>%s — %s--help%s for options.\n\n' "$G$B" "$N" "$B" "$APP" "$N" "$B" "$N"
