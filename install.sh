@@ -11,13 +11,24 @@
 # read, move or delete it, so an upgrade or uninstall leaves every workspace as it was.
 #
 # Run it as yourself: the build runs unprivileged and only the copy asks for sudo.
+
+# Bash's strict mode: -e stops at the first failing command, -u treats an unset
+# variable as an error rather than an empty string, and pipefail makes a pipeline
+# fail when any part of it fails, not only the last. One catch: a command on the
+# left of && or || is exempt from -e, so "rm x && ok" fails silently. Hence the
+# "cmd || die" pattern below.
 set -euo pipefail
 
 APP=fhir-walk
+# The script's own directory, wherever it is called from. BASH_SOURCE[0] is this
+# file's path; cd -P resolves symlinks, and pwd prints the result.
 SRC=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # ---------------------------------------------------------------- presentation
 
+# Colour only on a terminal: -t 1 asks whether stdout is one, so a pipe or log
+# file gets plain text. NO_COLOR is a common convention for opting out. $'...'
+# lets \e stand for the escape character that starts an ANSI code.
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
     B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
 else
@@ -32,17 +43,24 @@ die()  { printf '%s✗ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
 
 # Run a long command behind a spinner; show its log only if it fails.
 spin() {
+    # shift drops the label, so "$@" is left holding the command and its arguments.
     local label=$1 log; shift
     log=$(mktemp "${TMPDIR:-/tmp}/$APP-install.XXXXXX")
+    # A trailing & runs the command in the background; $! is its process id.
     "$@" >"$log" 2>&1 &
     local pid=$! frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
     if [[ -t 1 ]]; then
+        # kill -0 sends no signal; it only asks whether the process still exists.
         while kill -0 "$pid" 2>/dev/null; do
+            # \r goes back to the start of the line, so each frame overwrites the
+            # last. ${frames:offset:1} picks one character, cycling with the modulo.
             printf '\r    %s%s%s %s' "$C" "${frames:i++%${#frames}:1}" "$N" "$label"
             sleep 0.1
         done
+        # \e[K clears the rest of the line, for the ✓ line to take its place.
         printf '\r\e[K'
     fi
+    # wait returns the background command's exit status.
     if wait "$pid"; then
         rm -f "$log"; ok "$label"
     else
@@ -53,6 +71,8 @@ spin() {
 }
 
 usage() {
+    # The help text is the header comment above: sed prints lines 2-13 of this
+    # file with their "# " stripped, so the two can never drift apart.
     sed -n '2,13s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"
     cat <<EOF
 
@@ -68,6 +88,8 @@ EOF
 
 # ---------------------------------------------------------------- arguments
 
+# The usual option loop: $# counts the remaining arguments, case matches the
+# first, and shift drops it. An option with a value shifts once more.
 prefix=/usr/local prefix_given=0 layout=prefix build=1 force=0 action=install
 while (($#)); do
     case $1 in
@@ -85,14 +107,20 @@ done
 
 # The user behind sudo, if any: whose home ~ and the session data are.
 owner=${SUDO_USER:-$(id -un)}
+# getent reads the user database (field 6 is the home directory). "|| true"
+# keeps a failed lookup from ending the script; ${var:-default} fills the gap.
 owner_home=$(getent passwd "$owner" 2>/dev/null | cut -d: -f6) || true
 owner_home=${owner_home:-$HOME}
 data_dir=$owner_home/.fhir-walk
 
 [[ $prefix_given == 1 && $layout == opt ]] && die "--opt and --prefix exclude each other"
 [[ -n $prefix ]] || die "--prefix needs a directory"
+# Bash expands ~ only at the start of a word, not after "--prefix=", so it is
+# done by hand. ${prefix#"~"} is the value with the leading ~ removed.
 [[ $prefix == "~" || $prefix == "~/"* ]] && prefix=$owner_home${prefix#"~"}
-# Absolute and normalised, so the link resolves and the standard layouts compare equal.
+# Absolute and normalised, so the link resolves and the standard layouts compare
+# equal. -m allows a path that does not exist yet; -- ends the options, in case
+# the path starts with a dash.
 prefix=$(realpath -m -- "$prefix")
 [[ $prefix != / ]] || die "--prefix / would install into /lib and /bin, which belong to the system"
 
@@ -119,16 +147,22 @@ writable() {
 }
 use_sudo=0
 if [[ $EUID -ne 0 ]]; then
+    # "${known[@]%/*}" applies %/* (drop the last path step) to every element,
+    # giving each install directory's parent.
     for d in "${known[@]}" "${known[@]%/*}" "$bin_dir"; do
         writable "$d" || use_sudo=1
     done
 fi
+# A wrapper that runs its arguments as a command, with or without sudo. sudo can
+# only run programs, not shell functions, so priv is only ever given programs.
 priv() { if ((use_sudo)); then sudo "$@"; else "$@"; fi; }
 
 # The version an install holds, read from its main jar's name.
 version_of() {
     local jar
     jar=$(find "$1/lib" -maxdepth 1 -name "$APP-[0-9]*.jar" 2>/dev/null | head -n 1)
+    # ## removes the longest match from the front, % the shortest from the end:
+    # /…/lib/fhir-walk-0.1.0.jar becomes 0.1.0.
     jar=${jar##*/$APP-}
     printf '%s' "${jar%.jar}"
 }
@@ -136,6 +170,7 @@ version_of() {
 # Does a link point into one of the known install directories?
 ours() {
     local target d
+    # readlink -f follows every link in the chain to the final absolute path.
     target=$(readlink -f "$1" 2>/dev/null) || return 1
     for d in "${known[@]}"; do [[ $target == "$d"/* ]] && return 0; done
     return 1
@@ -203,6 +238,8 @@ if ((build)); then
     gradle=("$SRC/gradlew" -p "$SRC" -q --console=plain installDist)
     # As root, build as the checkout's owner, or the build leaves root-owned files
     # in it. runuser keeps the environment (JAVA_HOME, PATH), which sudo -u resets.
+    # The command is kept in an array so arguments with spaces survive, and a
+    # prefix like runuser can be put in front without re-quoting anything.
     builder=$(stat -c %U "$SRC")
     if [[ $EUID -eq 0 && $builder != root ]]; then
         if command -v runuser >/dev/null; then gradle=(runuser -u "$builder" -- "${gradle[@]}")
@@ -232,11 +269,14 @@ for d in "${previous[@]}"; do
 done
 # cp -R into an existing directory would nest the copy one level down.
 [[ ! -e $app_dir ]] || die "$app_dir is still there; not copying into it"
+# Braces group the chain, so one "|| die" covers whichever step fails first.
 { priv mkdir -p "${app_dir%/*}" "$bin_dir" &&
   priv cp -R "$dist" "$app_dir" &&
   priv rm -f "$app_dir/bin/$APP.bat" &&
   priv chmod -R u=rwX,go=rX "$app_dir"; } || die "could not copy to $app_dir; run again to retry"
 ok "installed $app_dir"
+# -s symbolic, -f replace what is there, -n treat an existing link to a
+# directory as the link itself rather than descending into it.
 priv ln -sfn "$app_dir/bin/$APP" "$link" || die "could not link $link"
 ok "linked $link"
 
