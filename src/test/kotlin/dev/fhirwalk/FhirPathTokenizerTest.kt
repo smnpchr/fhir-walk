@@ -90,6 +90,22 @@ class FhirPathTokenizerTest {
     }
 
     @Test
+    fun `after a closed call the base is the whole path, spaces in its arguments or not`() {
+        for ((expr, base) in listOf(
+            "Specimen.identifier.where(type.coding.code = 'IDTYPE')." to "Specimen.identifier.where(type.coding.code = 'IDTYPE')",
+            "Specimen.identifier.where(type.coding.code = 'IDTYPE').val" to "Specimen.identifier.where(type.coding.code = 'IDTYPE')",
+            "Specimen.identifier.where(system = 'a b').first()." to "Specimen.identifier.where(system = 'a b').first()",
+        )) {
+            val context = FhirPathTokenizer.cursorContext(expr, expr.length)
+            assertEquals(CursorKind.MEMBER, context.kind, expr)
+            assertEquals(base, context.basePath, expr)
+        }
+        // An operator outside any call still starts a new operand.
+        val context = FhirPathTokenizer.cursorContext("Patient.active and Patient.name.", 32)
+        assertEquals("Patient.name", context.basePath)
+    }
+
+    @Test
     fun `ofType argument is a type position`() {
         val expr = "Observation.subject.resolve().ofType("
         val context = FhirPathTokenizer.cursorContext(expr, expr.length)

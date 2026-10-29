@@ -225,9 +225,10 @@ object FhirPathTokenizer {
         // Everything between the enclosing '(' (or start) and the identifier.
         val localStart = (innermostOpen?.plus(1)) ?: 0
         val local = head.substring(localStart, p)
-        // Only the last argument, and only after the last binary operator.
+        // Only the last argument, and only after the last binary operator. A space
+        // inside a call or a literal, as in `where(code = 'x').`, separates nothing.
         val lastArg = splitTopLevel(local, ',').last()
-        val relative = lastArg.substringAfterLast(' ').ifBlank { lastArg }.trimStart()
+        val relative = splitTopLevel(lastArg, ' ').last().ifBlank { lastArg }.trimStart()
         val relativeBase = relative.trimEnd().removeSuffix(".")
 
         if (callName != null && callName in TYPE_ARG_FUNCTIONS && relativeBase.isBlank()) {
