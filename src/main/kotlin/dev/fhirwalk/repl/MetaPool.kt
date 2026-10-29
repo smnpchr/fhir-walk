@@ -84,6 +84,7 @@ class MetaPool(var definition: MetaDefinition) {
         val unscoped: String? = null,
     )
 
+    /** Most recently modified first, which is what `:members` and `:scope` want to the top. */
     var members: List<Member> = emptyList()
         private set
 
@@ -167,7 +168,7 @@ class MetaPool(var definition: MetaDefinition) {
             val read = inRange.getValue(file)
             read.resources!!.forEach { pool.add(it.resource, it.fullUrl, it.origin, named[idx]) }
             Member(named[idx], file, read.modified, read.resources.size)
-        }
+        }.sortedWith(compareByDescending<Member> { it.modified }.thenBy { it.path.toString() })
         pool.settleReferences()
         // Kept across a scan while its file is still a member.
         if (scopedPath != null && members.none { it.path == scopedPath }) scopedPath = null

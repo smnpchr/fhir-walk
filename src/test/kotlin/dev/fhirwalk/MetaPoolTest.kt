@@ -109,6 +109,18 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `members list the most recently modified bundle first`() {
+        val root = archive()
+        Files.setLastModifiedTime(root.resolve("specimen/r1/bundle.json"), FileTime.from(Instant.parse("2026-01-01T00:00:00Z")))
+        Files.setLastModifiedTime(root.resolve("specimen/r2/bundle.json"), FileTime.from(Instant.parse("2026-02-01T00:00:00Z")))
+        run(":meta exports $root")
+        val members = run(":members")
+        assertTrue(members.indexOf("specimen-r2") < members.indexOf("specimen-r1"), members)
+        // The pool itself keeps the order of the files: #0 is still the first bundle's.
+        assertContains(run(":focus #0"), "specimen-r1:Patient/pat1")
+    }
+
+    @Test
     fun `a definition is saved, and read only when asked for`() {
         val root = archive()
         val first = repl(Workspaces(home))

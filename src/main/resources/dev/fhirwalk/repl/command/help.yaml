@@ -65,7 +65,7 @@ commands:
         topic: meta
       - name: ":members"
         args: "[text]"
-        summary: the meta pool's bundles, their sizes and when they were modified
+        summary: the meta pool's bundles, most recently modified first, with their sizes and when
         topic: meta
       - name: ":fhir"
         args: "[version]"
