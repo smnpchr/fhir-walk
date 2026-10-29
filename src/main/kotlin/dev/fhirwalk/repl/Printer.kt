@@ -63,10 +63,11 @@ class Printer(private val style: Style, private val columns: Int, private val ro
      */
     private fun laidOut(table: Output.Table): Output.Listing {
         val labelWidth = table.rows.maxOfOrNull { it.label.length } ?: 0
+        val wholeLabelWidth = table.rows.maxOfOrNull { it.wholeLabel.length } ?: 0
         val natural = table.titles.indices.map { idx -> maxOf(table.titles[idx].length, table.rows.maxOfOrNull { it.cells[idx].length } ?: 0) }
         val room = columns - 2 - labelWidth - COLUMN_GAP * table.titles.size
         val fitting = fitColumns(natural, room, MIN_CELL_WIDTH)
-        fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean) = Output.line {
+        fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean, labelWidth: Int) = Output.line {
             +"  "
             if (titles) hint(label.padEnd(labelWidth)) else label(label.padEnd(labelWidth))
             cells.zip(widths).forEachIndexed { idx, (cell, width) ->
@@ -80,9 +81,11 @@ class Printer(private val style: Style, private val columns: Int, private val ro
                 }
             }
         }
-        fun header(widths: List<Int>) = table.header + trimmed(line("", table.titles, widths, emptySet(), titles = true))
-        fun rows(widths: List<Int>) = table.rows.map { trimmed(line(it.label, it.cells, widths, it.errors, titles = false)) }
-        return Output.Listing(header(fitting), rows(fitting), rows(natural), header(natural))
+        fun header(widths: List<Int>, labelWidth: Int) = table.header + trimmed(line("", table.titles, widths, emptySet(), titles = true, labelWidth))
+        fun rows(widths: List<Int>, whole: Boolean) = table.rows.map {
+            trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths, it.errors, titles = false, if (whole) wholeLabelWidth else labelWidth))
+        }
+        return Output.Listing(header(fitting, labelWidth), rows(fitting, whole = false), rows(natural, whole = true), header(natural, wholeLabelWidth))
     }
 
     /** [line] without the padding of empty cells at its end. */

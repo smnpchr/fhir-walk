@@ -200,11 +200,12 @@ class Repl(
      * scope on the delta, the delta's size stands where the pool's would; on one
      * bundle of a meta pool, the bundle's name and size.
      */
-    private fun prompt(): String {
+    internal fun prompt(): String {
         val git = session.current.git
         val meta = session.current.meta
-        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty() + meta?.scoped?.let { "/$it" }.orEmpty()
-        val focus = session.focus?.label?.let { abbreviate(it, ReplState.PROMPT_WIDTH) }
+        val bundle = meta?.scoped?.let { "/" + abbreviate(it, ReplState.PROMPT_BUNDLE_WIDTH) }.orEmpty()
+        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty() + bundle
+        val focus = session.focus?.let { abbreviate(state.shown(it), ReplState.PROMPT_WIDTH) }
         val scope = when {
             focus == null && git?.deltaScope == true -> "$where Δ${git.delta.size}"
             focus == null -> "$where(${session.pool.inScope().size})"

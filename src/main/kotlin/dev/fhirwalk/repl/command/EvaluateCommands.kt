@@ -93,7 +93,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             rows = result.hits.map { hit ->
                 Output.line {
                     +"  "
-                    label(hit.resource.label.padEnd(ReplState.LABEL_WIDTH))
+                    label(state.shown(hit.resource).padEnd(ReplState.LABEL_WIDTH))
                     +" "
                     shrink(hit.values.firstOrNull()?.let { session.render.value(it) }.orEmpty(), Output.Kind.PREVIEW, cutsEnd = true)
                     if (hit.values.size > 1) hint(" (+${hit.values.size - 1})")

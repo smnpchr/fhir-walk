@@ -63,8 +63,11 @@ class Output {
      * prints every cell whole.
      */
     data class Table(val header: List<Line>, val titles: List<String>, val rows: List<Row>) : Listed {
-        /** @param errors the indexes of cells that hold an error rather than a value. */
-        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet())
+        /**
+         * @param errors the indexes of cells that hold an error rather than a value.
+         * @param wholeLabel what `:more` prints for [label], when that leaves something out.
+         */
+        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet(), val wholeLabel: String = label)
     }
 
     /** A listing or table printed whole, as `:more` does. */
@@ -113,13 +116,17 @@ class Output {
         when (block) {
             is Line -> listOf(block.text)
             is Listing -> (block.header + block.rows).map { it.text }
-            is Table -> block.header.map { it.text } + block.titles.joinToString("  ") + block.rows.map { "${it.label}  ${it.cells.joinToString("  ")}" }
+            is Table -> lines(block, whole = false)
             is Whole -> when (val listed = block.listing) {
                 is Listing -> ((listed.fullHeader ?: listed.header) + (listed.full ?: listed.rows)).map { it.text }
-                is Table -> Output().apply { added += listed }.lines()
+                is Table -> lines(listed, whole = true)
             }
         }
     }
+
+    private fun lines(table: Table, whole: Boolean): List<String> =
+        table.header.map { it.text } + table.titles.joinToString("  ") +
+            table.rows.map { "${if (whole) it.wholeLabel else it.label}  ${it.cells.joinToString("  ")}" }
 
     class LineBuilder {
         internal val spans = mutableListOf<Span>()

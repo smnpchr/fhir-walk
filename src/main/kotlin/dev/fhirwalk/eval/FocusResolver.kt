@@ -105,7 +105,8 @@ class FocusResolver(
     private fun inOnePart(argument: String, bareIds: Boolean): PooledResource? {
         if (pool.parts.isEmpty() || pool.scope == null) return null
         val part = pool.inScope().mapTo(HashSet()) { it.part }.singleOrNull() ?: return null
-        return pool.find("$part:$argument", bareIds)
+        // A label of no key, `Patient[#0]`, is one only as a whole label.
+        return pool.find("$part:$argument", bareIds) ?: pool.all().firstOrNull { it.label == "$part:$argument" }
     }
 
     private fun byExpression(expression: String, current: Focus?): Resolution {

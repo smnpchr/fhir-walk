@@ -1,8 +1,10 @@
 package dev.fhirwalk.repl.command
 
+import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.FocusResolver
 import dev.fhirwalk.eval.ViewBuilder
 import dev.fhirwalk.pool.GitSource
+import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.repl.CommitTimes
 import dev.fhirwalk.repl.ExpressionLog
 import dev.fhirwalk.repl.NameStore
@@ -204,6 +206,21 @@ internal class ReplState(
         out.listing(listOf(Output.text(header)), problems.map { problem -> Output.line { +"  "; error("! $problem") } })
     }
 
+    /**
+     * [resource]'s label as a row shows it: without its bundle when that is the one
+     * scoped to, which the prompt already names. `:more` and lookups keep the whole
+     * label, and `:focus Patient/p1` finds it in the scoped bundle.
+     */
+    fun shown(resource: PooledResource): String = shown(resource.label, resource.part)
+
+    /** [focus]'s label as the prompt shows it; see [shown]. A focus in another bundle keeps its own. */
+    fun shown(focus: Focus): String = shown(focus.label, focus.resource.part)
+
+    private fun shown(label: String, part: String?): String {
+        val scoped = session.current.meta?.scoped
+        return if (scoped != null && part == scoped) label.removePrefix("$scoped:") else label
+    }
+
     /** How `:open` and its completion read a path argument; see [GitSource.revisionSpec]. */
     fun gitSpecOf(token: String): Pair<String, String>? =
         GitSource.revisionSpec(token) { Files.exists(Paths.get(expandHome(it))) }
@@ -215,6 +232,8 @@ internal class ReplState(
         const val UNLIMITED = 0
         const val LABEL_WIDTH = 28
         const val PROMPT_WIDTH = 48
+        /** A scoped bundle's name in the prompt; `:scope` alone prints it whole. */
+        const val PROMPT_BUNDLE_WIDTH = 24
         /** Used until the terminal reports its size; a dumb terminal never does. */
         const val DEFAULT_ROW_LIMIT = 20
         const val DEFAULT_COLUMNS = 100

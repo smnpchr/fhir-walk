@@ -180,9 +180,10 @@ internal class RecordCommands(private val state: ReplState) : CommandGroup {
             titles = table.columns.map { it.title(table.type) },
             rows = table.rows.map { row ->
                 Output.Table.Row(
-                    row.resource.label,
+                    state.shown(row.resource),
                     row.cells,
                     errors = row.failed,
+                    wholeLabel = row.resource.label,
                 )
             },
         )
