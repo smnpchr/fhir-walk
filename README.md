@@ -113,7 +113,7 @@ Type a FHIRPath expression, or:
 | `:meta [name [dir [cut-off]]]` | a meta pool: the bundles under a directory, read when asked for; alone, list them |
 | `:unmeta <name>` | forget a meta pool's definition, closing it |
 | `:cutoff [30d\|12h\|date\|none]` | the meta pool's cut-off: how recently a bundle was modified to count |
-| `:members [text]` | the meta pool's bundles, most recently modified first, with their sizes |
+| `:members [text]` | the meta pool's bundles, most recently modified first, with their sizes and when |
 | `:log [label] [n] [+skip]` | a git pool's line, newest first, with what each commit changed; `+skip` pages back; with a label, only the commits that changed that resource |
 | `:trace [label] [expr]` | how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
