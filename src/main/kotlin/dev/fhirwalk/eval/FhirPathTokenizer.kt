@@ -102,7 +102,10 @@ object FhirPathTokenizer {
 
     private val PATH_STEP_NAME = Regex("^[A-Za-z_\$%][A-Za-z0-9_]*")
 
-    /** Splits on a separator at paren/quote depth zero. */
+    /**
+     * Splits on a separator at paren/quote depth zero. A stray closer is ignored
+     * rather than counted, or nothing after `x')) or y` would ever split again.
+     */
     fun splitTopLevel(text: String, separator: Char): List<String> {
         val out = mutableListOf<String>()
         var depth = 0
@@ -115,7 +118,7 @@ object FhirPathTokenizer {
                 quote != null -> if (c == '\\') i++ else if (c == quote) quote = null
                 c == '\'' || c == '"' || c == '`' -> quote = c
                 c == '(' || c == '[' -> depth++
-                c == ')' || c == ']' -> depth--
+                c == ')' || c == ']' -> depth = maxOf(0, depth - 1)
                 c == separator && depth == 0 -> {
                     out += text.substring(start, i)
                     start = i + 1
@@ -225,9 +228,10 @@ object FhirPathTokenizer {
         // Everything between the enclosing '(' (or start) and the identifier.
         val localStart = (innermostOpen?.plus(1)) ?: 0
         val local = head.substring(localStart, p)
-        // Only the last argument, and only after the last binary operator.
+        // Only the last argument, and only after the last binary operator. A space
+        // inside a call or a literal, as in `where(code = 'x').`, separates nothing.
         val lastArg = splitTopLevel(local, ',').last()
-        val relative = lastArg.substringAfterLast(' ').ifBlank { lastArg }.trimStart()
+        val relative = splitTopLevel(lastArg, ' ').last().ifBlank { lastArg }.trimStart()
         val relativeBase = relative.trimEnd().removeSuffix(".")
 
         if (callName != null && callName in TYPE_ARG_FUNCTIONS && relativeBase.isBlank()) {

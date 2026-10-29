@@ -242,6 +242,11 @@ class CompleterTest {
     }
 
     @Test
+    fun `members follow a filter whose argument has spaces`() {
+        assertTrue("value" in values("Patient.identifier.where(system = 'http://example.org/mrn')."))
+    }
+
+    @Test
     fun `elements after resolve are counted against the target type`() {
         val name = candidates("Observation.subject.resolve().").single { it.value() == "name" }
         assertEquals("elements (in pool)", name.group())
