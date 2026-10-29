@@ -140,6 +140,42 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `scoped, a label without an id can be typed back too`() {
+        root.resolve("a").createDirectories().resolve("bundle.json").writeText(
+            """{"resourceType":"Bundle","type":"collection","entry":[{"resource":{"resourceType":"Patient","gender":"female"}}]}""",
+        )
+        root.resolve("b").createDirectories().resolve("bundle.json").writeText(bundle)
+        run(":meta exports $root")
+        run(":scope a")
+        assertContains(run("Patient.gender"), "  Patient[#0] ")
+        assertContains(run(":focus Patient[#0]"), "focus a:Patient[#0]")
+        assertEquals("r4:exports/a:Patient[#0]> ", repl.prompt())
+    }
+
+    @Test
+    fun `scoped, the choices of an ambiguous focus and an element focus leave out the bundle`() {
+        run(":meta exports ${archive()}")
+        run(":scope specimen-r1")
+        val choices = run(":focus Patient.name.family")
+        assertContains(choices, "from 2 resources")
+        assertContains(choices, "Patient/pat1 ")
+        assertFalse(choices.contains("specimen-r1:"), choices)
+        assertContains(run(":more"), "specimen-r1:Patient/pat1")
+        run(":focus Patient/pat1")
+        run(":focus name[0]")
+        assertEquals("r4:exports/specimen-r1:Patient/pat1.name[0]> ", repl.prompt())
+    }
+
+    @Test
+    fun `the whole text of a view keeps the whole labels`() {
+        run(":meta exports ${archive()}")
+        run(":scope specimen-r1")
+        run("Observation.status")
+        run(":view #1")
+        assertTrue(repl.outputOf(":more").lines().any { it.startsWith("specimen-r1:Observation/obs1") })
+    }
+
+    @Test
     fun `a focus in another bundle than the scoped one keeps its bundle`() {
         run(":meta exports ${archive()}")
         run(":scope specimen-r1")
