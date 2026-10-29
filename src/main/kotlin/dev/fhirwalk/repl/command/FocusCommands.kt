@@ -82,7 +82,7 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
                         ),
                     ),
                     rows = results.mapIndexed { idx, found ->
-                        state.valueRow(found.value, idx, found.owner.label.takeIf { byResource })
+                        state.valueRow(found.value, idx, state.shown(found.owner).takeIf { byResource })
                     },
                     full = results.flatMapIndexed { idx, found ->
                         state.expanded("  [$idx] ${if (byResource) found.owner.label + "  " else ""}", found.value)

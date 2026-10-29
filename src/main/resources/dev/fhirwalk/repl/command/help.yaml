@@ -259,7 +259,9 @@ topics:
       The cut-off is by file modification time: :cutoff 30d, :cutoff
       2026-10-01, :cutoff none. Files that are not one Bundle are skipped.
       :members lists the bundles; :scope specimen-r1 runs pool-wide over one,
-      :scope all over every one again.
+      :scope all over every one again. Scoped to one, the prompt names it and
+      rows leave it out: Patient/p1, which :focus finds in that bundle; :more
+      prints the whole label.
 
   - name: git
     title: Pools from git revisions

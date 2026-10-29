@@ -63,8 +63,11 @@ class Output {
      * prints every cell whole.
      */
     data class Table(val header: List<Line>, val titles: List<String>, val rows: List<Row>) : Listed {
-        /** @param errors the indexes of cells that hold an error rather than a value. */
-        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet())
+        /**
+         * @param errors the indexes of cells that hold an error rather than a value.
+         * @param wholeLabel what `:more` prints for [label], when that leaves something out.
+         */
+        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet(), val wholeLabel: String = label)
     }
 
     /** A listing or table printed whole, as `:more` does. */

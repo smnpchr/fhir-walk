@@ -121,6 +121,46 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `scoped to a bundle, rows leave out its name, which the prompt gives`() {
+        run(":meta exports ${archive()}")
+        assertContains(run("Observation.status"), "specimen-r1:Observation/obs1")
+        run(":scope specimen-r1")
+        assertEquals("r4:exports/specimen-r1(3)> ", repl.prompt())
+        val rows = run("Observation.status")
+        assertContains(rows, "  Observation/obs1 ")
+        assertFalse(rows.contains("specimen-r1:"), rows)
+        // :more keeps the whole label, and what a row shows can be typed back.
+        assertContains(run(":more"), "specimen-r1:Observation/obs1")
+        val view = run(":view #1")
+        assertContains(view, "  Observation/obs1 ")
+        assertFalse(view.contains("specimen-r1:"), view)
+        assertContains(run(":more"), "specimen-r1:Observation/obs1")
+        assertContains(run(":focus Observation/obs1"), "focus specimen-r1:Observation/obs1")
+        assertEquals("r4:exports/specimen-r1:Observation/obs1> ", repl.prompt())
+    }
+
+    @Test
+    fun `a focus in another bundle than the scoped one keeps its bundle`() {
+        run(":meta exports ${archive()}")
+        run(":scope specimen-r1")
+        run(":focus specimen-r2:Observation/obs1")
+        assertEquals("r4:exports/specimen-r1:specimen-r2:Observation/obs1> ", repl.prompt())
+        run(":scope all")
+        assertEquals("r4:exports:specimen-r2:Observation/obs1> ", repl.prompt())
+    }
+
+    @Test
+    fun `a long bundle name is shortened in the prompt, and whole in scope`() {
+        val long = "pipeline-nightly-2026-10-29T02-00-00-run-0017"
+        root.resolve(long).createDirectories().resolve("bundle.json").writeText(bundle)
+        root.resolve("short").createDirectories().resolve("bundle.json").writeText(bundle)
+        run(":meta exports $root")
+        run(":scope $long")
+        assertEquals("r4:exports/pipeline-nig…00-run-0017(3)> ", repl.prompt())
+        assertContains(run(":scope"), "scope: bundle $long")
+    }
+
+    @Test
     fun `a definition is saved, and read only when asked for`() {
         val root = archive()
         val first = repl(Workspaces(home))
