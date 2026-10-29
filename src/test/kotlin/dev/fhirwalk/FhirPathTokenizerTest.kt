@@ -100,9 +100,19 @@ class FhirPathTokenizerTest {
             assertEquals(CursorKind.MEMBER, context.kind, expr)
             assertEquals(base, context.basePath, expr)
         }
-        // An operator outside any call still starts a new operand.
-        val context = FhirPathTokenizer.cursorContext("Patient.active and Patient.name.", 32)
-        assertEquals("Patient.name", context.basePath)
+        // An operator outside any call still starts a new operand, even after a stray
+        // closer, as when `)` is typed once more after a completion that inserted `')`.
+        for (expr in listOf("Patient.active and Patient.name.", "Patient.name.where(given = 'x')) or Patient.name.")) {
+            assertEquals("Patient.name", FhirPathTokenizer.cursorContext(expr, expr.length).basePath, expr)
+        }
+    }
+
+    @Test
+    fun `a closed call with spaces inside an open one is part of the base`() {
+        val expr = "Patient.name.where(given.where(\$this = 'a b')."
+        val context = FhirPathTokenizer.cursorContext(expr, expr.length)
+        assertEquals(CursorKind.MEMBER, context.kind)
+        assertEquals("Patient.name.given.where(\$this = 'a b')", context.basePath)
     }
 
     @Test
