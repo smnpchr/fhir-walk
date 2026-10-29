@@ -49,7 +49,7 @@ class FhirPathCompleter(
     private val topics: () -> List<CommandInfo> = { emptyList() },
     /** The meta pools defined, for `:meta` and `:unmeta`. */
     private val metas: () -> List<String> = { emptyList() },
-    /** The current meta pool's bundles, for `:scope`; empty in any other pool. */
+    /** The current meta pool's bundles, newest first, for `:scope`; empty in any other pool. */
     private val members: () -> List<String> = { emptyList() },
 ) : Completer {
 
@@ -201,8 +201,9 @@ class FhirPathCompleter(
                 if (bundles.isEmpty()) {
                     candidates += commandCand("delta", "delta", "scope", "what this revision changed")
                 } else {
-                    bundles.filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
-                        candidates += commandCand(it, it, "bundles", null)
+                    // Ranked, or JLine would sort the newest out of the top.
+                    bundles.filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEachIndexed { rank, it ->
+                        candidates += Candidate(it, it, "bundles", null, null, null, true, rank)
                     }
                 }
                 candidates += commandCand("all", "all", "scope", "the whole pool")

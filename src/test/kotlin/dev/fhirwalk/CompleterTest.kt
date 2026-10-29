@@ -247,6 +247,17 @@ class CompleterTest {
     }
 
     @Test
+    fun `scope offers the bundles in the order given, not alphabetically`() {
+        val newestFirst = listOf("run-c", "run-a", "run-b")
+        val scoped = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, members = { newestFirst })
+        val line = parser.parse(":scope ", 7, Parser.ParseContext.COMPLETE)
+        val out = mutableListOf<Candidate>()
+        scoped.complete(reader, line, out)
+        // JLine sorts the candidates before it shows them.
+        assertEquals(newestFirst, out.sorted().filter { it.group() == "bundles" }.map { it.value() })
+    }
+
+    @Test
     fun `elements after resolve are counted against the target type`() {
         val name = candidates("Observation.subject.resolve().").single { it.value() == "name" }
         assertEquals("elements (in pool)", name.group())
