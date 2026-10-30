@@ -66,8 +66,18 @@ class Output {
         /**
          * @param errors the indexes of cells that hold an error rather than a value.
          * @param wholeLabel what `:more` prints for [label], when that leaves something out.
+         * @param note printed after the cells, or in their place for a row with none:
+         *   what a tree says of a row, such as where else it is shown.
+         * @param wholeNote what `:more` prints for [note], when that leaves something out.
          */
-        data class Row(val label: String, val cells: List<String>, val errors: Set<Int> = emptySet(), val wholeLabel: String = label)
+        data class Row(
+            val label: String,
+            val cells: List<String>,
+            val errors: Set<Int> = emptySet(),
+            val wholeLabel: String = label,
+            val note: Line? = null,
+            val wholeNote: Line? = note,
+        )
     }
 
     /** A listing or table printed whole, as `:more` does. */
@@ -126,7 +136,11 @@ class Output {
 
     private fun lines(table: Table, whole: Boolean): List<String> =
         table.header.map { it.text } + table.titles.joinToString("  ") +
-            table.rows.map { "${if (whole) it.wholeLabel else it.label}  ${it.cells.joinToString("  ")}" }
+            table.rows.map { row ->
+                val note = (if (whole) row.wholeNote else row.note)?.text
+                listOfNotNull(if (whole) row.wholeLabel else row.label, row.cells.takeIf { it.isNotEmpty() }?.joinToString("  "), note)
+                    .joinToString("  ")
+            }
 
     class LineBuilder {
         internal val spans = mutableListOf<Span>()

@@ -84,18 +84,12 @@ class FhirPathCompleter(
         // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
         val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
             ?: focus().takeIf { slice.command != ":all" && slice.command != ":tree" }
-        // `#` begins no expression: after :tree it is a :history number, and nothing else.
-        if (slice.command == ":tree" && slice.text.startsWith("#")) {
-            recordedColumns(slice.text.take(slice.cursor), emptySet(), MAX_ROWS, candidates)
-            return
-        }
         val expression = mutableListOf<Candidate>()
         completeExpression(slice.text, slice.cursor, relativeTo, expression)
         // Labels first in the menu, but sized to the room the expression left.
         if (slice.command == ":focus" || (slice.command == ":trace" && slice.subject == null)) {
             focusLabels(slice, relativeTo, expression, candidates)
         }
-        if (slice.command == ":tree") treeReferences(slice, expression, candidates)
         candidates += expression
     }
 
@@ -138,27 +132,13 @@ class FhirPathCompleter(
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
-            ":view" -> {
-                // The expressions already on the line, however they were asked for: a
-                // name and the number it holds are the same column.
-                val log = recorded()
-                val taken = arguments.dropLast(1).mapNotNull { ref ->
-                    ref.removePrefix("#").toIntOrNull()?.let { log.getOrNull(it - 1) } ?: named()[ref]
-                }.toSet()
-                // `@` asks for a saved view, so nothing else matches it.
-                if (lastToken.startsWith("@")) {
-                    views(lastToken.drop(1), "@", MAX_ROWS, candidates)
-                    return
-                }
-                // One budget for all three, so together they stay under JLine's
-                // threshold. On an empty word the views are offered too; once a
-                // letter is typed, `@family` could never match it.
-                var room = MAX_MENU
-                // Views come first in the menu, so on an empty word they get a third of
-                // the room at most: many saved views must not crowd out the names.
-                if (lastToken.isEmpty()) room -= views("", "@", minOf(MAX_ROWS, room / 3), candidates)
-                room -= names(lastToken, taken, minOf(MAX_ROWS, room), candidates)
-                recordedColumns(lastToken, taken, minOf(MAX_ROWS, room), candidates)
+            ":view" -> viewColumns(arguments, lastToken, candidates)
+            // The link first, a name or a number; then the columns, as :view takes them.
+            ":tree-view" -> if (arguments.size == 1) {
+                val room = MAX_MENU - names(lastToken, emptySet(), MAX_ROWS, candidates)
+                recordedColumns(lastToken, emptySet(), minOf(MAX_ROWS, room), candidates)
+            } else {
+                viewColumns(arguments.drop(1), lastToken, candidates)
             }
             // Either spelling, `people` or `@people`; the candidate keeps the one typed.
             ":name-view", ":unname-view" -> if (arguments.size == 1) {
@@ -291,6 +271,33 @@ class FhirPathCompleter(
     }
 
     /**
+     * The columns of a `:view` line, [arguments] being those typed so far, the last
+     * under the cursor.
+     */
+    private fun viewColumns(arguments: List<String>, lastToken: String, candidates: MutableList<Candidate>) {
+        // The expressions already on the line, however they were asked for: a
+        // name and the number it holds are the same column.
+        val log = recorded()
+        val taken = arguments.dropLast(1).mapNotNull { ref ->
+            ref.removePrefix("#").toIntOrNull()?.let { log.getOrNull(it - 1) } ?: named()[ref]
+        }.toSet()
+        // `@` asks for a saved view, so nothing else matches it.
+        if (lastToken.startsWith("@")) {
+            views(lastToken.drop(1), "@", MAX_ROWS, candidates)
+            return
+        }
+        // One budget for all three, so together they stay under JLine's
+        // threshold. On an empty word the views are offered too; once a
+        // letter is typed, `@family` could never match it.
+        var room = MAX_MENU
+        // Views come first in the menu, so on an empty word they get a third of
+        // the room at most: many saved views must not crowd out the names.
+        if (lastToken.isEmpty()) room -= views("", "@", minOf(MAX_ROWS, room / 3), candidates)
+        room -= names(lastToken, taken, minOf(MAX_ROWS, room), candidates)
+        recordedColumns(lastToken, taken, minOf(MAX_ROWS, room), candidates)
+    }
+
+    /**
      * Names from `:name-expr`, narrowed by what is typed before the cap; see
      * [matching]. Names are case-sensitive, so `Fam` completing to `family`
      * inserts the name as it is spelled. A name whose expression is in [taken] is skipped.
@@ -392,17 +399,6 @@ class FhirPathCompleter(
             }
             .take(minOf(MAX_ROWS, room))
             .forEach { candidates += commandCand(it.label.drop(beforeWord.length), it.label, "pool", it.origin) }
-    }
-
-    /**
-     * `:tree` takes a name in place of the expression, offered while one word is
-     * typed; a `:history` number is completed before any expression is.
-     */
-    private fun treeReferences(slice: PromptLine.Slice, others: List<Candidate>, candidates: MutableList<Candidate>) {
-        val typed = slice.text.take(slice.cursor)
-        if (typed.any { !it.isLetterOrDigit() && it != '_' && it != '-' }) return
-        val room = MAX_MENU - others.count { it.value().startsWith(typed, ignoreCase = true) }
-        names(typed, emptySet(), minOf(MAX_ROWS, room), candidates)
     }
 
     // ---------------------------------------------------------------- expressions

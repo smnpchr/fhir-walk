@@ -147,14 +147,13 @@ commands:
         summary: find the step where the expression goes empty
         topic: evaluating
       - name: ":tree"
-        args: "<expr|#n|name>"
+        args: "<expr>"
         summary: what the expression links, as a tree from each root down, e.g. :tree Specimen.parent
         details: |
           The expression names each resource's parents. A resource shown once
           is marked where a second link reaches it, and a cycle where it
-          closes; with a focus, only the tree below it. A :history number or
-          a name from :name-expr stands for its expression, and one that
-          links something is recorded, so :name-expr can name it next.
+          closes; with a focus, only the tree below it. One that links
+          something is recorded, so :name-expr can name it for :tree-view.
         topic: evaluating
       - name: ":ext"
         args: "[path]"
@@ -173,6 +172,14 @@ commands:
         details: |
           Numbers come from :history, names from :name-expr, views from :name-view.
         topic: recording
+      - name: ":tree-view"
+        args: "<#n|name> [#n|name|@view …]"
+        summary: "a recorded link's tree, with :view's columns along it"
+        details: |
+          The first word is the link, as :tree takes it; the rest are columns,
+          as :view takes them. Alone, the link's plain tree. Its columns are
+          what :name-view saves next, as after a :view.
+        topic: recording
       - name: ":name-expr"
         args: "[name [#n]]"
         summary: "name the expression just run, or #n, for :view; alone, list"
@@ -183,7 +190,7 @@ commands:
         topic: recording
       - name: ":name-view"
         args: "[view]"
-        summary: name and save the last :view, to rerun as :view @view; alone, list
+        summary: name and save the last :view's columns, or :tree-view's, to rerun as @view; alone, list
         topic: recording
       - name: ":unname-view"
         args: "<view>"
@@ -231,9 +238,8 @@ topics:
       …) under the other; a link back up the path is marked ↻ cycle. A
       reference that does not resolve is said on its resource's row. It
       runs over the scope, and in a meta pool within each bundle; with a
-      focus it shows the tree below the focus only. :tree #3 or :tree
-      parents runs a recorded or named expression; a name wins over the
-      path it is spelled like, and the header says what it stood for.
+      focus it shows the tree below the focus only. :tree takes FHIRPath
+      only; a recorded or named link is :tree-view's, see :manual recording.
 
   - name: focus
     title: Focusing on a resource or an element
@@ -259,6 +265,11 @@ topics:
       works and the column is titled family. A name holds the expression
       itself, not its number.
       :name-view people saves the last :view; :view @people reruns it.
+
+      A tree is the same: :tree Specimen.parent records its link, :name-expr
+      parents names it, and :tree-view parents kind collected shows the
+      tree with those columns along it, one row per resource in tree order.
+      A row marked as shown elsewhere has no cells; its cells are there.
 
   - name: pools
     title: Several pools

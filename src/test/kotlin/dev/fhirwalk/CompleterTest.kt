@@ -447,7 +447,7 @@ class CompleterTest {
     }
 
     @Test
-    fun `tree completes a name or a number in place of its expression`() {
+    fun `tree completes FHIRPath, tree-view a link and then columns`() {
         val completer = FhirPathCompleter(
             { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null },
             { listOf("Patient.link.other", "Patient.name.family") }, { mapOf("links" to "Patient.link.other") },
@@ -456,10 +456,13 @@ class CompleterTest {
             completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
         }.map { it.value() }
 
-        assertTrue("links" in values(":tree li"))
-        assertEquals(listOf("#2", "#1"), values(":tree #"))
-        // Inside an expression, a name is no step of it.
-        assertFalse("links" in values(":tree Patient.li"))
+        assertFalse("links" in values(":tree li"))
+        assertEquals(setOf("links", "#2", "#1"), values(":tree-view ").toSet())
+        assertEquals(listOf("#2", "#1"), values(":tree-view #"))
+        assertEquals(listOf("links"), values(":tree-view li"))
+        // After the link, the columns, as :view offers them.
+        assertEquals(setOf("links", "#2", "#1"), values(":tree-view links ").toSet())
+        assertEquals(setOf("#2"), values(":tree-view links #1 ").toSet())
     }
 
     @Test

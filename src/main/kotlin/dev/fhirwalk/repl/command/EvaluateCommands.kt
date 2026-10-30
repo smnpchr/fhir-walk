@@ -3,13 +3,11 @@ package dev.fhirwalk.repl.command
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.Outcome
-import dev.fhirwalk.eval.ReferenceTree
-import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
 import dev.fhirwalk.repl.abbreviate
 
-/** Running an expression, against the focus or across the pool, finding out why it came back empty, and following its links. */
+/** Running an expression, against the focus or across the pool, and finding out why it came back empty. */
 internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
 
     private val session: Session get() = state.session
@@ -24,7 +22,6 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             }
         },
         command(":why", run = ::why),
-        command(":tree", run = ::tree),
         command(":ext", run = ::extensions),
     )
 
@@ -109,103 +106,6 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                     hit.values.flatMap { state.expanded("      ", it) }
             },
         )
-    }
-
-    /**
-     * `:tree Specimen.parent`: what in scope the expression links to its parents,
-     * as a forest, roots first. With a focus, only the tree below it. The argument
-     * may be a `:history` number or a name instead, and one that links something
-     * is recorded, as `:all` records what matches.
-     */
-    private fun tree(argument: String, out: Output) {
-        val typed = argument.trim()
-        if (typed.isEmpty()) {
-            out.text("usage: :tree <expr>|#n|name  —  an expression naming each resource's parents, e.g. :tree Specimen.parent")
-            return
-        }
-        state.lastPicks = null
-        state.nameable = null
-        val number = typed.takeIf { it.startsWith("#") }?.drop(1)?.toIntOrNull()
-        // A name wins over the path it is spelled like; the header says what it stood for.
-        val expression = when {
-            number != null -> state.log.get(number) ?: run {
-                out.text("nothing recorded as #$number — see :history")
-                return
-            }
-            else -> state.names.get(typed) ?: typed
-        }
-        val stood = typed.takeIf { expression != typed }
-        if (state.reportSyntaxError(expression, out)) return
-        val pool = session.pool
-        val from = session.focus?.resource
-        val candidates = pool.inScope()
-        val tree = ReferenceTree.build(session.evaluator, pool, expression, candidates, from)
-        val meta = session.current.meta
-        val header = Output.line {
-            stood?.let { label(it); +" = "; shrink(expression); +": " }
-            +"${tree.linked} resource(s) in ${tree.trees} tree(s)"
-            if (from != null) +" below ${state.shown(from)}"
-            if (meta != null && meta.scoped == null && from == null) {
-                +", in ${tree.rows.mapTo(HashSet()) { it.resource.part }.size} of ${meta.members.size} bundle(s)"
-            }
-            // Of the type the expression starts at: every other resource is not what it was asked of.
-            val type = FhirPathTokenizer.segments(expression).firstOrNull()?.name?.takeIf { it in session.navigator.resourceTypes() }
-            if (type != null && from == null) {
-                val shown = tree.rows.mapTo(HashSet()) { it.resource }
-                val alone = candidates.count { it.type == type && it !in shown }
-                if (alone > 0) hint("; $alone $type not linked")
-            }
-            if (tree.notReferences > 0) error("; ${tree.notReferences} value(s) not a Reference")
-            if (tree.notPooled > 0) hint("; ${tree.notPooled} resource(s) not in the pool, such as contained ones")
-            if (tree.errors > 0) error("; ${tree.errors} error(s): ${tree.firstError}")
-        }
-        if (tree.rows.isEmpty()) {
-            out.add(header)
-            if (from != null) {
-                out.text("  ${state.shown(from)} links to nothing by $expression, and nothing to it")
-            } else if (tree.errors == 0 && tree.notReferences == 0 && tree.notPooled == 0) {
-                // Values that are no Reference are their own answer; only nothing at all is :why's question.
-                out.text("  nothing links by $expression — :why $expression")
-            }
-            state.lastListing = null
-            return
-        }
-        state.nameable = expression
-        state.record(expression, out)
-        out.listing(
-            listOf(header),
-            rows = tree.rows.map { row -> treeRow(row, whole = false) },
-            full = tree.rows.map { row -> treeRow(row, whole = true) },
-        )
-    }
-
-    /**
-     * Below a root, labels leave out the bundle: a link stays inside its bundle,
-     * which the root's label names. [whole] keeps every label whole, for `:more`.
-     */
-    private fun treeRow(row: ReferenceTree.Row, whole: Boolean): Output.Line {
-        fun name(resource: PooledResource): String = when {
-            whole -> resource.label
-            row.depth == 0 -> state.shown(resource)
-            else -> resource.part?.let { resource.label.removePrefix("$it:") } ?: resource.label
-        }
-        return Output.line {
-            +"  ".repeat(row.depth + 1)
-            label(name(row.resource))
-            when (val mark = row.mark) {
-                ReferenceTree.Mark.None -> {}
-                ReferenceTree.Mark.Cycle -> hint("  ↻ cycle")
-                is ReferenceTree.Mark.Shown -> hint("  (shown " + (mark.parent?.let { "under ${name(it)}" } ?: "above") + ")")
-            }
-            if (row.missing.isNotEmpty()) {
-                +"  "
-                shrink("! refers to ${row.missing.joinToString(", ")}, not ${if (session.current.meta != null) "in this bundle" else "in the pool"}", Output.Kind.ERROR, cutsEnd = true)
-            }
-            if (row.contained.isNotEmpty()) {
-                +"  "
-                shrink("refers to contained ${row.contained.joinToString(", ")}", Output.Kind.HINT, cutsEnd = true)
-            }
-        }
     }
 
     /** @param argument the expression, or blank to re-diagnose the last one. */

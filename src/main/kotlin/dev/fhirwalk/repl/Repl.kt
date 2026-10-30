@@ -14,6 +14,7 @@ import dev.fhirwalk.repl.command.MetaCommands
 import dev.fhirwalk.repl.command.PoolCommands
 import dev.fhirwalk.repl.command.RecordCommands
 import dev.fhirwalk.repl.command.ReplState
+import dev.fhirwalk.repl.command.TreeCommands
 import dev.fhirwalk.repl.command.WorkspaceCommands
 import dev.fhirwalk.repl.command.command
 import org.jline.reader.EndOfFileException
@@ -74,6 +75,7 @@ class Repl(
     private val manual = Manual.load()
 
     private val evaluateCommands = EvaluateCommands(state)
+    private val recordCommands = RecordCommands(state)
     private val focusCommands = FocusCommands(state)
     private val metaCommands = MetaCommands(state)
     private val gitCommands = GitCommands(state, focusCommands, metaCommands)
@@ -81,7 +83,7 @@ class Repl(
     private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 
     private val commands: List<Command> = listOf(
-        poolCommands, metaCommands, gitCommands, evaluateCommands, focusCommands, RecordCommands(state), workspaceCommands,
+        poolCommands, metaCommands, gitCommands, evaluateCommands, TreeCommands(state, recordCommands), focusCommands, recordCommands, workspaceCommands,
         DisplayCommands(state),
         // Asked for only when :help runs; the aliases include :help's own, so they
         // cannot be known before this list is.
