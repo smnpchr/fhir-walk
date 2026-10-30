@@ -177,7 +177,8 @@ commands:
         summary: "a recorded link's tree, with :view's columns along it"
         details: |
           The first word is the link, as :tree takes it; the rest are columns,
-          as :view takes them. Alone, the link's plain tree.
+          as :view takes them. Alone, the link's plain tree. Its columns are
+          what :name-view saves next, as after a :view.
         topic: recording
       - name: ":name-expr"
         args: "[name [#n]]"
@@ -189,7 +190,7 @@ commands:
         topic: recording
       - name: ":name-view"
         args: "[view]"
-        summary: name and save the last :view, to rerun as :view @view; alone, list
+        summary: name and save the last :view's columns, or :tree-view's, to rerun as @view; alone, list
         topic: recording
       - name: ":unname-view"
         args: "<view>"

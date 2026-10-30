@@ -43,6 +43,26 @@ class PrinterTest {
     }
 
     @Test
+    fun `a table keeps room for a note after its cells`() {
+        val note = Output.line { error("! refers to Specimen/x, not in the pool") }
+        val output = Output().apply {
+            table(
+                emptyList(),
+                listOf("a", "b"),
+                listOf(
+                    Output.Table.Row("Specimen/s1", listOf("x".repeat(40), "y".repeat(40))),
+                    Output.Table.Row("Specimen/s2", listOf("x", "y"), note = note),
+                    Output.Table.Row("Specimen/s3", emptyList(), note = Output.line { hint("(shown above)") }),
+                ),
+            )
+        }
+        val lines = printed(output, columns = 80)
+        assertTrue(lines.all { it.length <= 80 }, lines.joinToString("\n"))
+        assertTrue(lines.any { it.endsWith("! refers to Specimen/x, not in the pool") }, lines.joinToString("\n"))
+        assertTrue("  Specimen/s3  (shown above)" in lines, lines.joinToString("\n"))
+    }
+
+    @Test
     fun `a listing past the row limit says how many wait for more`() {
         val output = Output().apply { listing(listOf(Output.text("head")), (1..5).map { Output.text("row $it") }) }
         assertEquals(listOf("head", "row 1", "row 2", "  … 3 more of 5 — :more"), printed(output, rows = 2))

@@ -65,7 +65,8 @@ internal class TreeCommands(private val state: ReplState, private val records: R
         val link = records.column(refs.first(), out) ?: return
         val columns = records.columns(refs.drop(1), out) ?: return
         if (state.reportSyntaxError(link.expression, out)) return
-        show(link.expression, link.ref, columns.ifEmpty { null }, out)
+        // Its columns are what :name-view saves next, as after :view: :tree-view parents @x reruns them.
+        if (show(link.expression, link.ref, columns.ifEmpty { null }, out) && columns.isNotEmpty()) state.lastView = columns
     }
 
     /**
@@ -144,6 +145,7 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                     errors = viewRow?.failed.orEmpty(),
                     wholeLabel = indent(row) + name(row, row.resource, whole = true),
                     note = note(row, whole = false),
+                    wholeNote = note(row, whole = true),
                 )
             },
         )

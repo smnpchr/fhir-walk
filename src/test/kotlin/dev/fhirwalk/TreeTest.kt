@@ -49,7 +49,7 @@ class TreeTest {
             bundle(
                 specimen("s1"), specimen("s1a", "s1"), specimen("s1a1", "s1a"), specimen("s1b", "s1"),
                 specimen("s7"), specimen("s8", "s1", "s7"), specimen("c1", "c2"), specimen("c2", "c1"),
-                specimen("d1", "x"), specimen("s9"),
+                specimen("d1", "x"), specimen("s9"), """{"resource":{"resourceType":"Patient","id":"pat1"}}""",
             ),
         )
     }
@@ -167,6 +167,30 @@ class TreeTest {
         assertContains(run(":tree-view parents @nope"), "no saved view nope")
         assertContains(run(":tree-view @ups"), "a view gives columns, not the link")
         assertContains(run(":tree-view parents parents"), "not a primitive")
+        run(":all Patient.id")
+        run(":name-expr pid")
+        assertContains(run(":tree-view parents pid"), "no Patient among the rows, which are Specimen")
+    }
+
+    @Test
+    fun `a tree-view's columns are what name-view saves next`() {
+        named()
+        val view = run(":tree-view parents up")
+        assertContains(run(":name-view tv"), "saved @tv: 1 column(s)")
+        assertEquals(view, run(":tree-view parents @tv"))
+    }
+
+    @Test
+    fun `more prints a tree-view's notes whole`() {
+        root.resolve("a").createDirectories().resolve("bundle.json")
+            .writeText(bundle(specimen("s1"), specimen("s7"), specimen("s8", "s1", "s7")))
+        run(":meta exports $root")
+        run(":tree Specimen.parent")
+        run(":name-expr parents")
+        run(":all Specimen.parent.reference")
+        run(":name-expr up")
+        assertContains(run(":tree-view parents up"), "    Specimen/s8  (shown under Specimen/s1)")
+        assertContains(run(":more"), "    a-bundle:Specimen/s8  (shown under a-bundle:Specimen/s1)")
     }
 
     @Test

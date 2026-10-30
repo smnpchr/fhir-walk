@@ -65,7 +65,11 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         val labelWidth = table.rows.maxOfOrNull { it.label.length } ?: 0
         val wholeLabelWidth = table.rows.maxOfOrNull { it.wholeLabel.length } ?: 0
         val natural = table.titles.indices.map { idx -> maxOf(table.titles[idx].length, table.rows.maxOfOrNull { it.cells.getOrNull(idx)?.length ?: 0 } ?: 0) }
-        val room = columns - 2 - labelWidth - COLUMN_GAP * table.titles.size
+        // A note after the cells shrinks to no less than MIN_VALUE_WIDTH, so that much
+        // of the window, or the whole note when shorter, is kept from the cells.
+        val noteWidth = table.rows.filter { it.cells.isNotEmpty() }.maxOfOrNull { row -> row.note?.text?.length ?: 0 } ?: 0
+        val reserved = if (noteWidth == 0) 0 else 2 + minOf(noteWidth, MIN_VALUE_WIDTH)
+        val room = columns - 2 - labelWidth - COLUMN_GAP * table.titles.size - reserved
         val fitting = fitColumns(natural, room, MIN_CELL_WIDTH)
         fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean, labelWidth: Int, note: Output.Line? = null) = Output.line {
             +"  "
@@ -86,7 +90,8 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         fun rows(widths: List<Int>, whole: Boolean) = table.rows.map {
             // A row with no cells keeps no padding: its note follows the label.
             val width = if (it.cells.isEmpty() && it.note != null) 0 else if (whole) wholeLabelWidth else labelWidth
-            trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths.take(it.cells.size), it.errors, titles = false, width, it.note))
+            val note = if (whole) it.wholeNote else it.note
+            trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths.take(it.cells.size), it.errors, titles = false, width, note))
         }
         return Output.Listing(header(fitting, labelWidth), rows(fitting, whole = false), rows(natural, whole = true), header(natural, wholeLabelWidth))
     }

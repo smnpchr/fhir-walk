@@ -130,7 +130,7 @@ Type a FHIRPath expression, or:
 | `:tree-view <#n\|name> [#n\|name\|@view …]` | a recorded link's tree, with `:view`'s columns along it |
 | `:name-expr [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
 | `:unname-expr <name>` | forget an expression's name |
-| `:name-view [view]` | name and save the last `:view`, to rerun as `:view @view`; alone, list the saved views |
+| `:name-view [view]` | name and save the last `:view`'s columns, or `:tree-view`'s, to rerun as `@view`; alone, list the saved views |
 | `:unname-view <view>` | forget a saved view |
 | `:workspace [name]` | switch workspace; alone, show it and list the others |
 | `:more` | reprint the last listing in full, nothing shortened |
@@ -301,7 +301,8 @@ parents = Specimen.parent: 9 resource(s) in 4 tree(s); 1 Specimen not linked
 
 The rows are the tree's, in its order; a row shown elsewhere has no cells, since they
 are on that row. `:tree-view parents` alone is the plain tree, and `@view` columns work
-as in `:view`.
+as in `:view`. Its columns count as the last view's, so `:name-view` right after saves
+them, and `:tree-view parents @saved` reruns them along the tree.
 
 ### Several pools
 

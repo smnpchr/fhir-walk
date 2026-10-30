@@ -94,6 +94,10 @@ class ViewBuilder(
         }
         val type = types.single()
         val resources = only?.filter { it.type.equals(type, ignoreCase = true) } ?: pool.inScope(type)
+        if (resources.isEmpty() && !only.isNullOrEmpty()) {
+            // Blank cells on every row would read as missing data.
+            return Result.Refused("no $type among the rows, which are ${only.map { it.type }.distinct().joinToString(", ")}")
+        }
         if (resources.isEmpty() && only == null) {
             if (pool.scope != null && pool.ofType(type).isNotEmpty()) {
                 return Result.Refused("no $type in the scope — :scope all for the whole pool")

@@ -462,7 +462,7 @@ class CompleterTest {
         assertEquals(listOf("links"), values(":tree-view li"))
         // After the link, the columns, as :view offers them.
         assertEquals(setOf("links", "#2", "#1"), values(":tree-view links ").toSet())
-        assertEquals(setOf("#2"), values(":tree-view links #1 ").toSet() - "links")
+        assertEquals(setOf("#2"), values(":tree-view links #1 ").toSet())
     }
 
     @Test
