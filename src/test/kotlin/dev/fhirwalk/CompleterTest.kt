@@ -285,6 +285,21 @@ class CompleterTest {
     }
 
     @Test
+    fun `scope finds a bundle by any part of its name once none begins with the word`() {
+        val newestFirst = listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016", "final-a")
+        val scoped = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, members = { newestFirst })
+        fun offered(line: String) = mutableListOf<Candidate>().also {
+            scoped.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.sorted().map { it.value() }
+        assertEquals(listOf("pipeline-2026-10-29-run-0017"), offered(":scope 0017"))
+        assertEquals(listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016"), offered(":scope RUN-00"))
+        // What begins with the word wins, as in JLine: `al` is `all`, not final-a.
+        assertEquals(listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016"), offered(":scope pipe"))
+        assertEquals(listOf("all"), offered(":scope al"))
+        assertEquals(emptyList(), offered(":scope zzz"))
+    }
+
+    @Test
     fun `elements after resolve are counted against the target type`() {
         val name = candidates("Observation.subject.resolve().").single { it.value() == "name" }
         assertEquals("elements (in pool)", name.group())

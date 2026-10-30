@@ -200,13 +200,21 @@ class FhirPathCompleter(
                 val bundles = members()
                 if (bundles.isEmpty()) {
                     candidates += commandCand("delta", "delta", "scope", "what this revision changed")
+                    candidates += commandCand("all", "all", "scope", "the whole pool")
                 } else {
+                    // As JLine matches: what begins with the word, and only when nothing
+                    // does, what contains it, so `0017` finds `…-run-0017` without its
+                    // long start. `all` counts among what begins with it, or JLine
+                    // would keep it and drop every bundle that only contains `a`.
+                    val all = "all".startsWith(lastToken, ignoreCase = true)
+                    val begun = bundles.matching(lastToken)
+                    val shown = if (begun.isEmpty() && !all) bundles.filter { it.contains(lastToken, ignoreCase = true) } else begun
                     // Ranked, or JLine would sort the newest out of the top.
-                    bundles.matching(lastToken).take(MAX_ROWS).forEachIndexed { rank, it ->
+                    shown.take(MAX_ROWS).forEachIndexed { rank, it ->
                         candidates += Candidate(it, it, "bundles", null, null, null, true, rank)
                     }
+                    if (all) candidates += commandCand("all", "all", "scope", "the whole pool")
                 }
-                candidates += commandCand("all", "all", "scope", "the whole pool")
             }
             // The name is new, so there is nothing to offer for it; then a path, or past
             // its @ the revisions of the repository it is in.
