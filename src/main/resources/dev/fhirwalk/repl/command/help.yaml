@@ -118,6 +118,10 @@ commands:
       - name: ":scope"
         args: "[delta|bundle|all]"
         summary: run pool-wide over the delta only, one bundle of a meta pool, or everything
+        details: |
+          In a meta pool TAB offers the bundles newest first. When none begins
+          with what is typed, it offers those that contain it, so :scope 0017
+          finds a bundle of a long name by its end.
         topic: git
 
   - group: Evaluating

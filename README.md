@@ -337,8 +337,9 @@ parsing only the bundles it lets in. A bundle is named by its path less the
 extension and what every path ends in (never `all`, which `:scope` keeps for every bundle); a resource's label carries it
 (`specimen-r1:Patient/p1`), and `:members` lists them. Scoped to one bundle with
 `:scope`, the prompt names it and rows leave it out (`Patient/p1`, which `:focus`
-finds in that bundle); `:more` prints the whole label. Files that are not one Bundle
-are skipped.
+finds in that bundle); `:more` prints the whole label. TAB after `:scope` finds a
+bundle by any part of its name once none begins with what is typed: `:scope 0017`.
+Files that are not one Bundle are skipped.
 
 ### Pools from git revisions
 
