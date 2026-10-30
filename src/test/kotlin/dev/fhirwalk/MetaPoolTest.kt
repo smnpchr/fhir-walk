@@ -257,6 +257,119 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `members read the directory again, so a bundle that arrived shows`() {
+        root.resolve("a").createDirectories().resolve("bundle.json").writeText(bundle)
+        run(":meta exports $root")
+        run(":focus #0")
+        // Alone, it is named a-bundle; beside another, `bundle` is what every path ends in.
+        root.resolve("b").createDirectories().resolve("bundle.json").writeText(bundle)
+        val members = run(":members")
+        assertContains(members, "meta pool exports read again: 1 new — 2 bundle(s), 6 resource(s); 1 renamed; focus cleared")
+        assertContains(members, "2 of 2 bundle(s)")
+        assertContains(members, "  b ")
+        assertEquals("r4:exports(6)> ", repl.prompt())
+    }
+
+    @Test
+    fun `members leave the pool alone when no bundle changed`() {
+        run(":meta exports ${archive()}")
+        run(":focus #0")
+        val members = run(":members")
+        assertFalse(members.contains("read again"), members)
+        assertEquals("r4:exports:specimen-r1:Patient/pat1> ", repl.prompt())
+        // Nor does a file that is no Bundle changing make it read again.
+        root.resolve("rate/notes.json").writeText("""{"resourceType":"Basic"}""")
+        assertFalse(run(":members").contains("read again"))
+    }
+
+    @Test
+    fun `members say what was modified and what went, and a scope that went with it`() {
+        val root = archive()
+        run(":meta exports $root")
+        run(":scope specimen-r2")
+        Files.setLastModifiedTime(root.resolve("specimen/r1/bundle.json"), FileTime.from(Instant.parse("2026-01-01T00:00:00Z")))
+        Files.delete(root.resolve("specimen/r2/bundle.json"))
+        assertContains(
+            run(":members"),
+            "meta pool exports read again: 1 gone, 1 modified — 1 bundle(s), 3 resource(s); 1 renamed; 1 file(s) skipped, not a Bundle; scope on specimen-r2 dropped",
+        )
+    }
+
+    @Test
+    fun `scope all reads again, a bundle named does not`() {
+        val root = archive()
+        run(":meta exports $root")
+        root.resolve("specimen/r3").createDirectories().resolve("bundle.json").writeText(bundle)
+        assertContains(run(":scope specimen-r1"), "scope: bundle specimen-r1, 3 resource(s)")
+        assertContains(run(":scope"), "scope: bundle specimen-r1")
+        val all = run(":scope all")
+        assertContains(all, "meta pool exports read again: 1 new — 3 bundle(s), 7 resource(s)")
+        assertContains(all, "scope: all 3 bundle(s), 7 resource(s)")
+    }
+
+    @Test
+    fun `a bundle half written is said once, and read when it is whole`() {
+        val root = archive()
+        run(":meta exports $root")
+        val half = root.resolve("specimen/r3").createDirectories().resolve("bundle.json")
+        half.writeText("""{"resourceType":"Bundle","entry":[""")
+        Files.setLastModifiedTime(half, FileTime.from(Instant.parse("2026-01-01T00:00:00Z")))
+        val first = run(":members")
+        assertContains(first, "meta pool exports: no bundle changed")
+        assertContains(first, "! specimen/r3/bundle.json: ")
+        assertFalse(run(":members").contains("specimen/r3/bundle.json: "))
+        half.writeText(bundle)
+        assertContains(run(":members"), "read again: 1 new — 3 bundle(s)")
+    }
+
+    @Test
+    fun `a bundle past the cut-off is said to be older, not gone`() {
+        val root = archive()
+        run(":meta exports $root 2026-02")
+        Files.setLastModifiedTime(root.resolve("specimen/r1/bundle.json"), FileTime.from(Instant.parse("2026-01-01T00:00:00Z")))
+        assertContains(
+            run(":members"),
+            "meta pool exports read again: 1 now older than 2026-02 — 1 bundle(s), 1 resource(s); 1 renamed; 1 older than 2026-02; 1 file(s) skipped",
+        )
+    }
+
+    @Test
+    fun `a bundle written again within the same second is seen by its size`() {
+        val root = archive()
+        val r2 = root.resolve("specimen/r2/bundle.json")
+        val time = FileTime.from(Instant.parse("2026-01-01T00:00:00Z"))
+        Files.setLastModifiedTime(r2, time)
+        run(":meta exports $root")
+        r2.writeText(bundle)
+        Files.setLastModifiedTime(r2, time)
+        assertContains(run(":members"), "meta pool exports read again: 1 modified — 2 bundle(s), 6 resource(s)")
+    }
+
+    @Test
+    fun `problems found by members are rows of its listing, so more reaches them`() {
+        val root = archive()
+        run(":meta exports $root")
+        run(":limit 2")
+        for (n in 1..3) root.resolve("broken/b$n").createDirectories().resolve("bundle.json").writeText("""{"resourceType":"Bundle","entry":[""")
+        val members = run(":members")
+        assertContains(members, "meta pool exports: no bundle changed")
+        assertContains(members, "! broken/b1/bundle.json: ")
+        val more = run(":more")
+        assertContains(more, "! broken/b3/bundle.json: ")
+        assertContains(more, "specimen-r2")
+    }
+
+    @Test
+    fun `members of a directory that has gone are those read before`() {
+        val root = archive()
+        run(":meta exports $root")
+        root.toFile().deleteRecursively()
+        val members = run(":members")
+        assertContains(members, "is not a directory — showing what was read before")
+        assertContains(members, "specimen-r1")
+    }
+
+    @Test
     fun `a directory that has gone is kept, and does not stop a version switch`() {
         val root = archive()
         run(":meta exports $root")

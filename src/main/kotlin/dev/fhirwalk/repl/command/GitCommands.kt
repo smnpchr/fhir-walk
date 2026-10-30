@@ -20,7 +20,11 @@ import java.time.format.DateTimeFormatter
 import java.util.WeakHashMap
 
 /** A git pool: opening one at a revision, moving it along its line, and reading its history. */
-internal class GitCommands(private val state: ReplState, private val focus: FocusCommands) : CommandGroup {
+internal class GitCommands(
+    private val state: ReplState,
+    private val focus: FocusCommands,
+    private val metas: MetaCommands,
+) : CommandGroup {
 
     private val session: Session get() = state.session
 
@@ -633,7 +637,12 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
         }
     }
 
-    /** In a meta pool the scope is a bundle: `:scope specimen-r1`, and `:scope all` for every one. */
+    /**
+     * In a meta pool the scope is a bundle: `:scope specimen-r1`, and `:scope all` for
+     * every one, read again first so that every one includes what arrived since. A
+     * bundle named is not read again: its name is from the last read, and could
+     * change with it.
+     */
     private fun memberScope(meta: MetaPool, argument: String, out: Output) {
         val pool = session.pool
         when {
@@ -642,6 +651,7 @@ internal class GitCommands(private val state: ReplState, private val focus: Focu
                     ?: "scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s) — :scope <bundle> for one, :members lists them",
             )
             argument.equals("all", ignoreCase = true) -> {
+                metas.refresh(session.current, meta).writeTo(out)
                 meta.scope(pool, null)
                 out.text("scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s)")
             }
