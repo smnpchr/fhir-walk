@@ -262,7 +262,7 @@ class CompleterTest {
         val named = FhirPathCompleter(
             { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS },
             savedViews = { setOf("Specimens") },
-            workspaces = { listOf("Biobank") },
+            workspaces = { listOf("Biobank", "Exports", "exports2") },
             pools = { listOf("Exports") },
             metas = { listOf("Exports", "Nightly") },
             members = { listOf("Specimen-r1") },
@@ -277,6 +277,11 @@ class CompleterTest {
         assertTrue("Biobank" in offered(":workspace bio"))
         assertTrue("@Specimens" in offered(":view @spec"))
         assertTrue("Patient/pat1" in values(":log patient/"))
+        // What matches as typed wins: offered both, JLine would insert `exports`,
+        // which names neither.
+        assertEquals(listOf("exports2"), offered(":workspace exp"))
+        assertEquals(listOf("Exports"), offered(":workspace Exp"))
+        assertEquals(setOf("Exports", "exports2"), offered(":workspace EXP").toSet())
     }
 
     @Test

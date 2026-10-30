@@ -344,6 +344,8 @@ class MetaPoolTest {
         // Whatever the case, since :scope reads it so.
         assertEquals(listOf("All-2", "all-bundle"), names("All.json", "all/bundle.json"))
         assertEquals(listOf("all-x", "all-y"), names("all/x/bundle.json", "all/y/bundle.json"))
+        // As with any name taken twice, which file gets which depends on the others.
+        assertEquals(listOf("all-2", "all-3"), names("all-2.json", "all.json"))
     }
 
     @Test
