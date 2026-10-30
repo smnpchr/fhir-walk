@@ -114,14 +114,14 @@ class FhirPathCompleter(
             }
             ":load" -> completePath(lastToken, candidates)
             ":meta" -> when (arguments.size) {
-                1 -> metas().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                1 -> metas().filter { it.begins(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "meta pools", null)
                 }
                 2 -> completePath(lastToken, candidates)
                 3 -> cutOffs(candidates)
             }
             ":unmeta" -> if (arguments.size == 1) {
-                metas().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                metas().filter { it.begins(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "meta pools", null)
                 }
             }
@@ -160,12 +160,12 @@ class FhirPathCompleter(
                 views(lastToken.removePrefix("@"), prefix, MAX_ROWS, candidates)
             }
             ":pool", ":close" -> if (arguments.size == 1) {
-                pools().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                pools().filter { it.begins(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "pools", null)
                 }
                 // One not read yet is offered too: :pool says how to read it.
                 if (command == ":pool") {
-                    (metas() - pools().toSet()).filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                    (metas() - pools().toSet()).filter { it.begins(lastToken) }.take(MAX_ROWS).forEach {
                         candidates += commandCand(it, it, "meta pools", "not read — :meta $it")
                     }
                 }
@@ -176,12 +176,12 @@ class FhirPathCompleter(
             // is whichever the word matched, since JLine narrows the menu by it.
             // A label for the history of one resource; numbers and +skip need no help.
             ":log" -> if (!lastToken.startsWith("+") && lastToken.toIntOrNull() == null) {
-                pool().all().filter { it.label.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                pool().all().filter { it.label.begins(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it.label, it.label, "pool", it.origin)
                 }
             }
             ":at" -> if (arguments.size == 1) {
-                val refs = revisions().filter { it.startsWith(lastToken) }.take(MAX_REFS)
+                val refs = revisions().filter { it.begins(lastToken) }.take(MAX_REFS)
                 commits().mapNotNull { commit ->
                     when {
                         commit.at.startsWith(lastToken, ignoreCase = true) -> commit to commit.at
@@ -202,7 +202,7 @@ class FhirPathCompleter(
                     candidates += commandCand("delta", "delta", "scope", "what this revision changed")
                 } else {
                     // Ranked, or JLine would sort the newest out of the top.
-                    bundles.filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEachIndexed { rank, it ->
+                    bundles.filter { it.begins(lastToken) }.take(MAX_ROWS).forEachIndexed { rank, it ->
                         candidates += Candidate(it, it, "bundles", null, null, null, true, rank)
                     }
                 }
@@ -214,7 +214,7 @@ class FhirPathCompleter(
             // half typed -- still completes as a path.
             ":open" -> if (arguments.size == 2) {
                 val revisions = gitSpec(lastToken)?.let { (dir, partial) ->
-                    revisionsAt(dir).filter { it.startsWith(partial) }.map { "$dir@$it" to it }
+                    revisionsAt(dir).filter { it.begins(partial) }.map { "$dir@$it" to it }
                 }
                 if (revisions.isNullOrEmpty()) {
                     completePath(lastToken, candidates)
@@ -223,7 +223,7 @@ class FhirPathCompleter(
                 }
             }
             ":workspace" -> if (arguments.size == 1) {
-                workspaces().filter { it.startsWith(lastToken) }.take(MAX_ROWS).forEach {
+                workspaces().filter { it.begins(lastToken) }.take(MAX_ROWS).forEach {
                     candidates += commandCand(it, it, "workspaces", null)
                 }
             }
@@ -277,7 +277,7 @@ class FhirPathCompleter(
      */
     private fun names(partial: String, taken: Set<String>, limit: Int, candidates: MutableList<Candidate>): Int {
         val matching = named().entries
-            .filter { (name, expression) -> name.startsWith(partial) && expression !in taken }
+            .filter { (name, expression) -> name.begins(partial) && expression !in taken }
             .take(limit)
         matching.forEach { (name, expression) -> candidates += commandCand(name, "$name  $expression", MenuGroups.NAMED, null) }
         return matching.size
@@ -291,7 +291,7 @@ class FhirPathCompleter(
      * @return how many were offered.
      */
     private fun views(partial: String, prefix: String, limit: Int, candidates: MutableList<Candidate>): Int {
-        val matching = savedViews().filter { it.startsWith(partial) }.take(limit)
+        val matching = savedViews().filter { it.begins(partial) }.take(limit)
         matching.forEach { candidates += commandCand("$prefix$it", "@$it", MenuGroups.SAVED_VIEWS, null) }
         return matching.size
     }
@@ -619,6 +619,12 @@ class FhirPathCompleter(
     /** Commands and their arguments are words, so a trailing space is right here. */
     private fun commandCand(value: String, display: String, group: String, descr: String?) =
         Candidate(value, display, group, descr, null, null, true)
+
+    /**
+     * Whether [word] begins this, ignoring case as the reader does
+     * (`CASE_INSENSITIVE`): a candidate filtered out here never reaches it.
+     */
+    private fun String.begins(word: String) = startsWith(word, ignoreCase = true)
 
     private fun cutOffs(candidates: MutableList<Candidate>) {
         candidates += commandCand("30d", "30d", "cut-off", "bundles modified in the last 30 days")

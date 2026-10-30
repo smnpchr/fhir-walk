@@ -225,7 +225,7 @@ class MetaPool(var definition: MetaDefinition) {
          * joined by `-`, less the extension and any trailing segment every path ends
          * in, such as the `bundle.json` of each `<pipe>/<run>/bundle.json`. What a
          * name cannot hold becomes `-`; one that would start other than with a letter
-         * gets a `b`, and a name that comes twice a number.
+         * gets a `b`, and a name that comes twice, or is `all`, a number.
          */
         fun names(root: Path, files: List<Path>): List<String> {
             val parts = files.map { file ->
@@ -238,10 +238,14 @@ class MetaPool(var definition: MetaDefinition) {
             return parts.map { segments ->
                 val base = segments.dropLast(common).joinToString("-").replace(UNNAMEABLE, "-").ifEmpty { "bundle" }
                     .let { if (it.first() in 'a'..'z' || it.first() in 'A'..'Z') it else "b$it" }
-                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base-$it" }.first { used.add(it) }
+                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base-$it" }
+                    .first { !it.equals(SCOPE_ALL, ignoreCase = true) && used.add(it) }
             }
         }
 
         private val UNNAMEABLE = Regex("[^A-Za-z0-9_-]")
+
+        /** What `:scope` reads as every bundle, in any case; no bundle is given it. */
+        private const val SCOPE_ALL = "all"
     }
 }

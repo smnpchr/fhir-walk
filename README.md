@@ -334,7 +334,7 @@ read only by `:meta exports`, never at startup, so a large archive costs nothing
 it is asked for. The cut-off is by file modification time: an age (`30d`, `12h`),
 which moves on with the clock, a date, or `none`. `:cutoff` moves it and reads again,
 parsing only the bundles it lets in. A bundle is named by its path less the
-extension and what every path ends in; a resource's label carries it
+extension and what every path ends in (never `all`, which `:scope` keeps for every bundle); a resource's label carries it
 (`specimen-r1:Patient/p1`), and `:members` lists them. Scoped to one bundle with
 `:scope`, the prompt names it and rows leave it out (`Patient/p1`, which `:focus`
 finds in that bundle); `:more` prints the whole label. Files that are not one Bundle
