@@ -80,10 +80,10 @@ class FhirPathCompleter(
             completeCommand(text, candidates)
             return
         }
-        // `:all` runs across the pool whatever is in focus, so it completes unrebased.
+        // `:all` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
         // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
         val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
-            ?: focus().takeIf { slice.command != ":all" }
+            ?: focus().takeIf { slice.command != ":all" && slice.command != ":tree" }
         val expression = mutableListOf<Candidate>()
         completeExpression(slice.text, slice.cursor, relativeTo, expression)
         // Labels first in the menu, but sized to the room the expression left.

@@ -123,6 +123,7 @@ Type a FHIRPath expression, or:
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
+| `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
 | `:view #n\|name\|@view …` | a table: one row per resource, a column per recorded expression |
@@ -542,7 +543,7 @@ up front, letting the terminal scroll instead.
 
 ## Completion
 
-TAB completes, including inside the `:all` and `:why` arguments, which are expressions
+TAB completes, including inside the `:all`, `:why` and `:tree` arguments, which are expressions
 like any other. On an empty line it lists the pool's resource types; after a `.` the
 elements and functions available there, pool-populated ones first; inside
 `extension('…')` the URLs observed on that element.
