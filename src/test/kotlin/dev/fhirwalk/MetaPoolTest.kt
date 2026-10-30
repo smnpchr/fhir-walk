@@ -335,4 +335,25 @@ class MetaPoolTest {
         assertEquals(listOf("b2026-10-20", "b2026-10-21"), names("2026-10-20/bundle.json", "2026-10-21/bundle.json"))
         assertEquals(listOf("a-b", "a-b-2"), names("a.b.json", "a b.json"))
     }
+
+    @Test
+    fun `no bundle is named all, which scope takes for every bundle`() {
+        val root = Paths.get("/a")
+        fun names(vararg files: String) = MetaPool.names(root, files.map { root.resolve(it) })
+        assertEquals(listOf("all-2", "b"), names("all.json", "b.json"))
+        // Whatever the case, since :scope reads it so.
+        assertEquals(listOf("All-2", "all-bundle"), names("All.json", "all/bundle.json"))
+        assertEquals(listOf("all-x", "all-y"), names("all/x/bundle.json", "all/y/bundle.json"))
+        // As with any name taken twice, which file gets which depends on the others.
+        assertEquals(listOf("all-2", "all-3"), names("all-2.json", "all.json"))
+    }
+
+    @Test
+    fun `a bundle named all can be scoped to`() {
+        root.resolve("all.json").writeText(bundle)
+        root.resolve("b.json").writeText(bundle)
+        run(":meta exports $root")
+        assertContains(run(":scope all-2"), "scope: bundle all-2, 3 resource(s)")
+        assertContains(run(":scope all"), "scope: all 2 bundle(s)")
+    }
 }

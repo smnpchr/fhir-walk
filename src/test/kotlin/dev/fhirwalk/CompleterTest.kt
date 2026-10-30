@@ -258,6 +258,33 @@ class CompleterTest {
     }
 
     @Test
+    fun `command arguments match whatever the case, as the reader does`() {
+        val named = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS },
+            savedViews = { setOf("Specimens") },
+            workspaces = { listOf("Biobank", "Exports", "exports2") },
+            pools = { listOf("Exports") },
+            metas = { listOf("Exports", "Nightly") },
+            members = { listOf("Specimen-r1") },
+        )
+        fun offered(line: String) = mutableListOf<Candidate>().also {
+            named.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+        assertTrue("Specimen-r1" in offered(":scope spec"))
+        assertTrue("Exports" in offered(":pool exp"))
+        assertTrue("Nightly" in offered(":pool nig"))
+        assertTrue("Nightly" in offered(":meta NIG"))
+        assertTrue("Biobank" in offered(":workspace bio"))
+        assertTrue("@Specimens" in offered(":view @spec"))
+        assertTrue("Patient/pat1" in values(":log patient/"))
+        // What matches as typed wins: offered both, JLine would insert `exports`,
+        // which names neither.
+        assertEquals(listOf("exports2"), offered(":workspace exp"))
+        assertEquals(listOf("Exports"), offered(":workspace Exp"))
+        assertEquals(setOf("Exports", "exports2"), offered(":workspace EXP").toSet())
+    }
+
+    @Test
     fun `elements after resolve are counted against the target type`() {
         val name = candidates("Observation.subject.resolve().").single { it.value() == "name" }
         assertEquals("elements (in pool)", name.group())
@@ -381,8 +408,8 @@ class CompleterTest {
         // Neither a name nor a number already on the line comes back.
         assertEquals(setOf("born", "#2"), values(":view family #1 ").toSet())
         assertEquals(listOf("family"), values(":view fa"))
-        // Names are case-sensitive, so completion is too.
-        assertEquals(emptyList(), values(":view Fa"))
+        // Names are case-sensitive; completion is not, and inserts the name as it is spelled.
+        assertEquals(listOf("family"), values(":view Fa"))
         // A name and the number it holds are one column: either rules out the other.
         assertEquals(setOf("born", "#2"), values(":view family ").toSet())
         assertEquals(setOf("family", "#1"), values(":view #2 ").toSet())
