@@ -123,7 +123,7 @@ Type a FHIRPath expression, or:
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
-| `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
+| `:tree <expr\|#n\|name>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
 | `:view #n\|name\|@view …` | a table: one row per resource, a column per recorded expression |

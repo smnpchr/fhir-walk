@@ -84,12 +84,18 @@ class FhirPathCompleter(
         // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
         val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
             ?: focus().takeIf { slice.command != ":all" && slice.command != ":tree" }
+        // `#` begins no expression: after :tree it is a :history number, and nothing else.
+        if (slice.command == ":tree" && slice.text.startsWith("#")) {
+            recordedColumns(slice.text.take(slice.cursor), emptySet(), MAX_ROWS, candidates)
+            return
+        }
         val expression = mutableListOf<Candidate>()
         completeExpression(slice.text, slice.cursor, relativeTo, expression)
         // Labels first in the menu, but sized to the room the expression left.
         if (slice.command == ":focus" || (slice.command == ":trace" && slice.subject == null)) {
             focusLabels(slice, relativeTo, expression, candidates)
         }
+        if (slice.command == ":tree") treeReferences(slice, expression, candidates)
         candidates += expression
     }
 
@@ -386,6 +392,17 @@ class FhirPathCompleter(
             }
             .take(minOf(MAX_ROWS, room))
             .forEach { candidates += commandCand(it.label.drop(beforeWord.length), it.label, "pool", it.origin) }
+    }
+
+    /**
+     * `:tree` takes a name in place of the expression, offered while one word is
+     * typed; a `:history` number is completed before any expression is.
+     */
+    private fun treeReferences(slice: PromptLine.Slice, others: List<Candidate>, candidates: MutableList<Candidate>) {
+        val typed = slice.text.take(slice.cursor)
+        if (typed.any { !it.isLetterOrDigit() && it != '_' && it != '-' }) return
+        val room = MAX_MENU - others.count { it.value().startsWith(typed, ignoreCase = true) }
+        names(typed, emptySet(), minOf(MAX_ROWS, room), candidates)
     }
 
     // ---------------------------------------------------------------- expressions

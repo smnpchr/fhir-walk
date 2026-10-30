@@ -61,7 +61,7 @@ class TreeTest {
     fun `a tree hangs each child below its parents, roots first`() {
         run(":load ${specimens()}")
         val tree = run(":tree Specimen.parent")
-        assertEquals("9 resource(s) in 4 tree(s); 1 Specimen with no parent or child", tree.lines().first())
+        assertEquals("9 resource(s) in 4 tree(s); 1 Specimen not linked", tree.lines().first())
         assertEquals(
             listOf(
                 "  Specimen/s1",
@@ -78,6 +78,48 @@ class TreeTest {
             ),
             rows(tree),
         )
+    }
+
+    @Test
+    fun `a cycle without a root starts on the cycle, not at what hangs from it`() {
+        root.resolve("cycle.json").writeText(bundle(specimen("c3", "c1"), specimen("c1", "c2"), specimen("c2", "c1")))
+        run(":load ${root.resolve("cycle.json")}")
+        val tree = run(":tree Specimen.parent")
+        assertEquals("3 resource(s) in 1 tree(s)", tree.lines().first())
+        assertEquals(
+            listOf("  Specimen/c1", "    Specimen/c3", "    Specimen/c2", "      Specimen/c1  ↻ cycle"),
+            rows(tree),
+        )
+    }
+
+    @Test
+    fun `a reference made twice is said once, and one to a contained resource as contained`() {
+        val contained = """{"resource":{"resourceType":"Specimen","id":"p","contained":[{"resourceType":"Specimen","id":"k"}],""" +
+            """"parent":[{"reference":"#k"}]}}"""
+        root.resolve("odd.json").writeText(bundle(specimen("d1", "x", "x"), contained))
+        run(":load ${root.resolve("odd.json")}")
+        assertEquals(
+            listOf("  Specimen/d1  ! refers to Specimen/x, not in the pool", "  Specimen/p  refers to contained #k"),
+            rows(run(":tree Specimen.parent")),
+        )
+        val resources = run(":tree Specimen.contained")
+        assertContains(resources, "1 resource(s) not in the pool, such as contained ones")
+        assertFalse(resources.contains(":why"), resources)
+    }
+
+    @Test
+    fun `a recorded or named expression stands in for one typed`() {
+        run(":load ${specimens()}")
+        val typed = run(":tree Specimen.parent")
+        assertContains(run(":history"), "Specimen.parent")
+        run(":name-expr parents")
+        assertEquals("parents = Specimen.parent: " + typed.lines().first(), run(":tree parents").lines().first())
+        assertEquals(rows(typed), rows(run(":tree parents")))
+        assertEquals("#1 = Specimen.parent: " + typed.lines().first(), run(":tree #1").lines().first())
+        assertContains(run(":tree #9"), "nothing recorded as #9 — see :history")
+        // What links nothing is not recorded, and so not nameable.
+        run(":tree Specimen.collection.collector")
+        assertFalse(run(":history").contains("collector"))
     }
 
     @Test
