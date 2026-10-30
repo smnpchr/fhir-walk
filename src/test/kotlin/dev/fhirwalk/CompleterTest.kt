@@ -18,6 +18,7 @@ import java.nio.file.Paths
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -443,6 +444,22 @@ class CompleterTest {
         assertEquals(setOf("family", "born"), values(":unname-expr ").toSet())
         assertEquals(setOf("family", "born"), values(":name-expr ").toSet())
         assertEquals(listOf("#2", "#1"), values(":name-expr born "))
+    }
+
+    @Test
+    fun `tree completes a name or a number in place of its expression`() {
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, { null },
+            { listOf("Patient.link.other", "Patient.name.family") }, { mapOf("links" to "Patient.link.other") },
+        )
+        fun values(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+
+        assertTrue("links" in values(":tree li"))
+        assertEquals(listOf("#2", "#1"), values(":tree #"))
+        // Inside an expression, a name is no step of it.
+        assertFalse("links" in values(":tree Patient.li"))
     }
 
     @Test

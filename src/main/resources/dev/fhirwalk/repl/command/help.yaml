@@ -146,6 +146,16 @@ commands:
         args: "[expr]"
         summary: find the step where the expression goes empty
         topic: evaluating
+      - name: ":tree"
+        args: "<expr|#n|name>"
+        summary: what the expression links, as a tree from each root down, e.g. :tree Specimen.parent
+        details: |
+          The expression names each resource's parents. A resource shown once
+          is marked where a second link reaches it, and a cycle where it
+          closes; with a focus, only the tree below it. A :history number or
+          a name from :name-expr stands for its expression, and one that
+          links something is recorded, so :name-expr can name it next.
+        topic: evaluating
       - name: ":ext"
         args: "[path]"
         summary: extension URLs observed in the pool
@@ -213,6 +223,17 @@ topics:
 
       :why with no expression re-diagnoses the last one you ran, so the
       hint printed after an empty result can be followed by just :why.
+
+      :tree Specimen.parent follows the links an expression makes, from
+      each resource to its parents, and prints them top down: roots first,
+      children indented below. The links are a graph, so a resource with
+      two parents is shown in full under the first and marked (shown under
+      …) under the other; a link back up the path is marked ↻ cycle. A
+      reference that does not resolve is said on its resource's row. It
+      runs over the scope, and in a meta pool within each bundle; with a
+      focus it shows the tree below the focus only. :tree #3 or :tree
+      parents runs a recorded or named expression; a name wins over the
+      path it is spelled like, and the header says what it stood for.
 
   - name: focus
     title: Focusing on a resource or an element
