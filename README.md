@@ -123,10 +123,11 @@ Type a FHIRPath expression, or:
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
-| `:tree <expr\|#n\|name>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
+| `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
 | `:view #n\|name\|@view …` | a table: one row per resource, a column per recorded expression |
+| `:tree-view <#n\|name> [#n\|name\|@view …]` | a recorded link's tree, with `:view`'s columns along it |
 | `:name-expr [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
 | `:unname-expr <name>` | forget an expression's name |
 | `:name-view [view]` | name and save the last `:view`, to rerun as `:view @view`; alone, list the saved views |
@@ -281,6 +282,26 @@ left the log keeps its place with no number, and gets one back when it returns. 
 column asked for by name follows the name, so rebinding `family` changes what the
 view computes along with its title; once the name is forgotten, the column keeps the
 expression it was saved with.
+
+A tree is shown the same way. `:tree Specimen.parent` takes FHIRPath, like `:all`, and
+records its link once it links something; `:name-expr parents` names it, and
+`:tree-view` takes only references, like `:view`: the link first, then columns.
+
+```
+r4:pool(10)> :tree-view parents kind collected
+parents = Specimen.parent: 9 resource(s) in 4 tree(s); 1 Specimen not linked
+                          kind     collected
+  Specimen/s1             blood    2026-10-01
+    Specimen/s1a          serum    2026-10-01
+      Specimen/s1a1       aliquot  2026-10-02
+    Specimen/s8           buffy    2026-10-03
+  Specimen/s7             blood    2026-10-03
+    Specimen/s8  (shown under Specimen/s1)
+```
+
+The rows are the tree's, in its order; a row shown elsewhere has no cells, since they
+are on that row. `:tree-view parents` alone is the plain tree, and `@view` columns work
+as in `:view`.
 
 ### Several pools
 

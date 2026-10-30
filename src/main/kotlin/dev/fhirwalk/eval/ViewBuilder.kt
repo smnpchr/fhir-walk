@@ -69,7 +69,12 @@ class ViewBuilder(
         data class Refused(val message: String) : Result
     }
 
-    fun build(columns: List<Column>): Result {
+    /**
+     * @param only the resources to make rows of, when not every one in scope of the
+     *   columns' type: a tree's, which may reach outside the scope. Those of another
+     *   type are left out, and none of the type is no refusal but no rows.
+     */
+    fun build(columns: List<Column>, only: List<PooledResource>? = null): Result {
         if (columns.isEmpty()) return Result.Refused("a view needs at least one column")
         columns.forEach { column ->
             evaluator.validate(column.expression)?.let { return Result.Refused("${column.described}: $it") }
@@ -88,8 +93,8 @@ class ViewBuilder(
             return Result.Refused("columns start from different types ($spread) — a view has one row per resource of one type")
         }
         val type = types.single()
-        val resources = pool.inScope(type)
-        if (resources.isEmpty()) {
+        val resources = only?.filter { it.type.equals(type, ignoreCase = true) } ?: pool.inScope(type)
+        if (resources.isEmpty() && only == null) {
             if (pool.scope != null && pool.ofType(type).isNotEmpty()) {
                 return Result.Refused("no $type in the scope — :scope all for the whole pool")
             }

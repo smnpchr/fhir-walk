@@ -140,28 +140,7 @@ internal class RecordCommands(private val state: ReplState) : CommandGroup {
             return
         }
         state.reportStorageProblems(out)
-        val picked = refs.flatMap { ref ->
-            if (ref.startsWith("@")) {
-                return@flatMap savedColumns(ref.drop(1)) ?: run {
-                    out.text("no saved view ${ref.drop(1)} — :name-view lists them")
-                    return
-                }
-            }
-            val number = ref.removePrefix("#").toIntOrNull()
-            if (number != null) {
-                val expression = log.get(number) ?: run {
-                    out.text("nothing recorded as #$number — see :history")
-                    return
-                }
-                listOf(ViewBuilder.Column(expression, number = number))
-            } else {
-                val expression = names.get(ref) ?: run {
-                    out.text("no :history number or name $ref — see :history and :name-expr")
-                    return
-                }
-                listOf(ViewBuilder.Column(expression, name = ref))
-            }
-        }
+        val picked = columns(refs, out) ?: return
         val table = when (val result = state.session.viewBuilder.build(picked)) {
             is ViewBuilder.Result.Refused -> {
                 out.error("${result.message}")
@@ -187,6 +166,38 @@ internal class RecordCommands(private val state: ReplState) : CommandGroup {
                 )
             },
         )
+    }
+
+    /**
+     * The columns [refs] ask for, as `:view` reads them: `#3` from `:history`, a name
+     * from `:name-expr`, `@view` for a saved view's. Null, having said why, when one
+     * of them is not there. Also what `:tree-view` reads its columns with.
+     */
+    fun columns(refs: List<String>, out: Output): List<ViewBuilder.Column>? = refs.flatMap { ref ->
+        if (ref.startsWith("@")) {
+            return@flatMap savedColumns(ref.drop(1)) ?: run {
+                out.text("no saved view ${ref.drop(1)} — :name-view lists them")
+                return null
+            }
+        }
+        listOf(column(ref, out) ?: return null)
+    }
+
+    /** One recorded expression, by `:history` number or name; null, having said why, when there is none. */
+    fun column(ref: String, out: Output): ViewBuilder.Column? {
+        val number = ref.removePrefix("#").toIntOrNull()
+        if (number != null) {
+            val expression = log.get(number) ?: run {
+                out.text("nothing recorded as #$number — see :history")
+                return null
+            }
+            return ViewBuilder.Column(expression, number = number)
+        }
+        val expression = names.get(ref) ?: run {
+            out.text("no :history number or name $ref — see :history and :name-expr")
+            return null
+        }
+        return ViewBuilder.Column(expression, name = ref)
     }
 
     /**

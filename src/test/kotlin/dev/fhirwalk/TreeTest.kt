@@ -108,18 +108,65 @@ class TreeTest {
     }
 
     @Test
-    fun `a recorded or named expression stands in for one typed`() {
+    fun `tree takes FHIRPath only, and points a name or a number to tree-view`() {
         run(":load ${specimens()}")
-        val typed = run(":tree Specimen.parent")
+        run(":tree Specimen.parent")
         assertContains(run(":history"), "Specimen.parent")
         run(":name-expr parents")
-        assertEquals("parents = Specimen.parent: " + typed.lines().first(), run(":tree parents").lines().first())
-        assertEquals(rows(typed), rows(run(":tree parents")))
-        assertEquals("#1 = Specimen.parent: " + typed.lines().first(), run(":tree #1").lines().first())
-        assertContains(run(":tree #9"), "nothing recorded as #9 — see :history")
+        val named = run(":tree parents")
+        assertContains(named, "parents is a named expression — :tree-view parents")
+        assertFalse(named.contains(":why"), named)
+        assertContains(run(":tree #1"), "#1 is a :history number — :tree-view #1 runs it")
         // What links nothing is not recorded, and so not nameable.
         run(":tree Specimen.collection.collector")
         assertFalse(run(":history").contains("collector"))
+    }
+
+    /** `parents` names the link, `up` a column: the reference each specimen makes. */
+    private fun named() {
+        run(":load ${specimens()}")
+        run(":tree Specimen.parent")
+        run(":name-expr parents")
+        run(":all Specimen.parent.reference")
+        run(":name-expr up")
+    }
+
+    @Test
+    fun `tree-view alone is the plain tree of a named or recorded link`() {
+        named()
+        val plain = run(":tree Specimen.parent")
+        val viewed = run(":tree-view parents")
+        assertEquals("parents = Specimen.parent: " + plain.lines().first(), viewed.lines().first())
+        assertEquals(rows(plain), rows(viewed))
+        assertEquals("#1 = Specimen.parent: " + plain.lines().first(), run(":tree-view #1").lines().first())
+    }
+
+    @Test
+    fun `tree-view shows columns along the tree, and none on a row shown elsewhere`() {
+        named()
+        val view = run(":tree-view parents up").lines()
+        assertTrue(view.any { it.matches(Regex("""\s+up""")) }, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""  Specimen/s1""")) }, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""      Specimen/s1a1\s+Specimen/s1a""")) }, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""    Specimen/s8\s+Specimen/s1, Specimen/s7""")) }, view.joinToString("\n"))
+        assertTrue("    Specimen/s8  (shown under Specimen/s1)" in view, view.joinToString("\n"))
+        assertTrue("      Specimen/c1  ↻ cycle" in view, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""  Specimen/d1\s+Specimen/x  ! refers to Specimen/x, not in the pool""")) }, view.joinToString("\n"))
+        // A saved view's columns are the same columns.
+        run(":view up")
+        run(":name-view ups")
+        assertEquals(view, run(":tree-view parents @ups").lines())
+    }
+
+    @Test
+    fun `tree-view says what it cannot find or use`() {
+        named()
+        assertContains(run(":tree-view"), "usage: :tree-view <#n|name>")
+        assertContains(run(":tree-view nope"), "no :history number or name nope")
+        assertContains(run(":tree-view parents nope"), "no :history number or name nope")
+        assertContains(run(":tree-view parents @nope"), "no saved view nope")
+        assertContains(run(":tree-view @ups"), "a view gives columns, not the link")
+        assertContains(run(":tree-view parents parents"), "not a primitive")
     }
 
     @Test
