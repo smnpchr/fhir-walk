@@ -67,9 +67,10 @@ commands:
         args: "[text]"
         summary: the meta pool's bundles, most recently modified first, with their sizes and when
         details: |
-          Reads the directory again first when a bundle has arrived, gone or
-          been modified since, and says so; that clears the focus, as :meta
-          does, since a new bundle can rename the others.
+          Reads the directory again first when a bundle has arrived, gone,
+          aged past the cut-off or been modified since, and says so; that
+          clears the focus, as :meta does, since a new bundle can rename the
+          others.
         topic: meta
       - name: ":fhir"
         args: "[version]"
@@ -269,10 +270,11 @@ topics:
       2026-10-01, :cutoff none. Files that are not one Bundle are skipped.
       :members lists the bundles; :scope specimen-r1 runs pool-wide over one,
       :scope all over every one again. Both :members and :scope all read the
-      directory again first when a bundle has arrived, gone or changed, so
-      what was written since shows without :meta exports. Scoped to one,
-      the prompt names it and rows leave it out: Patient/p1, which :focus
-      finds in that bundle; :more prints the whole label.
+      directory again first when a bundle has arrived, gone, aged past the
+      cut-off or changed, so what was written since shows without
+      :meta <pool>. Scoped to one, the prompt names it and rows leave it
+      out: Patient/p1, which :focus finds in that bundle; :more prints the
+      whole label.
 
   - name: git
     title: Pools from git revisions

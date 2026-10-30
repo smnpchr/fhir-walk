@@ -203,8 +203,11 @@ internal class ReplState(
             out.text(header)
             return
         }
-        out.listing(listOf(Output.text(header)), problems.map { problem -> Output.line { +"  "; error("! $problem") } })
+        out.listing(listOf(Output.text(header)), problemRows(problems))
     }
+
+    /** [problems] as the rows of a listing, as [withProblems] writes them. */
+    fun problemRows(problems: List<String>): List<Output.Line> = problems.map { problem -> Output.line { +"  "; error("! $problem") } }
 
     /**
      * [resource]'s label as a row shows it: without its bundle when that is the one

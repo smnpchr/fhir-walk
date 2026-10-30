@@ -8,6 +8,7 @@ import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Pool
 import dev.fhirwalk.repl.Session
 import java.nio.file.Paths
+import java.time.Instant
 import kotlin.io.path.isDirectory
 
 /** Meta pools: defining one over a directory of bundles, reading it when asked, and moving its cut-off. */
@@ -161,16 +162,18 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
             out.text("${state.poolName()} is no meta pool — :meta lists them")
             return
         }
-        refresh(session.current, meta, out)
+        val refreshed = refresh(session.current, meta)
         val shown = meta.members.filter { it.name.contains(argument, ignoreCase = true) }
         if (shown.isEmpty()) {
+            refreshed.writeTo(out)
             out.text(if (argument.isBlank()) "no bundles in ${state.poolName()}" else "no bundle in ${state.poolName()} is called anything like $argument")
             return
         }
         val width = shown.maxOf { it.name.length }
+        // One listing, problems first, so that they are seen and :more reaches every row of both.
         out.listing(
-            listOf(Output.text("${shown.size} of ${meta.members.size} bundle(s) — :scope <bundle> runs pool-wide over one")),
-            rows = shown.map { member ->
+            refreshed.header + Output.text("${shown.size} of ${meta.members.size} bundle(s) — :scope <bundle> runs pool-wide over one"),
+            rows = refreshed.problems + shown.map { member ->
                 Output.line {
                     +(if (meta.scoped == member.name) "* " else "  ")
                     label(member.name.padEnd(width))
@@ -212,22 +215,37 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
     }
 
     /**
-     * Reads a meta pool's directory again when its bundles have changed: one new,
-     * gone or modified. Unchanged, the pool is left alone and nothing is said but
-     * what is new to go wrong. Changed, it is filled again as by `:meta`, and a focus
-     * or rows picked or listed go, since a bundle's name can change with what
-     * arrives beside it, and with it every label in the bundle.
+     * What [refresh] has to say: a header when the pool was read again or the
+     * directory has gone, and problems as rows. Returned rather than written, so
+     * that `:members` keeps them in its own listing, where `:more` reaches them.
      */
-    fun refresh(pool: Pool, meta: MetaPool, out: Output) {
-        val since = meta.definition.cutOff?.let { MetaPool.since(it, state.commitTimes) }
+    class Refreshed(val header: List<Output.Line>, val problems: List<Output.Line>) {
+        /** Writes it as a listing of its own, for a command that lists nothing after. */
+        fun writeTo(out: Output) {
+            if (problems.isEmpty()) header.forEach(out::add) else out.listing(header, problems)
+        }
+    }
+
+    /**
+     * Reads a meta pool's directory again when its bundles have changed: one new,
+     * gone, aged past the cut-off or modified. Unchanged, the pool is left alone and
+     * nothing is said but what is new to go wrong. Changed, it is filled again as by
+     * `:meta`, and a focus or rows picked or listed go, since a bundle's name can
+     * change with what arrives beside it, and with it every label in the bundle.
+     */
+    fun refresh(pool: Pool, meta: MetaPool): Refreshed {
+        val cutOff = meta.definition.cutOff
+        val since = cutOff?.let { MetaPool.since(it, state.commitTimes) }
         val scan = meta.scan(pool.importer, pool.pool, since, ifChanged = true)
         if (scan.missing) {
-            out.error("meta pool ${pool.name}: ${meta.definition.dir} is not a directory — showing what was read before")
-            return
+            return Refreshed(
+                listOf(Output.line { error("! meta pool ${pool.name}: ${meta.definition.dir} is not a directory — showing what was read before") }),
+                emptyList(),
+            )
         }
+        val problems = state.problemRows(scan.problems)
         if (scan.unchanged) {
-            if (scan.problems.isNotEmpty()) state.withProblems(out, "meta pool ${pool.name}: no bundle changed", scan.problems)
-            return
+            return Refreshed(if (problems.isEmpty()) emptyList() else listOf(Output.text("meta pool ${pool.name}: no bundle changed")), problems)
         }
         val dropped = pool.focus != null
         pool.focus = null
@@ -239,14 +257,23 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
                 "meta pool ${pool.name} read again: " + listOfNotNull(
                     changes.added.takeIf { it > 0 }?.let { "$it new" },
                     changes.gone.takeIf { it > 0 }?.let { "$it gone" },
+                    changes.agedOut.takeIf { it > 0 }?.let { "$it now older than $cutOff" },
                     changes.modified.takeIf { it > 0 }?.let { "$it modified" },
                 ).joinToString(", ") + " — ${scan.members} bundle(s), ${pool.pool.size} resource(s)",
             )
             if (changes.renamed > 0) add("${changes.renamed} renamed")
-            scan.unscoped?.let { add("scope on $it dropped, no longer a bundle here") }
+            addAll(notes(scan, cutOff, since))
             if (dropped) add("focus cleared")
         }.joinToString("; ")
-        state.withProblems(out, header, scan.problems)
+        return Refreshed(listOf(Output.text(header)), problems)
+    }
+
+    /** What a read found besides its members, for the header that reports it. */
+    private fun notes(scan: MetaPool.Scan, cutOff: String?, since: Instant?): List<String> = buildList {
+        if (scan.older > 0) add("${scan.older} older than $cutOff")
+        if (cutOff != null && since == null) add("$cutOff is not a cut-off, so every bundle is read")
+        if (scan.skipped > 0) add("${scan.skipped} file(s) skipped, not a Bundle")
+        scan.unscoped?.let { add("scope on $it dropped, no longer a bundle here") }
     }
 
     /** Fills [pool] from its definition, saying what it found. Also how `:fhir` reads one again. */
@@ -258,13 +285,8 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
             out.error("meta pool ${pool.name}: ${meta.definition.dir} is not a directory — kept, to read once it is back")
             return
         }
-        val header = buildList {
-            add("meta pool ${pool.name}: ${scan.members} bundle(s), ${pool.pool.size} resource(s)")
-            if (scan.older > 0) add("${scan.older} older than $cutOff")
-            if (cutOff != null && since == null) add("$cutOff is not a cut-off, so every bundle is read")
-            if (scan.skipped > 0) add("${scan.skipped} file(s) skipped, not a Bundle")
-            scan.unscoped?.let { add("scope on $it dropped, no longer a bundle here") }
-        }.joinToString("; ") + note
+        val header = (listOf("meta pool ${pool.name}: ${scan.members} bundle(s), ${pool.pool.size} resource(s)") + notes(scan, cutOff, since))
+            .joinToString("; ") + note
         state.withProblems(out, header, scan.problems)
     }
 }

@@ -66,8 +66,13 @@ class MetaStore(file: Path?) {
  */
 class MetaPool(var definition: MetaDefinition) {
 
-    /** A bundle in the pool, named by its path below the directory; see [names]. */
-    data class Member(val name: String, val path: Path, val modified: Instant, val resources: Int)
+    /**
+     * A bundle in the pool, named by its path below the directory; see [names].
+     *
+     * @param bytes its size when read: with [modified], what tells that it was
+     *   written again, on a filesystem whose times are only to the second.
+     */
+    data class Member(val name: String, val path: Path, val modified: Instant, val resources: Int, val bytes: Long)
 
     /**
      * What a [scan] found.
@@ -75,7 +80,9 @@ class MetaPool(var definition: MetaDefinition) {
      * @param missing the directory is not there, and the pool was left as it was.
      * @param unscoped the bundle the scope was on, when it is no longer a member.
      * @param unchanged asked to read only if the members changed, they had not, and
-     *   the pool was left as it was; [problems] are then only those of files read afresh.
+     *   the pool was left as it was; [problems] are then only those of files read
+     *   afresh, and of directories that could not be read. Otherwise they are every
+     *   one, as for a first read.
      * @param changes how the members differ from the read before.
      */
     data class Scan(
@@ -91,9 +98,10 @@ class MetaPool(var definition: MetaDefinition) {
 
     /**
      * How the members of one scan differ from those of the one before: bundles new,
-     * gone, modified in place, and named differently because of what arrived or went.
+     * gone, now older than the cut-off though still there, modified in place, and
+     * named differently because of what arrived or went.
      */
-    data class Changes(val added: Int = 0, val gone: Int = 0, val modified: Int = 0, val renamed: Int = 0)
+    data class Changes(val added: Int = 0, val gone: Int = 0, val agedOut: Int = 0, val modified: Int = 0, val renamed: Int = 0)
 
     /** Most recently modified first, which is what `:members` and `:scope` want to the top. */
     var members: List<Member> = emptyList()
@@ -113,7 +121,10 @@ class MetaPool(var definition: MetaDefinition) {
      * A file as a scan found it: a member's resources, or null for one that is no
      * Bundle or would not parse, with what went wrong.
      */
-    private class Read(val modified: Instant, val resources: List<Importer.Parsed>?, val problems: List<String>)
+    private class Read(val stamp: Stamp, val resources: List<Importer.Parsed>?, val problems: List<String>)
+
+    /** When a file was last modified, and its size then: what a read is kept by. */
+    private data class Stamp(val modified: Instant, val bytes: Long)
 
     private val reads = HashMap<Path, Read>()
 
@@ -139,12 +150,14 @@ class MetaPool(var definition: MetaDefinition) {
         val root = dir
         if (!Files.isDirectory(root)) return Scan(members.size, 0, 0, emptyList(), missing = true)
         val problems = mutableListOf<String>()
-        val files = mutableListOf<Path>()
+        val stamps = HashMap<Path, Stamp>()
         Files.walkFileTree(
             root,
             object : SimpleFileVisitor<Path>() {
                 override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    if (attrs.isRegularFile && importer.reads(file.fileName.toString()) && file.extension.lowercase() !in STREAMS) files.add(file)
+                    if (attrs.isRegularFile && importer.reads(file.fileName.toString()) && file.extension.lowercase() !in STREAMS) {
+                        stamps[file] = Stamp(attrs.lastModifiedTime().toInstant(), attrs.size())
+                    }
                     return FileVisitResult.CONTINUE
                 }
 
@@ -155,18 +168,18 @@ class MetaPool(var definition: MetaDefinition) {
             },
         )
         val walked = problems.toList()
-        files.sortBy { it.toString() }
-        var older = 0
+        val files = stamps.keys.sortedBy { it.toString() }
+        val olderFiles = HashSet<Path>()
         var skipped = 0
         val inRange = HashMap<Path, Read>()
         val fresh = mutableListOf<String>()
         for (file in files) {
-            val modified = runCatching { Files.getLastModifiedTime(file).toInstant() }.getOrNull() ?: continue
-            if (since != null && modified < since) {
-                older++
+            val stamp = stamps.getValue(file)
+            if (since != null && stamp.modified < since) {
+                olderFiles.add(file)
                 continue
             }
-            val read = reads[file]?.takeIf { it.modified == modified } ?: read(importer, root, file, modified).also { fresh += it.problems }
+            val read = reads[file]?.takeIf { it.stamp == stamp } ?: read(importer, root, file, stamp).also { fresh += it.problems }
             inRange[file] = read
             problems += read.problems
             if (read.resources == null && read.problems.isEmpty()) skipped++
@@ -177,7 +190,8 @@ class MetaPool(var definition: MetaDefinition) {
 
         val kept = files.filter { inRange[it]?.resources != null }
         val previous = members.associateBy { it.path }
-        if (ifChanged && kept.size == previous.size && kept.all { previous[it]?.modified == inRange.getValue(it).modified }) {
+        val older = olderFiles.size
+        if (ifChanged && kept.size == previous.size && kept.all { previous[it]?.stamp == inRange.getValue(it).stamp }) {
             // A directory that cannot be read may hide a bundle, so it is said each time.
             return Scan(members.size, older, skipped, walked + fresh, unchanged = true)
         }
@@ -187,30 +201,34 @@ class MetaPool(var definition: MetaDefinition) {
         members = kept.mapIndexed { idx, file ->
             val read = inRange.getValue(file)
             read.resources!!.forEach { pool.add(it.resource, it.fullUrl, it.origin, named[idx]) }
-            Member(named[idx], file, read.modified, read.resources.size)
+            Member(named[idx], file, read.stamp.modified, read.resources.size, read.stamp.bytes)
         }.sortedWith(compareByDescending<Member> { it.modified }.thenBy { it.path.toString() })
         pool.settleReferences()
         // Kept across a scan while its file is still a member.
         if (scopedPath != null && members.none { it.path == scopedPath }) scopedPath = null
         applyScope(pool)
         val stayed = members.mapNotNull { member -> previous[member.path]?.let { member to it } }
+        val agedOut = previous.keys.count { it in olderFiles }
         val changes = Changes(
             added = members.size - stayed.size,
-            gone = previous.size - stayed.size,
-            modified = stayed.count { (now, was) -> now.modified != was.modified },
+            gone = previous.size - stayed.size - agedOut,
+            agedOut = agedOut,
+            modified = stayed.count { (now, was) -> now.stamp != was.stamp },
             renamed = stayed.count { (now, was) -> now.name != was.name },
         )
         return Scan(members.size, older, skipped, problems, unscoped = before?.takeIf { scopedPath == null }, changes = changes)
     }
 
-    private fun read(importer: Importer, root: Path, file: Path, modified: Instant): Read {
+    private val Member.stamp: Stamp get() = Stamp(modified, bytes)
+
+    private fun read(importer: Importer, root: Path, file: Path, stamp: Stamp): Read {
         val relative = root.relativize(file).toString()
         val report = Importer.Report()
         val parsed = runCatching { importer.parse(relative, file.readText(), report) }.getOrElse {
-            return Read(modified, null, listOf("$relative: unreadable (${it.message})"))
+            return Read(stamp, null, listOf("$relative: unreadable (${it.message})"))
         }
         // A Bundle that would not parse, or parses only in another version, has problems and no resources.
-        return Read(modified, parsed.takeIf { report.bundles > 0 }, report.problems.toList())
+        return Read(stamp, parsed.takeIf { report.bundles > 0 }, report.problems.toList())
     }
 
     /** Narrows pool-wide evaluation to [member], or with null widens it to all of them. */

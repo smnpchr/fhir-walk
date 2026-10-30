@@ -651,7 +651,7 @@ internal class GitCommands(
                     ?: "scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s) — :scope <bundle> for one, :members lists them",
             )
             argument.equals("all", ignoreCase = true) -> {
-                metas.refresh(session.current, meta, out)
+                metas.refresh(session.current, meta).writeTo(out)
                 meta.scope(pool, null)
                 out.text("scope: all ${meta.members.size} bundle(s), ${pool.size} resource(s)")
             }

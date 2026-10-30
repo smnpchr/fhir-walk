@@ -291,7 +291,7 @@ class MetaPoolTest {
         Files.delete(root.resolve("specimen/r2/bundle.json"))
         assertContains(
             run(":members"),
-            "meta pool exports read again: 1 gone, 1 modified — 1 bundle(s), 3 resource(s); 1 renamed; scope on specimen-r2 dropped",
+            "meta pool exports read again: 1 gone, 1 modified — 1 bundle(s), 3 resource(s); 1 renamed; 1 file(s) skipped, not a Bundle; scope on specimen-r2 dropped",
         )
     }
 
@@ -320,6 +320,43 @@ class MetaPoolTest {
         assertFalse(run(":members").contains("specimen/r3/bundle.json: "))
         half.writeText(bundle)
         assertContains(run(":members"), "read again: 1 new — 3 bundle(s)")
+    }
+
+    @Test
+    fun `a bundle past the cut-off is said to be older, not gone`() {
+        val root = archive()
+        run(":meta exports $root 2026-02")
+        Files.setLastModifiedTime(root.resolve("specimen/r1/bundle.json"), FileTime.from(Instant.parse("2026-01-01T00:00:00Z")))
+        assertContains(
+            run(":members"),
+            "meta pool exports read again: 1 now older than 2026-02 — 1 bundle(s), 1 resource(s); 1 renamed; 1 older than 2026-02; 1 file(s) skipped",
+        )
+    }
+
+    @Test
+    fun `a bundle written again within the same second is seen by its size`() {
+        val root = archive()
+        val r2 = root.resolve("specimen/r2/bundle.json")
+        val time = FileTime.from(Instant.parse("2026-01-01T00:00:00Z"))
+        Files.setLastModifiedTime(r2, time)
+        run(":meta exports $root")
+        r2.writeText(bundle)
+        Files.setLastModifiedTime(r2, time)
+        assertContains(run(":members"), "meta pool exports read again: 1 modified — 2 bundle(s), 6 resource(s)")
+    }
+
+    @Test
+    fun `problems found by members are rows of its listing, so more reaches them`() {
+        val root = archive()
+        run(":meta exports $root")
+        run(":limit 2")
+        for (n in 1..3) root.resolve("broken/b$n").createDirectories().resolve("bundle.json").writeText("""{"resourceType":"Bundle","entry":[""")
+        val members = run(":members")
+        assertContains(members, "meta pool exports: no bundle changed")
+        assertContains(members, "! broken/b1/bundle.json: ")
+        val more = run(":more")
+        assertContains(more, "! broken/b3/bundle.json: ")
+        assertContains(more, "specimen-r2")
     }
 
     @Test
