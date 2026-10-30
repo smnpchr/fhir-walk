@@ -286,7 +286,7 @@ class CompleterTest {
 
     @Test
     fun `scope finds a bundle by any part of its name once none begins with the word`() {
-        val newestFirst = listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016", "final-a")
+        val newestFirst = listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016", "final-a", "all-2")
         val scoped = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS }, members = { newestFirst })
         fun offered(line: String) = mutableListOf<Candidate>().also {
             scoped.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
@@ -295,8 +295,20 @@ class CompleterTest {
         assertEquals(listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016"), offered(":scope RUN-00"))
         // What begins with the word wins, as in JLine: `al` is `all`, not final-a.
         assertEquals(listOf("pipeline-2026-10-29-run-0017", "pipeline-2026-10-28-run-0016"), offered(":scope pipe"))
-        assertEquals(listOf("all"), offered(":scope al"))
-        assertEquals(emptyList(), offered(":scope zzz"))
+        // `all` is in a group of its own, which sorted() does not see; hence sets.
+        assertEquals(setOf("all-2", "all"), offered(":scope al").toSet())
+        // Bundles that only contain the word stay hidden while any begins with it.
+        assertEquals(setOf("all-2", "all"), offered(":scope a").toSet())
+        // `all` takes part in the contains stage too, and is left for JLine's typo matcher.
+        assertEquals(setOf("all-2", "all"), offered(":scope ll").toSet())
+        assertEquals(listOf("all"), offered(":scope alk"))
+        assertEquals(listOf("all"), offered(":scope zzz"))
+        // A git pool has no bundles: delta and all, whatever is typed, as before.
+        val git = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        val line = ":scope zz"
+        assertEquals(setOf("delta", "all"), mutableListOf<Candidate>().also {
+            git.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }.toSet())
     }
 
     @Test

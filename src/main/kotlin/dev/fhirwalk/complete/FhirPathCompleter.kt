@@ -202,13 +202,21 @@ class FhirPathCompleter(
                     candidates += commandCand("delta", "delta", "scope", "what this revision changed")
                     candidates += commandCand("all", "all", "scope", "the whole pool")
                 } else {
-                    // As JLine matches: what begins with the word, and only when nothing
-                    // does, what contains it, so `0017` finds `…-run-0017` without its
-                    // long start. `all` counts among what begins with it, or JLine
-                    // would keep it and drop every bundle that only contains `a`.
-                    val all = "all".startsWith(lastToken, ignoreCase = true)
+                    // In JLine's stages: what begins with the word (as typed first; see
+                    // [matching]), and only when nothing does, what contains it, so
+                    // `0017` finds `…-run-0017` without its long start. `all` takes part
+                    // in each stage like a bundle, or JLine would keep it and drop every
+                    // bundle that only contains `a`; when no stage finds anything it is
+                    // offered anyway, for JLine's typo matcher (`alk`).
                     val begun = bundles.matching(lastToken)
-                    val shown = if (begun.isEmpty() && !all) bundles.filter { it.contains(lastToken, ignoreCase = true) } else begun
+                    val contained = bundles.filter { it.contains(lastToken, ignoreCase = true) }
+                    val (shown, all) = when {
+                        begun.isNotEmpty() || "all".startsWith(lastToken, ignoreCase = true) ->
+                            begun to "all".startsWith(lastToken, ignoreCase = true)
+                        contained.isNotEmpty() || "all".contains(lastToken, ignoreCase = true) ->
+                            contained to "all".contains(lastToken, ignoreCase = true)
+                        else -> emptyList<String>() to true
+                    }
                     // Ranked, or JLine would sort the newest out of the top.
                     shown.take(MAX_ROWS).forEachIndexed { rank, it ->
                         candidates += Candidate(it, it, "bundles", null, null, null, true, rank)
