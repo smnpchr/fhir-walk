@@ -335,7 +335,9 @@ it is asked for. The cut-off is by file modification time: an age (`30d`, `12h`)
 which moves on with the clock, a date, or `none`. `:cutoff` moves it and reads again,
 parsing only the bundles it lets in. A bundle is named by its path less the
 extension and what every path ends in (never `all`, which `:scope` keeps for every bundle); a resource's label carries it
-(`specimen-r1:Patient/p1`), and `:members` lists them. Scoped to one bundle with
+(`specimen-r1:Patient/p1`), and `:members` lists them. `:members` and `:scope all`
+read the directory again first when a bundle has arrived, gone or been modified,
+and say what changed; that clears the focus, since a new bundle can rename the others. Scoped to one bundle with
 `:scope`, the prompt names it and rows leave it out (`Patient/p1`, which `:focus`
 finds in that bundle); `:more` prints the whole label. TAB after `:scope` finds a
 bundle by any part of its name once none begins with what is typed: `:scope 0017`.

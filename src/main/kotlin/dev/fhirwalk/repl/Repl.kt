@@ -75,8 +75,8 @@ class Repl(
 
     private val evaluateCommands = EvaluateCommands(state)
     private val focusCommands = FocusCommands(state)
-    private val gitCommands = GitCommands(state, focusCommands)
     private val metaCommands = MetaCommands(state)
+    private val gitCommands = GitCommands(state, focusCommands, metaCommands)
     private val poolCommands = PoolCommands(state, gitCommands, metaCommands)
     private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 

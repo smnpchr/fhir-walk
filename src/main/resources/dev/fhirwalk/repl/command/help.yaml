@@ -66,6 +66,10 @@ commands:
       - name: ":members"
         args: "[text]"
         summary: the meta pool's bundles, most recently modified first, with their sizes and when
+        details: |
+          Reads the directory again first when a bundle has arrived, gone or
+          been modified since, and says so; that clears the focus, as :meta
+          does, since a new bundle can rename the others.
         topic: meta
       - name: ":fhir"
         args: "[version]"
@@ -121,7 +125,8 @@ commands:
         details: |
           In a meta pool TAB offers the bundles newest first. When none begins
           with what is typed, it offers those that contain it, so :scope 0017
-          finds a bundle of a long name by its end.
+          finds a bundle of a long name by its end. :scope all reads the
+          directory again first, like :members.
         topic: git
 
   - group: Evaluating
@@ -263,9 +268,11 @@ topics:
       The cut-off is by file modification time: :cutoff 30d, :cutoff
       2026-10-01, :cutoff none. Files that are not one Bundle are skipped.
       :members lists the bundles; :scope specimen-r1 runs pool-wide over one,
-      :scope all over every one again. Scoped to one, the prompt names it and
-      rows leave it out: Patient/p1, which :focus finds in that bundle; :more
-      prints the whole label.
+      :scope all over every one again. Both :members and :scope all read the
+      directory again first when a bundle has arrived, gone or changed, so
+      what was written since shows without :meta exports. Scoped to one,
+      the prompt names it and rows leave it out: Patient/p1, which :focus
+      finds in that bundle; :more prints the whole label.
 
   - name: git
     title: Pools from git revisions

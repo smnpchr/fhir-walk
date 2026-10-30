@@ -74,6 +74,9 @@ class MetaPool(var definition: MetaDefinition) {
      *
      * @param missing the directory is not there, and the pool was left as it was.
      * @param unscoped the bundle the scope was on, when it is no longer a member.
+     * @param unchanged asked to read only if the members changed, they had not, and
+     *   the pool was left as it was; [problems] are then only those of files read afresh.
+     * @param changes how the members differ from the read before.
      */
     data class Scan(
         val members: Int,
@@ -82,7 +85,15 @@ class MetaPool(var definition: MetaDefinition) {
         val problems: List<String>,
         val missing: Boolean = false,
         val unscoped: String? = null,
+        val unchanged: Boolean = false,
+        val changes: Changes = Changes(),
     )
+
+    /**
+     * How the members of one scan differ from those of the one before: bundles new,
+     * gone, modified in place, and named differently because of what arrived or went.
+     */
+    data class Changes(val added: Int = 0, val gone: Int = 0, val modified: Int = 0, val renamed: Int = 0)
 
     /** Most recently modified first, which is what `:members` and `:scope` want to the top. */
     var members: List<Member> = emptyList()
@@ -121,8 +132,10 @@ class MetaPool(var definition: MetaDefinition) {
      * read is a problem, and the rest is read.
      *
      * @param since the cut-off as of now; null for every bundle.
+     * @param ifChanged leave the pool as it is when the members are the same files,
+     *   unmodified, as last time: what a look at them reads again for.
      */
-    fun scan(importer: Importer, pool: ResourcePool, since: Instant?): Scan {
+    fun scan(importer: Importer, pool: ResourcePool, since: Instant?, ifChanged: Boolean = false): Scan {
         val root = dir
         if (!Files.isDirectory(root)) return Scan(members.size, 0, 0, emptyList(), missing = true)
         val problems = mutableListOf<String>()
@@ -141,17 +154,19 @@ class MetaPool(var definition: MetaDefinition) {
                 }
             },
         )
+        val walked = problems.toList()
         files.sortBy { it.toString() }
         var older = 0
         var skipped = 0
         val inRange = HashMap<Path, Read>()
+        val fresh = mutableListOf<String>()
         for (file in files) {
             val modified = runCatching { Files.getLastModifiedTime(file).toInstant() }.getOrNull() ?: continue
             if (since != null && modified < since) {
                 older++
                 continue
             }
-            val read = reads[file]?.takeIf { it.modified == modified } ?: read(importer, root, file, modified)
+            val read = reads[file]?.takeIf { it.modified == modified } ?: read(importer, root, file, modified).also { fresh += it.problems }
             inRange[file] = read
             problems += read.problems
             if (read.resources == null && read.problems.isEmpty()) skipped++
@@ -161,6 +176,11 @@ class MetaPool(var definition: MetaDefinition) {
         reads.putAll(inRange)
 
         val kept = files.filter { inRange[it]?.resources != null }
+        val previous = members.associateBy { it.path }
+        if (ifChanged && kept.size == previous.size && kept.all { previous[it]?.modified == inRange.getValue(it).modified }) {
+            // A directory that cannot be read may hide a bundle, so it is said each time.
+            return Scan(members.size, older, skipped, walked + fresh, unchanged = true)
+        }
         val before = scoped
         pool.clear()
         val named = names(root, kept)
@@ -173,7 +193,14 @@ class MetaPool(var definition: MetaDefinition) {
         // Kept across a scan while its file is still a member.
         if (scopedPath != null && members.none { it.path == scopedPath }) scopedPath = null
         applyScope(pool)
-        return Scan(members.size, older, skipped, problems, unscoped = before?.takeIf { scopedPath == null })
+        val stayed = members.mapNotNull { member -> previous[member.path]?.let { member to it } }
+        val changes = Changes(
+            added = members.size - stayed.size,
+            gone = previous.size - stayed.size,
+            modified = stayed.count { (now, was) -> now.modified != was.modified },
+            renamed = stayed.count { (now, was) -> now.name != was.name },
+        )
+        return Scan(members.size, older, skipped, problems, unscoped = before?.takeIf { scopedPath == null }, changes = changes)
     }
 
     private fun read(importer: Importer, root: Path, file: Path, modified: Instant): Read {

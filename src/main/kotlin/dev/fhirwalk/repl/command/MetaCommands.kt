@@ -155,11 +155,13 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
         open(pool.name, definition, out)
     }
 
+    /** Reads the directory again first, so what arrived since shows; see [refresh]. */
     private fun members(argument: String, out: Output) {
         val meta = session.current.meta ?: run {
             out.text("${state.poolName()} is no meta pool — :meta lists them")
             return
         }
+        refresh(session.current, meta, out)
         val shown = meta.members.filter { it.name.contains(argument, ignoreCase = true) }
         if (shown.isEmpty()) {
             out.text(if (argument.isBlank()) "no bundles in ${state.poolName()}" else "no bundle in ${state.poolName()} is called anything like $argument")
@@ -207,6 +209,44 @@ internal class MetaCommands(private val state: ReplState) : CommandGroup {
         session.switchTo(name)
         state.lastPicks = null
         read(pool, meta, out, if (dropped) "; focus cleared" else "")
+    }
+
+    /**
+     * Reads a meta pool's directory again when its bundles have changed: one new,
+     * gone or modified. Unchanged, the pool is left alone and nothing is said but
+     * what is new to go wrong. Changed, it is filled again as by `:meta`, and a focus
+     * or rows picked or listed go, since a bundle's name can change with what
+     * arrives beside it, and with it every label in the bundle.
+     */
+    fun refresh(pool: Pool, meta: MetaPool, out: Output) {
+        val since = meta.definition.cutOff?.let { MetaPool.since(it, state.commitTimes) }
+        val scan = meta.scan(pool.importer, pool.pool, since, ifChanged = true)
+        if (scan.missing) {
+            out.error("meta pool ${pool.name}: ${meta.definition.dir} is not a directory — showing what was read before")
+            return
+        }
+        if (scan.unchanged) {
+            if (scan.problems.isNotEmpty()) state.withProblems(out, "meta pool ${pool.name}: no bundle changed", scan.problems)
+            return
+        }
+        val dropped = pool.focus != null
+        pool.focus = null
+        state.lastPicks = null
+        state.lastListing = null
+        val changes = scan.changes
+        val header = buildList {
+            add(
+                "meta pool ${pool.name} read again: " + listOfNotNull(
+                    changes.added.takeIf { it > 0 }?.let { "$it new" },
+                    changes.gone.takeIf { it > 0 }?.let { "$it gone" },
+                    changes.modified.takeIf { it > 0 }?.let { "$it modified" },
+                ).joinToString(", ") + " — ${scan.members} bundle(s), ${pool.pool.size} resource(s)",
+            )
+            if (changes.renamed > 0) add("${changes.renamed} renamed")
+            scan.unscoped?.let { add("scope on $it dropped, no longer a bundle here") }
+            if (dropped) add("focus cleared")
+        }.joinToString("; ")
+        state.withProblems(out, header, scan.problems)
     }
 
     /** Fills [pool] from its definition, saying what it found. Also how `:fhir` reads one again. */
