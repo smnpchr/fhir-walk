@@ -108,6 +108,18 @@ class TreeTest {
     }
 
     @Test
+    fun `a reference by identifier only is no link, and not said to be missing`() {
+        val byIdentifier = """{"identifier":{"type":{"coding":[{"system":"urn:centraxx","code":"SAMPLEID"}]},"value":"xxx"}}"""
+        val both = """{"resource":{"resourceType":"Specimen","id":"s2","parent":[$byIdentifier,{"reference":"Specimen/s1"}]}}"""
+        val only = """{"resource":{"resourceType":"Specimen","id":"s3","parent":[$byIdentifier]}}"""
+        root.resolve("lims.json").writeText(bundle(specimen("s1"), both, only))
+        run(":load ${root.resolve("lims.json")}")
+        val tree = run(":tree Specimen.parent")
+        assertEquals("2 resource(s) in 1 tree(s); 1 Specimen not linked", tree.lines().first())
+        assertEquals(listOf("  Specimen/s1", "    Specimen/s2"), rows(tree))
+    }
+
+    @Test
     fun `tree takes FHIRPath only, and points a name or a number to tree-view`() {
         run(":load ${specimens()}")
         run(":tree Specimen.parent")

@@ -82,10 +82,13 @@ class ReferenceTree(
                         is IBaseReference -> {
                             val reference = value.referenceElement
                             val text = reference?.value
+                            // By identifier only, as for a LIMS that cannot refer by id: not
+                            // a link, as HAPI's resolve() does not follow it either.
+                            if (text.isNullOrBlank()) continue
                             // resolve() hands back the pool's own instance.
                             pool.resolve(reference, hit.resource.resource)?.let(pool::entryFor) ?: run {
-                                val into = if (text?.startsWith("#") == true) contained else missing
-                                into.getOrPut(hit.resource) { linkedSetOf() } += text ?: "a Reference by identifier only"
+                                val into = if (text.startsWith("#")) contained else missing
+                                into.getOrPut(hit.resource) { linkedSetOf() } += text
                                 null
                             }
                         }
