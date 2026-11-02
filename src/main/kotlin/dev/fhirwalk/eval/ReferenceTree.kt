@@ -18,6 +18,7 @@ import org.hl7.fhir.instance.model.api.IBaseResource
  * @param linked how many resources the rows show.
  * @param notReferences values that are neither a Reference nor a resource.
  * @param notPooled resources an answer gave that the pool does not hold, such as contained ones.
+ * @param byIdentifier References with no literal reference, by identifier only: not followed.
  */
 class ReferenceTree(
     val rows: List<Row>,
@@ -25,6 +26,7 @@ class ReferenceTree(
     val linked: Int,
     val notReferences: Int,
     val notPooled: Int,
+    val byIdentifier: Int,
     val errors: Int,
     val firstError: String?,
 ) {
@@ -72,6 +74,7 @@ class ReferenceTree(
             val contained = HashMap<PooledResource, MutableSet<String>>()
             var notReferences = 0
             var notPooled = 0
+            var byIdentifier = 0
             for (hit in result.hits) {
                 for (value in hit.values) {
                     val target = when (value) {
@@ -82,10 +85,16 @@ class ReferenceTree(
                         is IBaseReference -> {
                             val reference = value.referenceElement
                             val text = reference?.value
+                            // By identifier only, as for a LIMS that cannot refer by id: not
+                            // a link, as HAPI's resolve() does not follow it either.
+                            if (text.isNullOrBlank()) {
+                                byIdentifier++
+                                continue
+                            }
                             // resolve() hands back the pool's own instance.
                             pool.resolve(reference, hit.resource.resource)?.let(pool::entryFor) ?: run {
-                                val into = if (text?.startsWith("#") == true) contained else missing
-                                into.getOrPut(hit.resource) { linkedSetOf() } += text ?: "a Reference by identifier only"
+                                val into = if (text.startsWith("#")) contained else missing
+                                into.getOrPut(hit.resource) { linkedSetOf() } += text
                                 null
                             }
                         }
@@ -110,7 +119,7 @@ class ReferenceTree(
                 // A cycle has no root: what is left hangs from one, so it starts there.
                 nodes.forEach { if (it !in walk.state) walk.from(onCycle(it, parents)) }
             }
-            return ReferenceTree(walk.rows, walk.trees, walk.state.size, notReferences, notPooled, result.errors, result.firstError)
+            return ReferenceTree(walk.rows, walk.trees, walk.state.size, notReferences, notPooled, byIdentifier, result.errors, result.firstError)
         }
 
         /**

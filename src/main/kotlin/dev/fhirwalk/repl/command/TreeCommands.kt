@@ -107,6 +107,7 @@ internal class TreeCommands(private val state: ReplState, private val records: R
             }
             if (tree.notReferences > 0) error("; ${tree.notReferences} value(s) not a Reference")
             if (tree.notPooled > 0) hint("; ${tree.notPooled} resource(s) not in the pool, such as contained ones")
+            if (tree.byIdentifier > 0) hint("; ${tree.byIdentifier} reference(s) by identifier only, not followed")
             if (tree.errors > 0) error("; ${tree.errors} error(s): ${tree.firstError}")
             if (table != null && table.errors > 0) error("; ${table.errors} cell error(s): ${table.firstError}")
         }
@@ -116,8 +117,8 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                 out.text("  ${state.shown(from)} links to nothing by $expression, and nothing to it")
             } else if (instead != null) {
                 out.text("  $instead")
-            } else if (tree.errors == 0 && tree.notReferences == 0 && tree.notPooled == 0) {
-                // Values that are no Reference are their own answer; only nothing at all is :why's question.
+            } else if (tree.errors == 0 && tree.notReferences == 0 && tree.notPooled == 0 && tree.byIdentifier == 0) {
+                // Values that are no Reference, or refer by identifier only, are their own answer; only nothing at all is :why's question.
                 out.text("  nothing links by $expression — :why $expression")
             }
             state.lastListing = null

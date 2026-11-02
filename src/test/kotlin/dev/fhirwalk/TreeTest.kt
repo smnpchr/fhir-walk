@@ -108,6 +108,33 @@ class TreeTest {
     }
 
     @Test
+    fun `a reference by identifier only is no link, and not said to be missing`() {
+        val byIdentifier = """{"identifier":{"type":{"coding":[{"system":"http://example.org/sample-id","code":"SID"}]},"value":"xxx"}}"""
+        val both = """{"resource":{"resourceType":"Specimen","id":"s2","parent":[$byIdentifier,{"reference":"Specimen/s1"}]}}"""
+        val only = """{"resource":{"resourceType":"Specimen","id":"s3","parent":[$byIdentifier]}}"""
+        root.resolve("lims.json").writeText(bundle(specimen("s1"), both, only))
+        run(":load ${root.resolve("lims.json")}")
+        val tree = run(":tree Specimen.parent")
+        assertEquals(
+            "2 resource(s) in 1 tree(s); 1 Specimen not linked; 2 reference(s) by identifier only, not followed",
+            tree.lines().first(),
+        )
+        assertEquals(listOf("  Specimen/s1", "    Specimen/s2"), rows(tree))
+        assertFalse(tree.contains("identifier only, not in"), tree)
+    }
+
+    @Test
+    fun `references all by identifier say so instead of pointing to why`() {
+        val byIdentifier = """{"identifier":{"system":"http://example.org/sample-id","value":"xxx"}}"""
+        val only = """{"resource":{"resourceType":"Specimen","id":"s3","parent":[$byIdentifier]}}"""
+        root.resolve("ids.json").writeText(bundle(specimen("s1"), only))
+        run(":load ${root.resolve("ids.json")}")
+        val tree = run(":tree Specimen.parent")
+        assertContains(tree, "1 reference(s) by identifier only, not followed")
+        assertFalse(tree.contains(":why"), tree)
+    }
+
+    @Test
     fun `tree takes FHIRPath only, and points a name or a number to tree-view`() {
         run(":load ${specimens()}")
         run(":tree Specimen.parent")
