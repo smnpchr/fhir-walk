@@ -58,6 +58,29 @@ class TreeTest {
     private fun rows(output: String): List<String> = output.lines().drop(1).filter { it.isNotBlank() }
 
     @Test
+    fun `a line carries on past a deep subtree to the next sibling, and ends with the last`() {
+        root.resolve("deep.json").writeText(
+            bundle(
+                specimen("r"), specimen("a", "r"), specimen("a1", "a"), specimen("a1x", "a1"),
+                specimen("a2", "a"), specimen("b", "r"), specimen("b1", "b"),
+            ),
+        )
+        run(":load ${root.resolve("deep.json")}")
+        assertEquals(
+            listOf(
+                "  Specimen/r",
+                "  ├─ Specimen/a",
+                "  │  ├─ Specimen/a1",
+                "  │  │  └─ Specimen/a1x",
+                "  │  └─ Specimen/a2",
+                "  └─ Specimen/b",
+                "     └─ Specimen/b1",
+            ),
+            rows(run(":tree Specimen.parent")),
+        )
+    }
+
+    @Test
     fun `a tree hangs each child below its parents, roots first`() {
         run(":load ${specimens()}")
         val tree = run(":tree Specimen.parent")
@@ -65,16 +88,16 @@ class TreeTest {
         assertEquals(
             listOf(
                 "  Specimen/s1",
-                "    Specimen/s1a",
-                "      Specimen/s1a1",
-                "    Specimen/s1b",
-                "    Specimen/s8",
+                "  ├─ Specimen/s1a",
+                "  │  └─ Specimen/s1a1",
+                "  ├─ Specimen/s1b",
+                "  └─ Specimen/s8",
                 "  Specimen/s7",
-                "    Specimen/s8  (shown under Specimen/s1)",
+                "  └─ Specimen/s8  (shown under Specimen/s1)",
                 "  Specimen/d1  ! refers to Specimen/x, not in the pool",
                 "  Specimen/c1",
-                "    Specimen/c2",
-                "      Specimen/c1  ↻ cycle",
+                "  └─ Specimen/c2",
+                "     └─ Specimen/c1  ↻ cycle",
             ),
             rows(tree),
         )
@@ -87,7 +110,7 @@ class TreeTest {
         val tree = run(":tree Specimen.parent")
         assertEquals("3 resource(s) in 1 tree(s)", tree.lines().first())
         assertEquals(
-            listOf("  Specimen/c1", "    Specimen/c3", "    Specimen/c2", "      Specimen/c1  ↻ cycle"),
+            listOf("  Specimen/c1", "  ├─ Specimen/c3", "  └─ Specimen/c2", "     └─ Specimen/c1  ↻ cycle"),
             rows(tree),
         )
     }
@@ -119,7 +142,7 @@ class TreeTest {
             "2 resource(s) in 1 tree(s); 1 Specimen not linked; 2 reference(s) by identifier only, not followed",
             tree.lines().first(),
         )
-        assertEquals(listOf("  Specimen/s1", "    Specimen/s2"), rows(tree))
+        assertEquals(listOf("  Specimen/s1", "  └─ Specimen/s2"), rows(tree))
         assertFalse(tree.contains("identifier only, not in"), tree)
     }
 
@@ -174,10 +197,10 @@ class TreeTest {
         val view = run(":tree-view parents up").lines()
         assertTrue(view.any { it.matches(Regex("""\s+up""")) }, view.joinToString("\n"))
         assertTrue(view.any { it.matches(Regex("""  Specimen/s1""")) }, view.joinToString("\n"))
-        assertTrue(view.any { it.matches(Regex("""      Specimen/s1a1\s+Specimen/s1a""")) }, view.joinToString("\n"))
-        assertTrue(view.any { it.matches(Regex("""    Specimen/s8\s+Specimen/s1, Specimen/s7""")) }, view.joinToString("\n"))
-        assertTrue("    Specimen/s8  (shown under Specimen/s1)" in view, view.joinToString("\n"))
-        assertTrue("      Specimen/c1  ↻ cycle" in view, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""  │  └─ Specimen/s1a1\s+Specimen/s1a""")) }, view.joinToString("\n"))
+        assertTrue(view.any { it.matches(Regex("""  └─ Specimen/s8\s+Specimen/s1, Specimen/s7""")) }, view.joinToString("\n"))
+        assertTrue("  └─ Specimen/s8  (shown under Specimen/s1)" in view, view.joinToString("\n"))
+        assertTrue("     └─ Specimen/c1  ↻ cycle" in view, view.joinToString("\n"))
         assertTrue(view.any { it.matches(Regex("""  Specimen/d1\s+Specimen/x  ! refers to Specimen/x, not in the pool""")) }, view.joinToString("\n"))
         // A saved view's columns are the same columns.
         run(":view up")
@@ -216,8 +239,8 @@ class TreeTest {
         run(":name-expr parents")
         run(":all Specimen.parent.reference")
         run(":name-expr up")
-        assertContains(run(":tree-view parents up"), "    Specimen/s8  (shown under Specimen/s1)")
-        assertContains(run(":more"), "    a-bundle:Specimen/s8  (shown under a-bundle:Specimen/s1)")
+        assertContains(run(":tree-view parents up"), "  └─ Specimen/s8  (shown under Specimen/s1)")
+        assertContains(run(":more"), "  └─ a-bundle:Specimen/s8  (shown under a-bundle:Specimen/s1)")
     }
 
     @Test
@@ -232,7 +255,7 @@ class TreeTest {
         run(":focus Specimen/s1a")
         val tree = run(":tree Specimen.parent")
         assertEquals("2 resource(s) in 1 tree(s) below Specimen/s1a", tree.lines().first())
-        assertEquals(listOf("  Specimen/s1a", "    Specimen/s1a1"), rows(tree))
+        assertEquals(listOf("  Specimen/s1a", "  └─ Specimen/s1a1"), rows(tree))
         run(":focus Specimen/s9")
         assertContains(run(":tree Specimen.parent"), "Specimen/s9 links to nothing by Specimen.parent, and nothing to it")
     }
@@ -257,9 +280,9 @@ class TreeTest {
         assertEquals(
             listOf(
                 "  a:Specimen/s1",
-                "    Specimen/s1a",
+                "  └─ Specimen/s1a",
                 "  b:Specimen/s1",
-                "    Specimen/s2",
+                "  └─ Specimen/s2",
                 "  b:Specimen/s3  ! refers to Specimen/s1a, not in this bundle",
             ),
             rows(tree),
@@ -267,7 +290,7 @@ class TreeTest {
         // Scoped to one bundle, the root leaves its name out too; :more keeps every label whole.
         run(":scope b")
         assertEquals("  Specimen/s1", rows(run(":tree Specimen.parent")).first())
-        assertContains(run(":more"), "    b:Specimen/s2")
+        assertContains(run(":more"), "  └─ b:Specimen/s2")
         assertFalse(rows(run(":tree Specimen.parent")).any { it.contains("a:") })
     }
 

@@ -292,11 +292,12 @@ r4:pool(10)> :tree-view parents kind collected
 parents = Specimen.parent: 9 resource(s) in 4 tree(s); 1 Specimen not linked
                           kind     collected
   Specimen/s1             blood    2026-10-01
-    Specimen/s1a          serum    2026-10-01
-      Specimen/s1a1       aliquot  2026-10-02
-    Specimen/s8           buffy    2026-10-03
+  ├─ Specimen/s1a         serum    2026-10-01
+  │  └─ Specimen/s1a1     aliquot  2026-10-02
+  ├─ Specimen/s1b         plasma   2026-10-01
+  └─ Specimen/s8          buffy    2026-10-03
   Specimen/s7             blood    2026-10-03
-    Specimen/s8  (shown under Specimen/s1)
+  └─ Specimen/s8  (shown under Specimen/s1)
 ```
 
 The rows are the tree's, in its order; a row shown elsewhere has no cells, since they
