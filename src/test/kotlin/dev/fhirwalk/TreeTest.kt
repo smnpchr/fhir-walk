@@ -104,6 +104,26 @@ class TreeTest {
     }
 
     @Test
+    fun `in a meta pool the unlinked keep their bundle, and a scope says in scope`() {
+        root.resolve("a").createDirectories().resolve("bundle.json").writeText(bundle(specimen("s1"), specimen("s1a", "s1"), specimen("lone")))
+        root.resolve("b").createDirectories().resolve("bundle.json").writeText(bundle(specimen("s1"), specimen("s2", "s1")))
+        run(":meta exports $root")
+        assertContains(run(":tree Specimen.parent").lines().first(), "; 1 Specimen not linked — :more")
+        assertEquals(listOf("  not linked", "    a:Specimen/lone"), run(":more").lines().filter { it.isNotBlank() }.takeLast(2))
+        run(":scope a")
+        assertContains(run(":tree Specimen.parent").lines().first(), "; 1 Specimen not linked in scope — :more")
+        assertContains(run(":more"), "  not linked in scope\n")
+    }
+
+    @Test
+    fun `with nothing linked, more does not list the unlinked of an earlier tree`() {
+        run(":load ${specimens()}")
+        run(":tree Specimen.parent")
+        run(":tree Specimen.collection.collector")
+        assertFalse(run(":more").contains("not linked"))
+    }
+
+    @Test
     fun `a tree hangs each child below its parents, roots first`() {
         run(":load ${specimens()}")
         val tree = run(":tree Specimen.parent")

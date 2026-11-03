@@ -333,7 +333,8 @@ them, and `:tree-view parents @saved` reruns them along the tree.
 The header counts the resources of the expression's type that are in no tree: no
 parent here and no child. `:more` names them after the tree, under `not linked`; since
 a reference by identifier is not followed, a resource whose only parent is referred to
-that way is among them.
+that way is among them. Under a scope it says `not linked in scope`: a child outside
+the scope is not followed, so its parent can look alone.
 
 ### Several pools
 

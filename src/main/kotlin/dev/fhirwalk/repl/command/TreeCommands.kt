@@ -98,11 +98,13 @@ internal class TreeCommands(private val state: ReplState, private val records: R
             val linked = tree.rows.mapTo(HashSet()) { it.resource }
             candidates.filter { it.type == type && it !in linked }
         }
+        val inScope = if (pool.scope != null) " in scope" else ""
         // The count is in the header; who they are only :more says, after the tree.
         val unlinked = if (alone.isEmpty()) {
             emptyList()
         } else {
-            listOf(Output.text("  not linked")) + alone.map { resource -> Output.line { +"    "; label(resource.label) } }
+            // A child outside the scope is never evaluated, so a parent in it can look alone: say so.
+            listOf(Output.text("  not linked$inScope")) + alone.map { resource -> Output.line { +"    "; label(resource.label) } }
         }
         val meta = session.current.meta
         val header = Output.line {
@@ -113,7 +115,7 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                 +", in ${tree.rows.mapTo(HashSet()) { it.resource.part }.size} of ${meta.members.size} bundle(s)"
             }
             // With no tree there is no listing for :more, and every one of them is unlinked.
-            if (alone.isNotEmpty()) hint("; ${alone.size} $type not linked" + if (tree.rows.isEmpty()) "" else " — :more")
+            if (alone.isNotEmpty()) hint("; ${alone.size} $type not linked$inScope" + if (tree.rows.isEmpty()) "" else " — :more")
             if (tree.notReferences > 0) error("; ${tree.notReferences} value(s) not a Reference")
             if (tree.notPooled > 0) hint("; ${tree.notPooled} resource(s) not in the pool, such as contained ones")
             if (tree.byIdentifier > 0) hint("; ${tree.byIdentifier} reference(s) by identifier only, not followed")
