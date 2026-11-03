@@ -214,11 +214,11 @@ internal class PoolCommands(
                     meta.read(session.current, fresh, out)
                 }
                 val gitPool = pool.git ?: continue
-                if (!git.openGit(gitPool.spec, gitPool.commit.id.name, gitPool.deltaScope, out)) {
+                if (!git.openGit(gitPool.spec, gitPool.commit.id.name, gitPool.deltaScope, out, base = gitPool.base?.id?.name)) {
                     // Kept, as at startup: saved again rather than lost, to open once it can.
                     git.unavailable(
                         session.current,
-                        SavedPool(pool.name, source = gitPool.spec, at = gitPool.commit.id.name, deltaScope = gitPool.deltaScope),
+                        SavedPool(pool.name, source = gitPool.spec, at = gitPool.commit.id.name, deltaScope = gitPool.deltaScope, base = gitPool.base?.id?.name),
                     )
                 }
             }

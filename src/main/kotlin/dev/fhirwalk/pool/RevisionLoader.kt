@@ -24,9 +24,14 @@ class RevisionLoader(
     /**
      * What a commit changed, as resources: the added and modified ones are in the
      * pool, the deleted ones only by label, since this revision no longer holds them.
+     *
+     * @param base what it is compared with: the first parent, or null for the first
+     *   commit, unless [ranged].
+     * @param ranged whether [base] was asked for (`:delta A..B`) rather than the parent.
      */
     class Delta(
-        val parent: GitSource.Commit?,
+        val base: GitSource.Commit?,
+        val ranged: Boolean,
         val added: List<PooledResource>,
         val modified: List<PooledResource>,
         val deleted: List<String>,
@@ -54,17 +59,19 @@ class RevisionLoader(
      * Everything that reads the repository happens before the pool is touched, so a
      * revision that cannot be read throws with the pool, [commit] and [delta] still
      * describing the last one.
+     *
+     * @param base the commit the delta compares with; null for the first parent.
      */
-    fun load(commit: GitSource.Commit): Importer.Report {
+    fun load(commit: GitSource.Commit, base: GitSource.Commit? = null): Importer.Report {
         val next = HashMap<ObjectId, Blob>()
         fun blobOf(path: String, id: ObjectId): Blob =
             next.getOrPut(id) { current[id] ?: previous[id] ?: parse(path, id) }
         val files = source.files(commit, importer::reads).map { it to blobOf(it.path, it.blob) }
-        val changes = source.changes(commit, importer::reads)
-        // Kept with this revision's: the parent, one step back, holds them.
+        val changes = if (base == null) source.changes(commit, importer::reads) else source.changes(commit, importer::reads, base.id)
+        // Kept with this revision's: the base holds them, which after a step is the last revision.
         val deletedBlobs = changes.filter { it.kind == GitSource.Kind.DELETED }
             .map { change -> change to change.oldBlob?.let { blobOf(change.path, it) } }
-        val parent = commit.parent?.let(source::commit)
+        val against = base ?: commit.parent?.let(source::commit)
 
         val report = Importer.Report()
         val byFile = HashMap<String, List<PooledResource>>()
@@ -77,7 +84,8 @@ class RevisionLoader(
         report.resources = pool.size
         pool.settleReferences()
         delta = Delta(
-            parent,
+            against,
+            ranged = base != null,
             added = changes.filter { it.kind == GitSource.Kind.ADDED }.flatMap { byFile[it.path].orEmpty() },
             modified = changes.filter { it.kind == GitSource.Kind.MODIFIED }.flatMap { byFile[it.path].orEmpty() },
             deleted = deletedBlobs.flatMap { (change, blob) ->

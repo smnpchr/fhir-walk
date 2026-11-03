@@ -115,14 +115,15 @@ class GitSource private constructor(
     fun read(blob: ObjectId): String = String(repository.open(blob, Constants.OBJ_BLOB).bytes, Charsets.UTF_8)
 
     /**
-     * What [commit] changed under the directory against its first parent, or against
-     * nothing for the first commit. Renames are not detected: a moved file is a
-     * deletion and an addition, which is what it is to a pool keyed by content.
+     * What [commit] changed under the directory against [base]: by default its first
+     * parent, or nothing for the first commit. Any other commit is compared as a
+     * tree, so a file changed twice between them is one change, and one added and
+     * deleted again is none. Renames are not detected: a moved file is a deletion and
+     * an addition, which is what it is to a pool keyed by content.
      */
-    fun changes(commit: Commit, wanted: (String) -> Boolean): List<Change> = RevWalk(repository).use { walk ->
+    fun changes(commit: Commit, wanted: (String) -> Boolean, base: ObjectId? = commit.parent): List<Change> = RevWalk(repository).use { walk ->
         TreeWalk(repository).use { tree ->
-            val parent = commit.parent
-            if (parent == null) tree.addTree(EmptyTreeIterator()) else tree.addTree(walk.parseCommit(parent).tree)
+            if (base == null) tree.addTree(EmptyTreeIterator()) else tree.addTree(walk.parseCommit(base).tree)
             tree.addTree(walk.parseCommit(commit.id).tree)
             tree.isRecursive = true
             if (subpath.isNotEmpty()) tree.filter = PathFilter.create(subpath)
@@ -143,6 +144,11 @@ class GitSource private constructor(
                 )
             }.sortedBy { it.path }
         }
+    }
+
+    /** Whether [ancestor] is [commit] or reachable from it through its parents. */
+    fun isAncestor(ancestor: ObjectId, commit: ObjectId): Boolean = RevWalk(repository).use { walk ->
+        walk.isMergedInto(walk.parseCommit(ancestor), walk.parseCommit(commit))
     }
 
     /** [from] and its first parents, newest first: the commits a branch's own runs made. */

@@ -97,6 +97,71 @@ class GitPoolTest {
     }
 
     @Test
+    fun `delta over a range compares with its base, and the scope follows`() {
+        val session = opened()
+        val moved = session.run(":delta ${registry.out2.short}..${registry.out4.short}")
+        assertContains(moved, "pool spec at ${registry.out4.short} on branch/out")
+        assertContains(moved, "against ${registry.out2.short} — Δ4: 3 modified, 1 deleted")
+        assertEquals("r4:spec@${registry.out2.short}..${registry.out4.short} Δ4> ", session.repl.prompt())
+        val delta = session.run(":delta")
+        assertContains(delta, "${registry.out4.short} against ${registry.out2.short}, ")
+        assertContains(delta, "~ Specimen/30012")
+        assertContains(delta, "- Patient/9999")
+        assertContains(session.run("Specimen.type.coding.code"), "3 of 3 resource(s) matched")
+        assertContains(session.run(":scope all"), "all 24 resource(s)")
+        assertContains(session.run(":scope"), "for what changed from ${registry.out2.short} to ${registry.out4.short}")
+    }
+
+    @Test
+    fun `a range counts a resource once, and one added and deleted within it not at all`() {
+        val session = opened()
+        // From out1: out2 added the dummy patient and out4 deleted it; out3 changed what out1 had.
+        assertContains(session.run(":delta ${registry.out1.short}.."), "Δ15: 12 added, 3 modified")
+        val delta = session.run(":delta")
+        assertFalse(delta.contains("Patient/9999"), delta)
+        assertEquals(1, delta.lines().count { it.contains("Specimen/30012") }, delta)
+    }
+
+    @Test
+    fun `a step or delta dot dot goes back to the parent`() {
+        val session = opened()
+        session.run(":delta ${registry.out1.short}..")
+        assertContains(session.run(":delta .."), "spec at ${registry.out4.short} on branch/out, ")
+        assertEquals("r4:spec@${registry.out4.short} Δ1> ", session.repl.prompt())
+        session.run(":delta ${registry.out1.short}..")
+        assertContains(session.run(":step"), "Δ3: 3 modified")
+        assertContains(session.run(":delta"), "${registry.out3.short} against ${registry.out2.short} — ")
+    }
+
+    @Test
+    fun `either end of a range takes a date, and a base off the line is compared as trees`() {
+        val session = opened()
+        val dated = session.run(":delta ${minute(registry.out2, plusMinutes = 30)}..")
+        assertContains(dated, "on branch/out is ${registry.out2.short}")
+        assertContains(dated, "against ${registry.out2.short} — Δ4")
+        assertContains(session.run(":delta master.."), "${registry.m2.short} is not an ancestor of ${registry.out4.short}: compared as two trees")
+    }
+
+    @Test
+    fun `a range that cannot be read or spelled is refused and stays put`() {
+        val session = opened()
+        val before = session.repl.prompt()
+        assertContains(session.run(":delta ${registry.out2.short}"), "usage: :delta [from..to]")
+        assertContains(session.run(":delta a...b"), "usage: :delta [from..to]")
+        assertContains(session.run(":delta nosuch.."), "no commit nosuch")
+        assertEquals(before, session.repl.prompt())
+    }
+
+    @Test
+    fun `a range comes back with the workspace`() {
+        opened().run(":delta ${registry.out2.short}..${registry.out3.short}")
+        val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
+        assertTrue("base\t${registry.out2.name}" in state, state.toString())
+        val next = Run()
+        assertEquals("r4:spec@${registry.out2.short}..${registry.out3.short} Δ3> ", next.repl.prompt())
+    }
+
+    @Test
     fun `stepping stops at either end`() {
         val session = opened()
         assertContains(session.run(":step +1"), "already at the tip of branch/out")

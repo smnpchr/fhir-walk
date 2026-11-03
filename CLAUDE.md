@@ -114,6 +114,9 @@ when extending the walker.
   at startup.
 - **A forward step has to be found from the line's tip**: a commit does not know
   its children. Back follows first parents and always works.
+- **The delta compares with the first parent unless `:delta A..B` named a base**
+  (`RevisionLoader.load(commit, base)`, saved as a `base` state line). A move is
+  about one commit, so `:at` and `:step` go back to the parent.
 
 ## FHIRPath behaviours worth remembering
 
