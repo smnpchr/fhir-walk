@@ -47,11 +47,10 @@ internal class GitCommands(
      * Makes the current pool [spec]'s directory at a revision: [at] when it still
      * exists, else the tip of the line [spec] names.
      *
-     * @return false when it could not be opened; what went wrong has been said.
-     */
-    /**
      * @param base the commit a `:delta A..B` compared with, restored with the pool: a
-     *   delta saved as a range comes back as one, or as the parent's when it is gone.
+     *   delta saved as a range comes back as one, or as the parent's when it, or
+     *   the commit it was compared with, is gone or cannot be read.
+     * @return false when it could not be opened; what went wrong has been said.
      */
     fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output, gitDir: Path? = null, base: String? = null): Boolean {
         val (path, revision) = GitSource.split(spec) ?: run {
@@ -97,7 +96,8 @@ internal class GitCommands(
             out.error("no commit $line in ${source.path}")
             return false
         }
-        val from = base?.let { id ->
+        // A base without the commit it was compared with would make another range.
+        val from = base?.takeIf { left != null }?.let { id ->
             source.resolve(id) ?: null.also {
                 out.error("${id.take(7)}, the delta's base, is gone from ${source.path} — comparing with the parent instead")
             }
@@ -106,7 +106,12 @@ internal class GitCommands(
         // Attached only once loaded: a pool whose revision could not be read must not
         // look like a git pool to the prompt or to the saved state.
         val report = try {
-            git.load(start, from)
+            // The base is optional: one that cannot be read leaves the parent's delta.
+            runCatching { git.load(start, from) }.getOrElse { failed ->
+                if (from == null) throw failed
+                out.error("${from.short}, the delta's base, cannot be read — comparing with the parent instead")
+                git.load(start)
+            }
         } catch (e: Exception) {
             source.close()
             out.error("cannot read ${source.path} at ${start.short}: ${e.message ?: e.javaClass.simpleName}")
@@ -611,11 +616,24 @@ internal class GitCommands(
         val git = gitPool(out) ?: return
         val range = argument.trim()
         if (range.isNotEmpty()) {
-            if (!range.contains("..") || range.contains("...")) {
+            if (!range.contains("..") || range.contains("...") || range.indexOf("..") != range.lastIndexOf("..")) {
                 out.text("usage: :delta [from..to]  —  either end as :at takes it, empty for where the pool is; :delta .. compares with the parent again")
                 return
             }
-            moved(git, git.range(range.substringBefore("..").trim(), range.substringAfter("..").trim()), out)
+            val from = range.substringBefore("..").trim()
+            val to = range.substringAfter("..").trim()
+            if (from.isEmpty() && to.isEmpty()) {
+                // Back to the parent is about the base, not the scope: it stays as it was.
+                if (git.base == null) {
+                    out.text("${git.commit.short} already compares with its parent")
+                    return
+                }
+                val scoped = git.deltaScope
+                moved(git, git.range(from, to), out)
+                git.deltaScope = scoped
+                return
+            }
+            moved(git, git.range(from, to), out)
             return
         }
         val delta = git.delta

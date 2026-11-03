@@ -105,9 +105,9 @@ class GitPool(
 
     /**
      * A branch or tag goes first, so one named like a date stays reachable; then a
-     * date, the line as it stood then; then anything else git reads as a revision.
+     * date, [on] as it stood then; then anything else git reads as a revision.
      */
-    private fun find(revision: String): Lookup {
+    private fun find(revision: String, on: String = line): Lookup {
         fun missing(message: String) = Lookup.Missing(Move.Refused(message))
         if (revision !in source.refNames()) {
             val end = try {
@@ -116,11 +116,12 @@ class GitPool(
                 return missing("not a date: $revision")
             }
             if (end != null) {
-                val tip = source.resolve(line) ?: return missing("$lineLabel names no commit any more")
+                val label = GitSource.label(on)
+                val tip = source.resolve(on) ?: return missing("$label names no commit any more")
                 val history = source.history(tip)
                 val target = times.asOf(history, end)
-                    ?: return missing("$lineLabel starts at ${times.shown(history.last())}, after $revision")
-                return Lookup.Found(target, "$revision on $lineLabel is ${target.short}, ${times.shown(target)} ${target.subject}")
+                    ?: return missing("$label starts at ${times.shown(history.last())}, after $revision")
+                return Lookup.Found(target, "$revision on $label is ${target.short}, ${times.shown(target)} ${target.subject}")
             }
         }
         val target = source.resolve(revision) ?: return missing("no commit $revision in ${source.path}")
@@ -141,7 +142,8 @@ class GitPool(
      * `:delta from..to`: the pool at [to], its delta against [from] rather than the
      * first parent. Either end takes what `:at` takes; an empty one is the commit the
      * pool is at. Both empty go back to the first parent. A base that is not an
-     * ancestor is still a tree diff, said in the note.
+     * ancestor is still a tree diff, said in the note. A date as [from] is read on
+     * the line the pool ends up on: `:delta 2026-11-02..feat` is feat since then.
      */
     fun range(from: String, to: String): Move = reading {
         if (from.isEmpty() && to.isEmpty()) return@reading Move.Moved(load(commit))
@@ -150,7 +152,8 @@ class GitPool(
             is Lookup.Found -> lookup
             is Lookup.Missing -> return@reading lookup.refusal
         }
-        val base = when (val lookup = end(from)) {
+        val toLine = to.takeIf { it.isNotEmpty() && source.isBranch(it) } ?: line
+        val base = when (val lookup = if (from.isEmpty()) end(from) else find(from, toLine)) {
             is Lookup.Found -> lookup
             is Lookup.Missing -> return@reading lookup.refusal
         }

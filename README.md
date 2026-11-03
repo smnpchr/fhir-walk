@@ -436,10 +436,11 @@ Patient that did not change. `:delta` lists it, deletions included by label, and
 
 One run is often several commits, so the delta can also span a range, in git's own
 spelling: `:delta main~5..main` moves to `main` and compares it with `main~5`, and
-`:delta 2026-11-02..` compares where the pool is with the line as of that date. Either
+`:delta 2026-11-02..` compares where the pool is with the line as of that date
+(with a branch as the other end, that branch as of that date). Either
 end takes what `:at` takes; an empty one is where the pool is. The range is one tree
 diff: a resource changed twice is listed once, and one added and deleted within it not
-at all. The prompt spells it the same way (`spec@a1b2c3d..533a322 Δ15`), the scope is
+at all. The prompt spells it the same way (`in@a1b2c3d..533a322 Δ15`), the scope is
 its delta, so `:tally` or `:all` answer "what did the runs since Monday change?" in a
 line. A base that is not an ancestor is still compared, as two trees, and says so.
 `:step` and `:at` go back to comparing with the parent, and so does `:delta ..`.
