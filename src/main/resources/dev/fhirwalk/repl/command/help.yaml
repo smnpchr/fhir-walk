@@ -259,10 +259,12 @@ topics:
       first and marked (shown under …) under the other; a link back up
       the path is marked ↻ cycle. A reference that does not resolve is
       said on its resource's row; a reference by identifier only is not
-      followed, as resolve() does not, and is counted in the header. It
-      runs over the scope, and in a meta pool within each bundle; with a
-      focus it shows the tree below the focus only. :tree takes FHIRPath
-      only; a recorded or named link is :tree-view's, see :manual recording.
+      followed, as resolve() does not, and is counted in the header. The
+      resources of the expression's type in no tree are counted there too,
+      and :more names them after the tree. It runs over the scope, and
+      in a meta pool within each bundle; with a focus it shows the tree
+      below the focus only. :tree takes FHIRPath only; a recorded or
+      named link is :tree-view's, see :manual recording.
 
   - name: focus
     title: Focusing on a resource or an element
