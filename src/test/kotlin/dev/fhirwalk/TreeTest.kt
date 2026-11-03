@@ -81,10 +81,53 @@ class TreeTest {
     }
 
     @Test
+    fun `more ends a tree with the resources it does not link`() {
+        run(":load ${specimens()}")
+        run(":tree Specimen.parent")
+        val more = run(":more").lines().filter { it.isNotBlank() }
+        assertEquals(listOf("  not linked", "    Specimen/s9"), more.takeLast(2))
+        assertFalse(run(":tree Specimen.parent").contains("Specimen/s9"), "listed only on :more")
+        run(":name-expr parents")
+        run(":all Specimen.parent.reference")
+        run(":name-expr up")
+        run(":tree-view parents up")
+        assertEquals(listOf("  not linked", "    Specimen/s9"), run(":more").lines().filter { it.isNotBlank() }.takeLast(2))
+    }
+
+    @Test
+    fun `a focus or nothing linked points nowhere for the unlinked`() {
+        run(":load ${specimens()}")
+        val header = run(":tree Specimen.collection.collector").lines().first()
+        assertFalse(header.contains(":more"), header)
+        run(":focus Specimen/s1")
+        assertFalse(run(":tree Specimen.parent").contains("not linked"))
+    }
+
+    @Test
+    fun `in a meta pool the unlinked keep their bundle, and a scope says in scope`() {
+        root.resolve("a").createDirectories().resolve("bundle.json").writeText(bundle(specimen("s1"), specimen("s1a", "s1"), specimen("lone")))
+        root.resolve("b").createDirectories().resolve("bundle.json").writeText(bundle(specimen("s1"), specimen("s2", "s1")))
+        run(":meta exports $root")
+        assertContains(run(":tree Specimen.parent").lines().first(), "; 1 Specimen not linked — :more")
+        assertEquals(listOf("  not linked", "    a:Specimen/lone"), run(":more").lines().filter { it.isNotBlank() }.takeLast(2))
+        run(":scope a")
+        assertContains(run(":tree Specimen.parent").lines().first(), "; 1 Specimen not linked in scope — :more")
+        assertContains(run(":more"), "  not linked in scope\n")
+    }
+
+    @Test
+    fun `with nothing linked, more does not list the unlinked of an earlier tree`() {
+        run(":load ${specimens()}")
+        run(":tree Specimen.parent")
+        run(":tree Specimen.collection.collector")
+        assertFalse(run(":more").contains("not linked"))
+    }
+
+    @Test
     fun `a tree hangs each child below its parents, roots first`() {
         run(":load ${specimens()}")
         val tree = run(":tree Specimen.parent")
-        assertEquals("9 resource(s) in 4 tree(s); 1 Specimen not linked", tree.lines().first())
+        assertEquals("9 resource(s) in 4 tree(s); 1 Specimen not linked — :more", tree.lines().first())
         assertEquals(
             listOf(
                 "  Specimen/s1",
@@ -139,7 +182,7 @@ class TreeTest {
         run(":load ${root.resolve("lims.json")}")
         val tree = run(":tree Specimen.parent")
         assertEquals(
-            "2 resource(s) in 1 tree(s); 1 Specimen not linked; 2 reference(s) by identifier only, not followed",
+            "2 resource(s) in 1 tree(s); 1 Specimen not linked — :more; 2 reference(s) by identifier only, not followed",
             tree.lines().first(),
         )
         assertEquals(listOf("  Specimen/s1", "  └─ Specimen/s2"), rows(tree))

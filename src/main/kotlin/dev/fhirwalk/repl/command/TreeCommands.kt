@@ -90,6 +90,22 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                 is ViewBuilder.Result.Table -> result
             }
         }
+        // Of the type the expression starts at: every other resource is not what it was asked of.
+        val type = FhirPathTokenizer.segments(expression).firstOrNull()?.name?.takeIf { it in session.navigator.resourceTypes() }
+        val alone = if (type == null || from != null) {
+            emptyList()
+        } else {
+            val linked = tree.rows.mapTo(HashSet()) { it.resource }
+            candidates.filter { it.type == type && it !in linked }
+        }
+        val inScope = if (pool.scope != null) " in scope" else ""
+        // The count is in the header; who they are only :more says, after the tree.
+        val unlinked = if (alone.isEmpty()) {
+            emptyList()
+        } else {
+            // A child outside the scope is never evaluated, so a parent in it can look alone: say so.
+            listOf(Output.text("  not linked$inScope")) + alone.map { resource -> Output.line { +"    "; label(resource.label) } }
+        }
         val meta = session.current.meta
         val header = Output.line {
             ref?.let { label(it); +" = "; shrink(expression); +": " }
@@ -98,13 +114,8 @@ internal class TreeCommands(private val state: ReplState, private val records: R
             if (meta != null && meta.scoped == null && from == null) {
                 +", in ${tree.rows.mapTo(HashSet()) { it.resource.part }.size} of ${meta.members.size} bundle(s)"
             }
-            // Of the type the expression starts at: every other resource is not what it was asked of.
-            val type = FhirPathTokenizer.segments(expression).firstOrNull()?.name?.takeIf { it in session.navigator.resourceTypes() }
-            if (type != null && from == null) {
-                val linked = tree.rows.mapTo(HashSet()) { it.resource }
-                val alone = candidates.count { it.type == type && it !in linked }
-                if (alone > 0) hint("; $alone $type not linked")
-            }
+            // With no tree there is no listing for :more, and every one of them is unlinked.
+            if (alone.isNotEmpty()) hint("; ${alone.size} $type not linked$inScope" + if (tree.rows.isEmpty()) "" else " — :more")
             if (tree.notReferences > 0) error("; ${tree.notReferences} value(s) not a Reference")
             if (tree.notPooled > 0) hint("; ${tree.notPooled} resource(s) not in the pool, such as contained ones")
             if (tree.byIdentifier > 0) hint("; ${tree.byIdentifier} reference(s) by identifier only, not followed")
@@ -129,7 +140,7 @@ internal class TreeCommands(private val state: ReplState, private val records: R
             out.listing(
                 listOf(header),
                 rows = tree.rows.mapIndexed { idx, row -> listed(row, guides[idx], whole = false) },
-                full = tree.rows.mapIndexed { idx, row -> listed(row, guides[idx], whole = true) },
+                full = tree.rows.mapIndexed { idx, row -> listed(row, guides[idx], whole = true) } + unlinked,
             )
             return true
         }
@@ -151,6 +162,7 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                     guide = guides[idx],
                 )
             },
+            more = unlinked,
         )
         return true
     }

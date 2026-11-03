@@ -63,9 +63,12 @@ class Output {
     /**
      * A table: [header], a row of [titles], and a row per resource. The printer
      * shares the window between the columns, shortening the widest, and `:more`
-     * prints every cell whole.
+     * prints every cell whole, followed by [more].
+     *
+     * @param more what only `:more` prints, after the rows: detail the table counts
+     *   but has no rows for.
      */
-    data class Table(val header: List<Line>, val titles: List<String>, val rows: List<Row>) : Listed {
+    data class Table(val header: List<Line>, val titles: List<String>, val rows: List<Row>, val more: List<Line> = emptyList()) : Listed {
         /**
          * @param errors the indexes of cells that hold an error rather than a value.
          * @param wholeLabel what `:more` prints for [label], when that leaves something out.
@@ -115,8 +118,8 @@ class Output {
         added += Listing(header, rows, full, fullHeader, footer)
     }
 
-    fun table(header: List<Line>, titles: List<String>, rows: List<Table.Row>) {
-        added += Table(header, titles, rows)
+    fun table(header: List<Line>, titles: List<String>, rows: List<Table.Row>, more: List<Line> = emptyList()) {
+        added += Table(header, titles, rows, more)
     }
 
     fun whole(listing: Listed) {
@@ -145,7 +148,7 @@ class Output {
                 val note = (if (whole) row.wholeNote else row.note)?.text
                 listOfNotNull(row.guide + if (whole) row.wholeLabel else row.label, row.cells.takeIf { it.isNotEmpty() }?.joinToString("  "), note)
                     .joinToString("  ")
-            }
+            } + (if (whole) table.more.map { it.text } else emptyList())
 
     class LineBuilder {
         internal val spans = mutableListOf<Span>()

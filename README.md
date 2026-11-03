@@ -314,7 +314,7 @@ records its link once it links something; `:name-expr parents` names it, and
 
 ```
 r4:pool(10)> :tree-view parents kind collected
-parents = Specimen.parent: 9 resource(s) in 4 tree(s); 1 Specimen not linked
+parents = Specimen.parent: 9 resource(s) in 4 tree(s); 1 Specimen not linked — :more
                           kind     collected
   Specimen/s1             blood    2026-10-01
   ├─ Specimen/s1a         serum    2026-10-01
@@ -329,6 +329,12 @@ The rows are the tree's, in its order; a row shown elsewhere has no cells, since
 are on that row. `:tree-view parents` alone is the plain tree, and `@view` columns work
 as in `:view`. Its columns count as the last view's, so `:name-view` right after saves
 them, and `:tree-view parents @saved` reruns them along the tree.
+
+The header counts the resources of the expression's type that are in no tree: no
+parent here and no child. `:more` names them after the tree, under `not linked`; since
+a reference by identifier is not followed, a resource whose only parent is referred to
+that way is among them. Under a scope it says `not linked in scope`: a child outside
+the scope is not followed, so its parent can look alone.
 
 ### Several pools
 

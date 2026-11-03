@@ -98,7 +98,7 @@ class Printer(private val style: Style, private val columns: Int, private val ro
             val note = if (whole) it.wholeNote else it.note
             trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths.take(it.cells.size), it.errors, titles = false, width, note, it.guide))
         }
-        return Output.Listing(header(fitting, labelWidth), rows(fitting, whole = false), rows(natural, whole = true), header(natural, wholeLabelWidth))
+        return Output.Listing(header(fitting, labelWidth), rows(fitting, whole = false), rows(natural, whole = true) + table.more, header(natural, wholeLabelWidth))
     }
 
     /** [line] without the padding of empty cells at its end. */
