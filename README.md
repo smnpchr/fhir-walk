@@ -77,10 +77,10 @@ That last line is the point. One hit in two says the element is real and this re
 simply lacks it; zero in two would say the expression is aimed at the wrong level, or
 the element name is wrong. Only the pool can tell those apart.
 
-With no focus, `:why` counts instead how many resources of the expression's type get
-through each step, so a `where()` narrows the count rather than reading as the step
-that went empty. A long step, such as an extension URL, is cut in the middle to fit
-the window; `:more` prints every step whole.
+A long step, such as an extension URL, is cut in the middle to fit the window;
+`:more` prints every step whole. With no focus, `:why` counts instead how many
+resources of the expression's type get through each step, so a `where()` narrows the
+count rather than reading as the step that went empty.
 
 ## Sample pool
 

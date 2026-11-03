@@ -166,6 +166,20 @@ class ReplTest {
     }
 
     @Test
+    fun `why under a focus marks a failing step, with its error after it`() {
+        run(":focus Patient/pat1")
+        val out = run(":why name.given.substring('a')")
+        assertTrue(Regex("""  !  \.substring\('a'\)  <-- fails here  ! """).containsMatchIn(out), out)
+    }
+
+    @Test
+    fun `more after a why that printed no steps does not show an older listing`() {
+        run(":all Observation.status")
+        assertContains(run(":why Specimen.type"), "no Specimen in the pool")
+        assertFalse(run(":more").contains("Observation/obs1"))
+    }
+
+    @Test
     fun `command output does not replace the rows`() {
         run(":focus Observation.code.coding")
         run(":pool")

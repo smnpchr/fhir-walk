@@ -204,6 +204,8 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
 
     /** @param argument the expression, or blank to re-diagnose the last one. */
     private fun why(argument: String, out: Output) {
+        // Whatever was listed before is not what :more should print after a :why.
+        state.lastListing = null
         val expression = argument.ifBlank { state.lastExpression ?: "" }
         if (expression.isBlank()) {
             out.text("usage: :why <expr>  —  or :why alone, to re-run the last expression")
@@ -303,7 +305,8 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                 }
             }
         }
-        out.listing(header, rows + after)
+        // The conclusion is a footer: the row limit may hold steps back, never it.
+        out.listing(header, rows, footer = after)
     }
 
     /** :why with no focus: how many resources of the root type get through each step. */

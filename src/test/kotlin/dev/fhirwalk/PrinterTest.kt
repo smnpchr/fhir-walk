@@ -151,6 +151,24 @@ class PrinterTest {
     }
 
     @Test
+    fun `a short shrinking part leaves its unused share to the long one`() {
+        val error = "e".repeat(80)
+        val line = printed(Output().apply { line { +"  0  "; shrink(".step"); +"  "; shrink(error, Output.Kind.ERROR, cutsEnd = true) } }, columns = 60).single()
+        assertEquals(60, line.length, line)
+        assertTrue(line.startsWith("  0  .step  eee"), line)
+    }
+
+    @Test
+    fun `a footer follows the rows and is never held back by the row limit`() {
+        val output = Output().apply {
+            listing(listOf(Output.text("h")), (1..5).map { Output.text("row $it") }, footer = listOf(Output.text("conclusion")))
+        }
+        val shown = printed(output, rows = 2)
+        assertEquals(listOf("h", "row 1", "row 2", "conclusion", "  … 3 more of 5 — :more"), shown)
+        assertEquals(listOf("h") + (1..5).map { "row $it" } + "conclusion", printed(Output().apply { whole(output.listing!!) }, rows = 2))
+    }
+
+    @Test
     fun `a row's guide is drawn faint before its label, and counts towards the label column`() {
         val output = table(
             Output.Table.Row("Specimen/s1", listOf("blood", "1")),

@@ -242,8 +242,10 @@ topics:
       it counts the resources of the expression's type in scope that get
       through each step, so a where() narrows the count rather than going empty
       on whichever resource came first. It names one that gets furthest,
-      to focus and diagnose by itself. A long step, such as an extension
-      URL, is cut in the middle to fit; :more prints every step whole.
+      to focus and diagnose by itself.
+
+      Either way, a long step, such as an extension URL, is cut in the
+      middle to fit the window; :more prints every step whole.
 
       An expression across the pool runs once per resource, so distinct()
       only removes repeats within one. :tally Specimen.type.coding.code

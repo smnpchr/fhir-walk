@@ -49,12 +49,15 @@ class Output {
      *   more than its parts unshortened (a value's JSON, a pool's paths); null for the
      *   rows themselves.
      * @param fullHeader what `:more` prints above [full]; null for [header].
+     * @param footer what follows the rows and is never held back by the row limit:
+     *   a conclusion drawn from them, which the rows shown should not hide.
      */
     data class Listing(
         val header: List<Line>,
         val rows: List<Line>,
         val full: List<Line>? = null,
         val fullHeader: List<Line>? = null,
+        val footer: List<Line> = emptyList(),
     ) : Listed
 
     /**
@@ -108,8 +111,8 @@ class Output {
 
     fun hint(text: String) = line { hint(text) }
 
-    fun listing(header: List<Line>, rows: List<Line>, full: List<Line>? = null, fullHeader: List<Line>? = null) {
-        added += Listing(header, rows, full, fullHeader)
+    fun listing(header: List<Line>, rows: List<Line>, full: List<Line>? = null, fullHeader: List<Line>? = null, footer: List<Line> = emptyList()) {
+        added += Listing(header, rows, full, fullHeader, footer)
     }
 
     fun table(header: List<Line>, titles: List<String>, rows: List<Table.Row>) {
@@ -127,10 +130,10 @@ class Output {
     fun lines(): List<String> = added.flatMap { block ->
         when (block) {
             is Line -> listOf(block.text)
-            is Listing -> (block.header + block.rows).map { it.text }
+            is Listing -> (block.header + block.rows + block.footer).map { it.text }
             is Table -> lines(block, whole = false)
             is Whole -> when (val listed = block.listing) {
-                is Listing -> ((listed.fullHeader ?: listed.header) + (listed.full ?: listed.rows)).map { it.text }
+                is Listing -> ((listed.fullHeader ?: listed.header) + (listed.full ?: listed.rows) + listed.footer).map { it.text }
                 is Table -> lines(listed, whole = true)
             }
         }

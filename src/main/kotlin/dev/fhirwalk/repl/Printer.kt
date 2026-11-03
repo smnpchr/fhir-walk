@@ -24,6 +24,7 @@ class Printer(private val style: Style, private val columns: Int, private val ro
                     }
                     (listing.fullHeader ?: listing.header).forEach { out.println(render(it, fit = false)) }
                     (listing.full ?: listing.rows).forEach { out.println(render(it, fit = false)) }
+                    listing.footer.forEach { out.println(render(it, fit = false)) }
                 }
             }
         }
@@ -33,6 +34,7 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         listing.header.forEach { out.println(render(it, fit = true)) }
         val shown = if (rowLimit <= 0) listing.rows.size else minOf(rowLimit, listing.rows.size)
         listing.rows.take(shown).forEach { out.println(render(it, fit = true)) }
+        listing.footer.forEach { out.println(render(it, fit = true)) }
         val hidden = listing.rows.size - shown
         when {
             hidden > 0 -> out.println(style.hint("  … $hidden more of ${listing.rows.size} — :more"))
@@ -54,7 +56,8 @@ class Printer(private val style: Style, private val columns: Int, private val ro
             val fitted = shown.map { plain(it, fit = true) }
             return fitted != whole.map { plain(it, fit = false) } && fitted.any { it.contains('…') }
         }
-        return cut(listing.rows, listing.full ?: listing.rows) || cut(listing.header, listing.fullHeader ?: listing.header)
+        return cut(listing.rows, listing.full ?: listing.rows) || cut(listing.header, listing.fullHeader ?: listing.header) ||
+            cut(listing.footer, listing.footer)
     }
 
     /**
@@ -114,17 +117,28 @@ class Printer(private val style: Style, private val columns: Int, private val ro
 
     /**
      * Each part's text after fitting: the parts that shrink share what the others
-     * leave of the window, never less than [MIN_VALUE_WIDTH] between them.
+     * leave of the window, never less than [MIN_VALUE_WIDTH] between them. A part
+     * shorter than its even share keeps its length and leaves the rest to the
+     * others, so a short step beside a long error does not cut the error early.
      */
     private fun fitted(line: Output.Line, fit: Boolean): List<Pair<String, Output.Kind>> {
-        val shrinking = line.spans.count { it.shrinks }
-        if (!fit || shrinking == 0) return line.spans.map { it.text to it.kind }
+        val shrinking = line.spans.withIndex().filter { it.value.shrinks }
+        if (!fit || shrinking.isEmpty()) return line.spans.map { it.text to it.kind }
         val fixed = line.spans.filterNot { it.shrinks }.sumOf { it.text.length }
-        val room = (columns - fixed).coerceAtLeast(MIN_VALUE_WIDTH)
-        var index = 0
-        return line.spans.map { span ->
-            if (!span.shrinks) return@map span.text to span.kind
-            val share = room / shrinking + if (index++ < room % shrinking) 1 else 0
+        var room = (columns - fixed).coerceAtLeast(MIN_VALUE_WIDTH)
+        // Shortest first: each takes its length if that is within an even share of what is left.
+        val shares = HashMap<Int, Int>()
+        val waiting = shrinking.sortedBy { it.value.text.length }.toMutableList()
+        while (waiting.isNotEmpty() && waiting.first().value.text.length <= room / waiting.size) {
+            val (index, span) = waiting.removeAt(0)
+            shares[index] = span.text.length
+            room -= span.text.length
+        }
+        waiting.sortedBy { it.index }.forEachIndexed { order, (index, _) ->
+            shares[index] = room / waiting.size + if (order < room % waiting.size) 1 else 0
+        }
+        return line.spans.mapIndexed { index, span ->
+            val share = shares[index] ?: return@mapIndexed span.text to span.kind
             (if (span.cutsEnd) cutEnd(span.text, share) else abbreviate(span.text, share)) to span.kind
         }
     }
