@@ -83,6 +83,63 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
         return Diagnosis(steps, firstEmpty, coverage)
     }
 
+    /** How many [Survey.considered] resources get through a step: every prefix up to it non-empty. */
+    data class Reach(val expression: String, val reached: Int?, val errors: Int, val error: String?)
+
+    data class Survey(
+        val steps: List<Reach>,
+        /** Index of the first step no resource gets through, or null if some get to the end. */
+        val firstEmpty: Int?,
+        val considered: Int,
+        /** A resource that gets as far as any does, to focus and diagnose by itself. */
+        val furthest: PooledResource?,
+    )
+
+    /**
+     * The diagnosis with no focus: how many [candidates] get through each step.
+     *
+     * Counting values on one resource picked at random answers the wrong question
+     * when the expression filters (`where(…)`): the step "goes empty" on that
+     * resource although others pass it. A resource that goes empty or fails at a
+     * step is not counted at any later one, so the counts never rise, even past
+     * `exists()` or `empty()`, which answer something for an empty input too.
+     */
+    fun survey(expression: String, candidates: List<PooledResource>): Survey {
+        val prefixes = FhirPathTokenizer.prefixes(expression)
+        val reached = IntArray(prefixes.size)
+        val errors = IntArray(prefixes.size)
+        val firstError = arrayOfNulls<String>(prefixes.size)
+        var deepest = -1
+        var furthest: PooledResource? = null
+        for (item in candidates) {
+            var depth = -1
+            for ((idx, prefix) in prefixes.withIndex()) {
+                val outcome = evaluator.evaluate(item.resource, prefix)
+                if (outcome is Outcome.Failure) {
+                    errors[idx]++
+                    if (firstError[idx] == null) firstError[idx] = outcome.message
+                    break
+                }
+                if ((outcome as Outcome.Values).values.isEmpty()) break
+                reached[idx]++
+                depth = idx
+            }
+            if (depth > deepest) {
+                deepest = depth
+                furthest = item
+            }
+        }
+        val firstEmpty = reached.indexOfFirst { it == 0 }.takeIf { it >= 0 }
+        val steps = prefixes.mapIndexed { idx, prefix ->
+            val past = firstEmpty != null && idx > firstEmpty
+            Reach(prefix, if (past) null else reached[idx], errors[idx], firstError[idx])
+        }
+        return Survey(steps, firstEmpty, candidates.size, furthest)
+    }
+
+    /** The resources [survey] counts for an expression: those of its root type, or none. */
+    fun surveyCandidates(expression: String): List<PooledResource> = candidatesFor(expression)
+
     /**
      * The resource to diagnose against when nothing is in focus.
      *

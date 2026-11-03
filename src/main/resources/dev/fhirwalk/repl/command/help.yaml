@@ -230,6 +230,11 @@ topics:
 
       :why with no expression re-diagnoses the last one you ran, so the
       hint printed after an empty result can be followed by just :why.
+      With a focus it counts the values each step gives there; with none
+      it counts the resources of the expression's type that get through
+      each step, so a where() narrows the count rather than going empty
+      on whichever resource came first. It names one that gets furthest,
+      to focus and diagnose by itself.
 
       :tree Specimen.parent follows the links an expression makes, from
       each resource to its parents, and prints them top down: roots first,
