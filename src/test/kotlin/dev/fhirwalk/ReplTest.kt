@@ -4,7 +4,9 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.ExpressionLog
 import dev.fhirwalk.repl.NameStore
 import dev.fhirwalk.repl.Output
+import dev.fhirwalk.repl.Printer
 import dev.fhirwalk.repl.Repl
+import dev.fhirwalk.repl.Style
 import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -58,8 +60,8 @@ class ReplTest {
     fun `why without a focus counts across the pool instead of on one resource`() {
         val out = run(":why Patient.where(id = 'pat2').contact.name.suffix")
         assertContains(out, "counting the Patient resources")
-        assertTrue(Regex("""\.where\(id = 'pat2'\)\s+1 """).containsMatchIn(out), out)
-        assertTrue(Regex("""\.suffix\s+0\s+<-- empty here""").containsMatchIn(out), out)
+        assertContains(out, "  1  .where(id = 'pat2')\n")
+        assertContains(out, "  0  .suffix  <-- empty here")
         assertContains(out, "Patient/pat2 gets as far as any")
         assertContains(run(":why Patient.name"), "path resolves fully in 2 of 2 Patient")
     }
@@ -67,7 +69,7 @@ class ReplTest {
     @Test
     fun `why without a focus says a step fails rather than goes empty`() {
         val out = run(":why Patient.name.given.substring('a')")
-        assertTrue(Regex("""\.substring\('a'\)\s+0\s+<-- fails here  ! 2 failed: """).containsMatchIn(out), out)
+        assertContains(out, "  0  .substring('a')  <-- fails here  ! 2 failed: ")
     }
 
     @Test
@@ -138,6 +140,43 @@ class ReplTest {
         } finally {
             java.nio.file.Files.delete(file)
         }
+    }
+
+    @Test
+    fun `why gives way in the step, and more prints every step whole`() {
+        val url = "http://example.org/fhir/StructureDefinition/" + "very-long-extension-name-".repeat(6) + "end"
+        val expression = "Patient.extension('$url').value"
+        // As an 80-column window prints it: the step gives way, nothing else.
+        fun narrow(line: String) = StringWriter().also { text ->
+            PrintWriter(text).use { Printer(Style.PLAIN, 80, 0).print(repl.outputOf(line), it) }
+        }.toString()
+        val out = narrow(":why $expression")
+        assertTrue(out.lines().filter { it.startsWith("  0  ") }.all { it.length <= 80 }, out)
+        assertContains(out, "… shortened to fit — :more")
+        assertTrue(Regex("""  0  \.extension\('http://.*….*-end'\)  <-- empty here""").containsMatchIn(out), out)
+        assertContains(narrow(":more"), "  0  .extension('$url')  <-- empty here")
+    }
+
+    @Test
+    fun `why under a focus counts its values, and says how much of the pool populates the step`() {
+        run(":focus Patient/pat1")
+        val out = run(":why contact.name")
+        assertContains(out, "  0  contact  <-- empty here\n  —  .name")
+        assertContains(out, "  Patient.contact is populated in 1 of 2 resource(s) of that type")
+    }
+
+    @Test
+    fun `why under a focus marks a failing step, with its error after it`() {
+        run(":focus Patient/pat1")
+        val out = run(":why name.given.substring('a')")
+        assertTrue(Regex("""  !  \.substring\('a'\)  <-- fails here  ! """).containsMatchIn(out), out)
+    }
+
+    @Test
+    fun `more after a why that printed no steps does not show an older listing`() {
+        run(":all Observation.status")
+        assertContains(run(":why Specimen.type"), "no Specimen in the pool")
+        assertFalse(run(":more").contains("Observation/obs1"))
     }
 
     @Test

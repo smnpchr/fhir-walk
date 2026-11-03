@@ -244,6 +244,9 @@ topics:
       on whichever resource came first. It names one that gets furthest,
       to focus and diagnose by itself.
 
+      Either way, a long step, such as an extension URL, is cut in the
+      middle to fit the window; :more prints every step whole.
+
       An expression across the pool runs once per resource, so distinct()
       only removes repeats within one. :tally Specimen.type.coding.code
       counts across them: each value with how many resources hold it,
