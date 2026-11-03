@@ -17,7 +17,7 @@ import dev.fhirwalk.pool.ResourceHistory
 object PromptLine {
 
     /** Commands whose argument is a FHIRPath expression. */
-    val EXPRESSION_COMMANDS = setOf(":all", ":why", ":focus", ":trace", ":tree")
+    val EXPRESSION_COMMANDS = setOf(":all", ":why", ":tally", ":focus", ":trace", ":tree")
 
     /**
      * @param text the expression alone.

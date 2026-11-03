@@ -140,8 +140,9 @@ r4:specimen@3f2a1c> :log 3
   77b0e4  2026-10-16  sync            Δ48
   c2a9d1  2026-10-16  sync            Δ3
 r4:specimen@3f2a1c> :at 77b0e4
-r4:specimen@77b0e4 Δ48> Specimen.type.coding.code.distinct()
-  [0] code  STOOL
+r4:specimen@77b0e4 Δ48> :tally Specimen.type.coding.code
+48 of 48 resource(s) matched; 1 distinct value(s)
+  48  STOOL
 ```
 
 The last line is the check from the use case. `77b0e4` re-applied a changed rule.

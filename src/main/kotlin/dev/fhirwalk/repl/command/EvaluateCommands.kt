@@ -7,6 +7,7 @@ import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
 import dev.fhirwalk.repl.abbreviate
+import org.hl7.fhir.instance.model.api.IBase
 
 /** Running an expression, against the focus or across the pool, and finding out why it came back empty. */
 internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
@@ -23,6 +24,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             }
         },
         command(":why", run = ::why),
+        command(":tally", run = ::tally),
         command(":ext", run = ::extensions),
     )
 
@@ -107,6 +109,81 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                     hit.values.flatMap { state.expanded("      ", it) }
             },
         )
+    }
+
+    /**
+     * `:tally <expr>`: each distinct value the expression gives across the scope,
+     * with how many resources hold it, most first.
+     *
+     * Pool-wide evaluation runs per resource, so `distinct()` only removes repeats
+     * within one; this is the count across them. A resource holding a value twice
+     * counts once. Values are told apart by their rendering, so two structured
+     * values are the same when their JSON is, as in `:trace`.
+     */
+    private fun tally(argument: String, out: Output) {
+        val expression = argument.trim()
+        state.lastPicks = null
+        state.nameable = null
+        if (expression.isEmpty()) {
+            out.text("usage: :tally <expr>  —  how many resources hold each value, e.g. :tally Observation.status")
+            return
+        }
+        state.lastExpression = expression
+        if (state.reportSyntaxError(expression, out)) return
+        if (session.pool.size == 0) {
+            out.text("pool is empty — :load <path> first")
+            return
+        }
+        val result = session.evaluator.evaluateAll(expression)
+        val meta = session.current.meta
+        val byBundle = meta != null && meta.scoped == null
+        val tallies = LinkedHashMap<String, Tally>()
+        for (hit in result.hits) {
+            for (value in hit.values) {
+                val tally = tallies.getOrPut(session.render.value(value)) { Tally(value) }
+                if (tally.resources.lastOrNull() != hit.resource) tally.resources += hit.resource
+            }
+        }
+        val ranked = tallies.entries.sortedWith(compareByDescending<Map.Entry<String, Tally>> { it.value.resources.size }.thenBy { it.key })
+        val header = Output.line {
+            +"${result.hits.size} of ${result.considered} resource(s) matched"
+            if (byBundle) +", in ${result.hits.mapTo(HashSet()) { it.resource.part }.size} of ${meta!!.members.size} bundle(s)"
+            +"; ${ranked.size} distinct value(s)"
+            if (result.errors > 0) error("; ${result.errors} error(s): ${result.firstError}")
+        }
+        state.nameable = expression.takeIf { result.hits.isNotEmpty() }
+        if (result.hits.isEmpty()) {
+            out.add(header)
+            if (result.errors == 0) out.text("  nothing matched — :why")
+            state.lastListing = null
+            return
+        }
+        state.record(expression, out)
+        val width = ranked.first().value.resources.size.toString().length
+        fun counted(tally: Tally): String = tally.resources.size.toString().padStart(width)
+        fun bundles(tally: Tally): String = " in ${tally.resources.mapTo(HashSet()) { it.part }.size} bundle(s)"
+        out.listing(
+            listOf(header),
+            rows = ranked.map { (text, tally) ->
+                Output.line {
+                    +"  "
+                    count(counted(tally))
+                    +"  "
+                    shrink(text, Output.Kind.PREVIEW, cutsEnd = true)
+                    if (byBundle) hint(" ·" + bundles(tally))
+                }
+            },
+            // Whole, each value is followed by the resources that hold it.
+            full = ranked.flatMap { (_, tally) ->
+                state.expanded("  ${counted(tally)}  ", tally.value) +
+                    tally.resources.map { resource -> Output.line { +"      "; label(resource.label) } }
+            },
+        )
+    }
+
+    /** One distinct value of a `:tally`: the first instance seen, and the resources holding it, in pool order. */
+    private class Tally(val value: IBase) {
+        val resources = mutableListOf<PooledResource>()
     }
 
     /** @param argument the expression, or blank to re-diagnose the last one. */

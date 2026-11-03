@@ -80,10 +80,10 @@ class FhirPathCompleter(
             completeCommand(text, candidates)
             return
         }
-        // `:all` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
+        // `:all`, `:tally` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
         // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
         val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
-            ?: focus().takeIf { slice.command != ":all" && slice.command != ":tree" }
+            ?: focus().takeIf { slice.command !in POOL_WIDE }
         val expression = mutableListOf<Candidate>()
         completeExpression(slice.text, slice.cursor, relativeTo, expression)
         // Labels first in the menu, but sized to the room the expression left.
@@ -671,6 +671,9 @@ class FhirPathCompleter(
     private companion object {
 
         const val MAX_ROWS = 60
+
+        /** Commands whose expression runs across the pool, never against the focus. */
+        val POOL_WIDE = setOf(":all", ":tally", ":tree")
         /** Past 100 matching candidates JLine asks "see all N possibilities?". */
         const val MAX_MENU = 99
         const val MAX_EXTENSION_STEPS = 24

@@ -146,6 +146,14 @@ commands:
         args: "[expr]"
         summary: find the step where the expression goes empty
         topic: evaluating
+      - name: ":tally"
+        args: "<expr>"
+        summary: how many resources hold each value, e.g. :tally Observation.status
+        details: |
+          Runs across the scope as :all does, and counts each distinct value
+          once per resource that holds it, most first. :more lists the
+          resources under each value.
+        topic: evaluating
       - name: ":tree"
         args: "<expr>"
         summary: what the expression links, as a tree from each root down, e.g. :tree Specimen.parent
@@ -235,6 +243,11 @@ topics:
       through each step, so a where() narrows the count rather than going empty
       on whichever resource came first. It names one that gets furthest,
       to focus and diagnose by itself.
+
+      An expression across the pool runs once per resource, so distinct()
+      only removes repeats within one. :tally Specimen.type.coding.code
+      counts across them: each value with how many resources hold it,
+      most first, over the scope. :more lists the resources under each.
 
       :tree Specimen.parent follows the links an expression makes, from
       each resource to its parents, and prints them top down: roots first,

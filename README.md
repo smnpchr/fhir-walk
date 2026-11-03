@@ -123,6 +123,7 @@ Type a FHIRPath expression, or:
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
+| `:tally <expr>` | how many resources hold each value, e.g. `:tally Observation.status` |
 | `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
@@ -198,9 +199,26 @@ label, even though it also parses as a division.
 
 With an element in focus HAPI has no root resource, so `%resource` is unavailable.
 
+### Counting values: `:tally`
+
+Pool-wide evaluation runs once per resource, so `distinct()` only removes repeats
+within one resource: across the pool, the same code still comes back once per
+resource that holds it. `:tally` counts across them, over the scope:
+
+```
+r4:pool(6)> :tally Observation.status
+3 of 6 resource(s) matched; 2 distinct value(s)
+  2  final
+  1  amended
+```
+
+A resource holding a value twice counts once. In a meta pool each value also says how
+many bundles hold it. `:more` lists the resources under each value. Structured values
+are told apart by their JSON.
+
 ### Recorded expressions and `:view`
 
-A pool-wide expression — a bare one with no focus, or any `:all` — is recorded when
+A pool-wide expression — a bare one with no focus, or any `:all` or `:tally` — is recorded when
 it parses and matches at least one resource. The log is the workspace's `expressions`
 file (see [Workspaces](#workspaces)), one expression per line, append-only and without duplicates, so a number from
 `:history` keeps meaning the same expression across sessions. Expressions typed under
@@ -566,7 +584,7 @@ up front, letting the terminal scroll instead.
 
 ## Completion
 
-TAB completes, including inside the `:all`, `:why` and `:tree` arguments, which are expressions
+TAB completes, including inside the `:all`, `:why`, `:tally` and `:tree` arguments, which are expressions
 like any other. On an empty line it lists the pool's resource types; after a `.` the
 elements and functions available there, pool-populated ones first; inside
 `extension('…')` the URLs observed on that element.
