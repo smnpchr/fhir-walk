@@ -58,7 +58,7 @@ internal class WorkspaceCommands(
         for (pool in restoring.pools) {
             session.switchTo(pool.name)
             if (pool.source != null) {
-                if (git.openGit(pool.source, pool.at, pool.deltaScope, out)) {
+                if (git.openGit(pool.source, pool.at, pool.deltaScope, out, base = pool.base)) {
                     focus.restoreFocus(pool.focus, out)
                 } else {
                     git.unavailable(session.current, pool)
@@ -97,6 +97,7 @@ internal class WorkspaceCommands(
                     source = git?.spec,
                     at = git?.commit?.id?.name,
                     deltaScope = git?.deltaScope == true,
+                    base = git?.base?.id?.name,
                 )
             },
             session.current.takeIf { it.meta == null }?.name ?: saved.firstOrNull()?.name,

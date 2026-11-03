@@ -39,7 +39,7 @@ internal class GitCommands(
         },
         command(":step", run = ::step),
         command(":trace", run = ::trace),
-        command(":delta") { _, out -> delta(out) },
+        command(":delta", run = ::delta),
         command(":scope", run = ::scope),
     )
 
@@ -47,9 +47,12 @@ internal class GitCommands(
      * Makes the current pool [spec]'s directory at a revision: [at] when it still
      * exists, else the tip of the line [spec] names.
      *
+     * @param base the commit a `:delta A..B` compared with, restored with the pool: a
+     *   delta saved as a range comes back as one, or as the parent's when it, or
+     *   the commit it was compared with, is gone or cannot be read.
      * @return false when it could not be opened; what went wrong has been said.
      */
-    fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output, gitDir: Path? = null): Boolean {
+    fun openGit(spec: String, at: String?, deltaScope: Boolean, out: Output, gitDir: Path? = null, base: String? = null): Boolean {
         val (path, revision) = GitSource.split(spec) ?: run {
             out.error("$spec names no revision — dir@rev, e.g. registry/in/import@branch/out")
             return false
@@ -93,11 +96,22 @@ internal class GitCommands(
             out.error("no commit $line in ${source.path}")
             return false
         }
+        // A base without the commit it was compared with would make another range.
+        val from = base?.takeIf { left != null }?.let { id ->
+            source.resolve(id) ?: null.also {
+                out.error("${id.take(7)}, the delta's base, is gone from ${source.path} — comparing with the parent instead")
+            }
+        }
         val git = GitPool(source, line, session.importer, session.pool)
         // Attached only once loaded: a pool whose revision could not be read must not
         // look like a git pool to the prompt or to the saved state.
         val report = try {
-            git.load(start)
+            // The base is optional: one that cannot be read leaves the parent's delta.
+            runCatching { git.load(start, from) }.getOrElse { failed ->
+                if (from == null) throw failed
+                out.error("${from.short}, the delta's base, cannot be read — comparing with the parent instead")
+                git.load(start)
+            }
         } catch (e: Exception) {
             source.close()
             out.error("cannot read ${source.path} at ${start.short}: ${e.message ?: e.javaClass.simpleName}")
@@ -196,6 +210,7 @@ internal class GitCommands(
             source = git.spec,
             at = git.commit.id.name,
             deltaScope = git.deltaScope,
+            base = git.base?.id?.name,
         )
         pool.git = null
         pool.focus = null
@@ -211,7 +226,7 @@ internal class GitCommands(
         if (watch.triedAt == tip) return false
         watch.triedAt = tip
         out.text("${GitSource.split(spec)?.first ?: spec} $how")
-        if (!openGit(spec, saved.at, saved.deltaScope, out, watch.gitDir)) return false
+        if (!openGit(spec, saved.at, saved.deltaScope, out, watch.gitDir, saved.base)) return false
         watched.remove(pool)
         focus.restoreFocus(saved.focus, out)
         return true
@@ -267,6 +282,10 @@ internal class GitCommands(
     /** `3f2a1c0 on branch/out, 2026-10-17 14:02 sync`. */
     private fun revision(git: GitPool): String =
         "${git.commit.short} on ${git.lineLabel}, ${COMMIT_TIME.format(git.commit.time)} ${git.commit.subject}"
+
+    /** What the delta is, in words: what a commit changed, or what changed since a base. */
+    private fun changedBy(git: GitPool): String =
+        git.base?.let { "what changed from ${it.short} to ${git.commit.short}" } ?: "what ${git.commit.short} changed"
 
     /** `Δ12: 2 added, 10 modified`. */
     private fun deltaSummary(git: GitPool): String {
@@ -581,17 +600,48 @@ internal class GitCommands(
                 session.focus = null
                 state.lastPicks = null
                 git.deltaScope = true
-                move.note?.let { out.text(it) }
-                state.withProblems(out, "${state.poolName()} at ${revision(git)} — ${deltaSummary(git)}", move.report.problems)
+                move.note?.lines()?.forEach { out.text(it) }
+                val against = git.base?.let { ", against ${it.short}" }.orEmpty()
+                state.withProblems(out, "${state.poolName()} at ${revision(git)}$against — ${deltaSummary(git)}", move.report.problems)
                 focus.restoreFocus(steps, out)
             }
         }
     }
 
-    private fun delta(out: Output) {
+    /**
+     * `:delta` lists what the revision changed; `:delta A..B` moves to B with its
+     * delta against A, and `:delta ..` goes back to the first parent.
+     */
+    private fun delta(argument: String, out: Output) {
         val git = gitPool(out) ?: return
+        val range = argument.trim()
+        if (range.isNotEmpty()) {
+            if (!range.contains("..") || range.contains("...") || range.indexOf("..") != range.lastIndexOf("..")) {
+                out.text("usage: :delta [from..to]  —  either end as :at takes it, empty for where the pool is; :delta .. compares with the parent again")
+                return
+            }
+            val from = range.substringBefore("..").trim()
+            val to = range.substringAfter("..").trim()
+            if (from.isEmpty() && to.isEmpty()) {
+                // Back to the parent is about the base, not the scope: it stays as it was.
+                if (git.base == null) {
+                    out.text("${git.commit.short} already compares with its parent")
+                    return
+                }
+                val scoped = git.deltaScope
+                moved(git, git.range(from, to), out)
+                git.deltaScope = scoped
+                return
+            }
+            moved(git, git.range(from, to), out)
+            return
+        }
         val delta = git.delta
-        val against = delta.parent?.let { "against ${it.short}" } ?: "against nothing: the first commit"
+        val against = when {
+            delta.ranged -> "against ${delta.base!!.short}, ${COMMIT_TIME.format(delta.base.time)} ${delta.base.subject}"
+            delta.base != null -> "against ${delta.base.short}"
+            else -> "against nothing: the first commit"
+        }
         val header = "${git.commit.short} $against — ${deltaSummary(git)}"
         if (delta.size == 0) {
             out.text(header)
@@ -621,7 +671,7 @@ internal class GitCommands(
                 if (git?.deltaScope == true) {
                     "scope: the delta, ${session.pool.inScope().size} of ${session.pool.size} resource(s) — :scope all for everything"
                 } else {
-                    "scope: all ${session.pool.size} resource(s)" + if (git != null) " — :scope delta for what ${git.commit.short} changed" else ""
+                    "scope: all ${session.pool.size} resource(s)" + if (git != null) " — :scope delta for ${changedBy(git)}" else ""
                 },
             )
             "delta" -> {

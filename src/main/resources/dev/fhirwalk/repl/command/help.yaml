@@ -117,8 +117,12 @@ commands:
           its own revision, not the one traced.
         topic: git
       - name: ":delta"
-        args: ""
-        summary: what this revision added, modified and deleted
+        args: "[from..to]"
+        summary: what this revision added, modified and deleted; with a range, against from
+        details: |
+          :delta main~5..main moves to main and compares it with main~5; either
+          end takes what :at takes, empty for where the pool is. :delta ..
+          compares with the parent again, as :step and :at do.
         topic: git
       - name: ":scope"
         args: "[delta|bundle|all]"
@@ -344,6 +348,8 @@ topics:
       jumps. Moving sets the scope to the delta, so pool-wide expressions and
       :view run over what that commit changed, while resolve() still sees
       everything; :delta lists it, :scope all goes back to the whole pool.
+      :delta 2026-11-02.. compares with the line as of a date instead of the
+      parent: one tree diff, so a resource changed twice counts once.
       :log Specimen/s1 lists the commits that changed one resource, and
       :trace Specimen/s1 type.coding.code how an answer changed across them;
       :trace Specimen/s1 alone, how the resource itself did.

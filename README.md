@@ -123,7 +123,7 @@ Type a FHIRPath expression, or:
 | `:trace [label] [expr]` | how one resource, or an expression's answer for it, changed along a git pool's line; with a focus, the focused resource or element |
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
-| `:delta` | what this revision added, modified and deleted |
+| `:delta [from..to]` | what this revision added, modified and deleted; with a range, against `from` |
 | `:scope [delta\|bundle\|all]` | run pool-wide over the delta only, one bundle of a meta pool, or everything |
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
@@ -433,6 +433,17 @@ Moving with `:step` or `:at` sets the scope to the delta, so pool-wide expressio
 and `:why` still see the whole revision, so a changed Specimen still reaches the
 Patient that did not change. `:delta` lists it, deletions included by label, and
 `:scope all` goes back to the whole pool.
+
+One run is often several commits, so the delta can also span a range, in git's own
+spelling: `:delta main~5..main` moves to `main` and compares it with `main~5`, and
+`:delta 2026-11-02..` compares where the pool is with the line as of that date
+(with a branch as the other end, that branch as of that date). Either
+end takes what `:at` takes; an empty one is where the pool is. The range is one tree
+diff: a resource changed twice is listed once, and one added and deleted within it not
+at all. The prompt spells it the same way (`in@a1b2c3d..533a322 Δ15`), the scope is
+its delta, so `:tally` or `:all` answer "what did the runs since Monday change?" in a
+line. A base that is not an ancestor is still compared, as two trees, and says so.
+`:step` and `:at` go back to comparing with the parent, and so does `:delta ..`.
 
 `:at` also takes a date — `2026-03`, `2026-03-11`, `2026-03-11T11:00`, or the
 `2026-03-11 11:00` that `:log` shows — and moves to the line as it stood at the end of

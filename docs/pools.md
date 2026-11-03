@@ -114,7 +114,7 @@ Recorded expressions, names and saved views stay workspace-wide, so the same
 | `:log [n]` | the current pool's branch, newest first: commit, date, subject, delta size |
 | `:at <rev>` | move the current pool to a revision (`a1b2c3`, `branch/out~3`, a tag) |
 | `:step [-n\|+n]` | move along first-parent history; alone, one step back |
-| `:delta` | added, modified and deleted resources at this revision |
+| `:delta [from..to]` | added, modified and deleted resources at this revision; with a range, against `from` |
 | `:scope [delta\|all]` | what pool-wide evaluation runs over |
 
 `:load` keeps adding to the current pool, and refuses on a git pool, whose contents
@@ -231,8 +231,8 @@ repositories in a temp directory.
    is built by the tests: `RegistryFixture`, a small history on `master` and
    `branch/out`, built with JGit in a temp directory, including a re-application and
    a deletion.
-3. **Comparing two revisions** (`master` against `branch/out`, or any two),
-   low priority. Generic `:delta <rev> <rev>` with the same scope semantics.
+3. **Comparing two revisions**: `:delta from..to` (#34), with the same scope
+   semantics. The base is saved with the pool's state as a `base` line.
 
 ## Settled
 

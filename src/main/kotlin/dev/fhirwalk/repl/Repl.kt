@@ -206,7 +206,8 @@ class Repl(
         val git = session.current.git
         val meta = session.current.meta
         val bundle = meta?.scoped?.let { "/" + abbreviate(it, ReplState.PROMPT_BUNDLE_WIDTH) }.orEmpty()
-        val where = session.current.name + git?.let { "@${it.commit.short}" }.orEmpty() + bundle
+        // A delta against a chosen base reads as git spells the range.
+        val where = session.current.name + git?.let { "@" + it.base?.let { base -> "${base.short}.." }.orEmpty() + it.commit.short }.orEmpty() + bundle
         val focus = session.focus?.let { abbreviate(state.shown(it), ReplState.PROMPT_WIDTH) }
         val scope = when {
             focus == null && git?.deltaScope == true -> "$where Δ${git.delta.size}"

@@ -29,6 +29,7 @@ data class SavedState(
  * @param at the commit a git pool was left at, which it restores at rather than the
  *   line's tip: what you were looking at, not what has arrived since.
  * @param deltaScope whether a git pool's evaluation ran over its delta only.
+ * @param base the commit `:delta A..B` compared the delta with, when one was asked for.
  */
 data class SavedPool(
     val name: String,
@@ -37,6 +38,7 @@ data class SavedPool(
     val source: String? = null,
     val at: String? = null,
     val deltaScope: Boolean = false,
+    val base: String? = null,
 )
 
 /**
@@ -67,7 +69,7 @@ class StateFile(file: Path?) {
         for ((key, value) in entries) {
             when (key) {
                 POOL -> section = value.also { sections.getOrPut(it) { mutableListOf() } }
-                LOAD, FOCUS, SOURCE, AT, SCOPE -> sections.getOrPut(section) { mutableListOf() } += key to value
+                LOAD, FOCUS, SOURCE, AT, BASE, SCOPE -> sections.getOrPut(section) { mutableListOf() } += key to value
             }
         }
         val pools = sections.map { (name, lines) ->
@@ -78,6 +80,7 @@ class StateFile(file: Path?) {
                 source = lines.lastOrNull { it.first == SOURCE }?.second,
                 at = lines.lastOrNull { it.first == AT }?.second,
                 deltaScope = lines.lastOrNull { it.first == SCOPE }?.second == DELTA,
+                base = lines.lastOrNull { it.first == BASE }?.second,
             )
         }
         return SavedState(
@@ -100,6 +103,7 @@ class StateFile(file: Path?) {
                 val body = listOfNotNull(
                     pool.source?.let { "$SOURCE\t$it" },
                     pool.at?.let { "$AT\t$it" },
+                    pool.base?.let { "$BASE\t$it" },
                     "$SCOPE\t$DELTA".takeIf { pool.deltaScope },
                 ) + pool.loads.map { "$LOAD\t$it" } + pool.focus.map { "$FOCUS\t$it" }
                 val implied = idx == 0 && pool.name == Pool.DEFAULT && (body.isNotEmpty() || state.pools.size == 1)
@@ -118,6 +122,7 @@ class StateFile(file: Path?) {
         const val CURRENT = "current"
         const val SOURCE = "source"
         const val AT = "at"
+        const val BASE = "base"
         const val SCOPE = "scope"
         const val DELTA = "delta"
     }

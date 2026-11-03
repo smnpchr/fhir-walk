@@ -8,7 +8,6 @@ import dev.fhirwalk.pool.ResourcePool
 import org.eclipse.jgit.lib.ObjectId
 import java.nio.file.Files
 import java.time.DateTimeException
-import java.time.Instant
 
 /**
  * What makes a [Pool] a git revision rather than a set of loaded paths: where it is
@@ -49,6 +48,9 @@ class GitPool(
 
     val delta: RevisionLoader.Delta get() = checkNotNull(loader.delta) { "not loaded yet" }
 
+    /** The commit `:delta A..B` compares with, while one was asked for; null for the first parent. */
+    val base: GitSource.Commit? get() = loader.delta?.takeIf { it.ranged }?.base
+
     /** For tests: how many blobs were parsed rather than reused. */
     internal val parsedBlobs: Int get() = loader.parsedBlobs
 
@@ -86,25 +88,83 @@ class GitPool(
         class Failed(val message: String) : Move
     }
 
-    /** Throws when the revision cannot be read, leaving the pool as it was. */
-    fun load(commit: GitSource.Commit): Importer.Report = loader.load(commit).also { applyScope() }
+    /**
+     * Throws when the revision cannot be read, leaving the pool as it was.
+     *
+     * @param base what the delta compares with; null for the first parent. A move
+     *   is about one commit, so `:at` and `:step` go back to that.
+     */
+    fun load(commit: GitSource.Commit, base: GitSource.Commit? = null): Importer.Report =
+        loader.load(commit, base).also { applyScope() }
+
+    /** A revision looked up: the commit, with which one a date named, since it need not be one made then; or why not. */
+    private sealed interface Lookup {
+        class Found(val commit: GitSource.Commit, val note: String?) : Lookup
+        class Missing(val refusal: Move.Refused) : Lookup
+    }
 
     /**
      * A branch or tag goes first, so one named like a date stays reachable; then a
-     * date, the line as it stood then; then anything else git reads as a revision.
+     * date, [on] as it stood then; then anything else git reads as a revision.
      */
-    fun at(revision: String): Move = reading {
+    private fun find(revision: String, on: String = line): Lookup {
+        fun missing(message: String) = Lookup.Missing(Move.Refused(message))
         if (revision !in source.refNames()) {
             val end = try {
                 times.end(revision)
             } catch (e: DateTimeException) {
-                return@reading Move.Refused("not a date: $revision")
+                return missing("not a date: $revision")
             }
-            if (end != null) return@reading asOf(revision, end)
+            if (end != null) {
+                val label = GitSource.label(on)
+                val tip = source.resolve(on) ?: return missing("$label names no commit any more")
+                val history = source.history(tip)
+                val target = times.asOf(history, end)
+                    ?: return missing("$label starts at ${times.shown(history.last())}, after $revision")
+                return Lookup.Found(target, "$revision on $label is ${target.short}, ${times.shown(target)} ${target.subject}")
+            }
         }
-        val target = source.resolve(revision) ?: return@reading Move.Refused("no commit $revision in ${source.path}")
-        val moved = Move.Moved(load(target))
+        val target = source.resolve(revision) ?: return missing("no commit $revision in ${source.path}")
+        return Lookup.Found(target, null)
+    }
+
+    fun at(revision: String): Move = reading {
+        val found = when (val lookup = find(revision)) {
+            is Lookup.Found -> lookup
+            is Lookup.Missing -> return@reading lookup.refusal
+        }
+        val moved = Move.Moved(load(found.commit), found.note)
         if (source.isBranch(revision)) line = revision
+        moved
+    }
+
+    /**
+     * `:delta from..to`: the pool at [to], its delta against [from] rather than the
+     * first parent. Either end takes what `:at` takes; an empty one is the commit the
+     * pool is at. Both empty go back to the first parent. A base that is not an
+     * ancestor is still a tree diff, said in the note. A date as [from] is read on
+     * the line the pool ends up on: `:delta 2026-11-02..feat` is feat since then.
+     */
+    fun range(from: String, to: String): Move = reading {
+        if (from.isEmpty() && to.isEmpty()) return@reading Move.Moved(load(commit))
+        fun end(revision: String) = if (revision.isEmpty()) Lookup.Found(commit, null) else find(revision)
+        val target = when (val lookup = end(to)) {
+            is Lookup.Found -> lookup
+            is Lookup.Missing -> return@reading lookup.refusal
+        }
+        val toLine = to.takeIf { it.isNotEmpty() && source.isBranch(it) } ?: line
+        val base = when (val lookup = if (from.isEmpty()) end(from) else find(from, toLine)) {
+            is Lookup.Found -> lookup
+            is Lookup.Missing -> return@reading lookup.refusal
+        }
+        val notes = listOfNotNull(
+            base.note,
+            target.note,
+            "${base.commit.short} is not an ancestor of ${target.commit.short}: compared as two trees"
+                .takeUnless { source.isAncestor(base.commit.id, target.commit.id) },
+        )
+        val moved = Move.Moved(load(target.commit, base.commit), notes.joinToString("\n").ifEmpty { null })
+        if (to.isNotEmpty() && source.isBranch(to)) line = to
         moved
     }
 
@@ -133,14 +193,6 @@ class GitPool(
             here < by -> Move.Refused("only $here commit(s) after ${commit.short} on $lineLabel")
             else -> Move.Moved(load(history[here - by]))
         }
-    }
-
-    private fun asOf(date: String, end: Instant): Move {
-        val tip = source.resolve(line) ?: return Move.Refused("$lineLabel names no commit any more")
-        val history = source.history(tip)
-        val target = times.asOf(history, end)
-            ?: return Move.Refused("$lineLabel starts at ${times.shown(history.last())}, after $date")
-        return Move.Moved(load(target), note = "$date on $lineLabel is ${target.short}, ${times.shown(target)} ${target.subject}")
     }
 
     /** The line's commits, newest first. */
