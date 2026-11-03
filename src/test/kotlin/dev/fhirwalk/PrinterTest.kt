@@ -151,6 +151,28 @@ class PrinterTest {
     }
 
     @Test
+    fun `a row's guide is drawn faint before its label, and counts towards the label column`() {
+        val output = table(
+            Output.Table.Row("Specimen/s1", listOf("blood", "1")),
+            Output.Table.Row("Specimen/s1a", listOf("serum", "2"), guide = "└─ "),
+        )
+        val plain = printed(output)
+        assertTrue(plain.any { it.startsWith("  └─ Specimen/s1a  ") }, plain.joinToString("\n"))
+        assertEquals(plain[plain.size - 2].indexOf("blood"), plain.last().indexOf("serum"), plain.joinToString("\n"))
+        val coloured = printed(output, style = Style(true)).last()
+        assertTrue(coloured.contains("\u001b[2m└─ \u001b[0m\u001b[1mSpecimen/s1a"), coloured)
+    }
+
+    @Test
+    fun `a guided row with a note and no cells keeps the note right after its label`() {
+        val output = table(
+            Output.Table.Row("Specimen/s1", listOf("blood", "1")),
+            Output.Table.Row("Specimen/s8", emptyList(), guide = "└─ ", note = Output.line { hint("(shown under Specimen/s1)") }),
+        )
+        assertEquals("  └─ Specimen/s8  (shown under Specimen/s1)", printed(output).last())
+    }
+
+    @Test
     fun `lines are what was found, whole and unstyled`() {
         val output = Output().apply {
             error("cannot read")

@@ -77,6 +77,8 @@ class Output {
             val wholeLabel: String = label,
             val note: Line? = null,
             val wholeNote: Line? = note,
+            /** Drawn before the label, faint: a tree's lines, which belong to no one row. */
+            val guide: String = "",
         )
     }
 
@@ -138,7 +140,7 @@ class Output {
         table.header.map { it.text } + table.titles.joinToString("  ") +
             table.rows.map { row ->
                 val note = (if (whole) row.wholeNote else row.note)?.text
-                listOfNotNull(if (whole) row.wholeLabel else row.label, row.cells.takeIf { it.isNotEmpty() }?.joinToString("  "), note)
+                listOfNotNull(row.guide + if (whole) row.wholeLabel else row.label, row.cells.takeIf { it.isNotEmpty() }?.joinToString("  "), note)
                     .joinToString("  ")
             }
 
