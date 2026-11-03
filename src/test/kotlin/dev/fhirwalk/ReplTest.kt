@@ -55,6 +55,22 @@ class ReplTest {
     }
 
     @Test
+    fun `why without a focus counts across the pool instead of on one resource`() {
+        val out = run(":why Patient.where(id = 'pat2').contact.name.suffix")
+        assertContains(out, "counting the Patient resources")
+        assertTrue(Regex("""\.where\(id = 'pat2'\)\s+1 """).containsMatchIn(out), out)
+        assertTrue(Regex("""\.suffix\s+0\s+<-- empty here""").containsMatchIn(out), out)
+        assertContains(out, "Patient/pat2 gets as far as any")
+        assertContains(run(":why Patient.name"), "path resolves fully in 2 of 2 Patient")
+    }
+
+    @Test
+    fun `why without a focus says a step fails rather than goes empty`() {
+        val out = run(":why Patient.name.given.substring('a')")
+        assertTrue(Regex("""\.substring\('a'\)\s+0\s+<-- fails here  ! 2 failed: """).containsMatchIn(out), out)
+    }
+
+    @Test
     fun `command output does not replace the rows`() {
         run(":focus Observation.code.coding")
         run(":pool")

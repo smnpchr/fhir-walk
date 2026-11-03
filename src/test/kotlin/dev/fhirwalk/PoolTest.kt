@@ -130,6 +130,27 @@ class PoolTest {
     }
 
     @Test
+    fun `survey counts the resources that get through each step`() {
+        val walker = PrefixWalker(evaluator, pool)
+        val expression = "Patient.where(id = 'pat2').contact.name.suffix.exists()"
+        val survey = walker.survey(expression, walker.surveyCandidates(expression))
+        assertEquals(2, survey.considered)
+        // A where() narrows the count rather than reading as "empty here" on one resource.
+        assertEquals(listOf(2, 1, 1, 1, 0, null), survey.steps.map { it.reached })
+        assertEquals(4, survey.firstEmpty)
+        assertEquals("Patient/pat2", survey.furthest?.label)
+    }
+
+    @Test
+    fun `survey counts only the resources in scope, as the pool-wide run does`() {
+        val walker = PrefixWalker(evaluator, pool)
+        pool.scope = setOf(requireNonNull(pool.find("Patient/pat1")))
+        val survey = walker.survey("Patient.contact", walker.surveyCandidates("Patient.contact"))
+        assertEquals(1, survey.considered)
+        assertEquals(listOf(1, 0), survey.steps.map { it.reached })
+    }
+
+    @Test
     fun `navigator resolves types through calls using the schema axis`() {
         val navigator = ModelNavigator(ctx, pool.census)
         assertEquals("HumanName", navigator.resolveType("Patient.name.where(use = 'official')")?.name)

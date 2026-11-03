@@ -3,6 +3,7 @@ package dev.fhirwalk.repl.command
 import dev.fhirwalk.eval.FhirPathTokenizer
 import dev.fhirwalk.eval.Focus
 import dev.fhirwalk.eval.Outcome
+import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
 import dev.fhirwalk.repl.abbreviate
@@ -131,6 +132,17 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             out.text("no $root in the pool — it holds ${session.pool.types().joinToString(", ")}")
             return
         }
+        if (session.focus == null) {
+            val candidates = session.prefixWalker.surveyCandidates(expression)
+            if (candidates.isNotEmpty()) {
+                survey(expression, root!!, candidates, out)
+                return
+            }
+            if (root != null && session.pool.scope != null && session.pool.ofType(root).isNotEmpty()) {
+                out.text("no $root in scope — :scope all to count the whole pool")
+                return
+            }
+        }
         val focus = session.focus
             ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
         if (session.focus == null) out.text("(no focus; diagnosing against ${focus.label})")
@@ -141,10 +153,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             val rooted = session.focus?.absolute(prefix)
             if (rooted == null || rooted == prefix) prefix else session.navigator.censusPath(rooted)
         }
-        // Each row shows only the step it adds, not the whole prefix: with long
-        // extension URLs in the path, repeating the prefix makes the table unreadable.
-        val segments = FhirPathTokenizer.segments(expression)
-            .filter { it.text.isNotBlank() }
+        val labels = stepLabels(expression)
         for ((idx, step) in diagnosis.steps.withIndex()) {
             val marker = if (idx == diagnosis.firstEmpty) "  <-- empty here" else ""
             val count = when {
@@ -152,8 +161,7 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                 step.error != null -> "! ${step.error}"
                 else -> "${step.count}"
             }
-            val label = segments.getOrNull(idx)?.text?.let { if (idx == 0) it else ".$it" }
-                ?: step.expression
+            val label = labels.getOrNull(idx) ?: step.expression
             out.line {
                 +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
                 if (step.error != null) error(count.padEnd(5)) else +count.padEnd(5)
@@ -171,6 +179,50 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             )
             if (coverage.matching == 0) {
                 out.text("  nothing in the pool populates it — check the element name or the data")
+            }
+        }
+    }
+
+    /**
+     * Each row shows only the step it adds, not the whole prefix: with long
+     * extension URLs in the path, repeating the prefix makes the table unreadable.
+     */
+    private fun stepLabels(expression: String): List<String> =
+        FhirPathTokenizer.segments(expression).filter { it.text.isNotBlank() }
+            .mapIndexed { idx, segment -> if (idx == 0) segment.text else ".${segment.text}" }
+
+    /** :why with no focus: how many resources of the root type get through each step. */
+    private fun survey(expression: String, root: String, candidates: List<PooledResource>, out: Output) {
+        val survey = session.prefixWalker.survey(expression, candidates)
+        val where = if (session.pool.scope != null) "$root resources in scope" else "$root resources"
+        out.text("(no focus; counting the $where that get through each step)")
+        val labels = stepLabels(expression)
+        for ((idx, step) in survey.steps.withIndex()) {
+            val label = labels.getOrNull(idx) ?: step.expression
+            // Every resource that got this far failed here: it errs rather than goes empty.
+            val arrived = if (idx == 0) survey.considered else survey.steps[idx - 1].reached
+            val failed = step.reached == 0 && step.errors > 0 && step.errors == arrived
+            out.line {
+                +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
+                +(step.reached?.toString() ?: "—").padEnd(5)
+                if (idx == survey.firstEmpty) +(if (failed) "  <-- fails here" else "  <-- empty here")
+                if (step.errors > 0) {
+                    +"  "
+                    shrink("! ${step.errors} failed: ${step.error}", Output.Kind.ERROR, cutsEnd = true)
+                }
+            }
+        }
+        val furthest = survey.furthest
+        when {
+            survey.firstEmpty == null -> {
+                val through = survey.steps.last().reached
+                out.text("  path resolves fully in $through of ${survey.considered} $root")
+            }
+            survey.firstEmpty == 0 -> out.text("  nothing in the pool populates it — check the element name or the data")
+            furthest != null -> out.line {
+                +"  "
+                label(furthest.label)
+                +" gets as far as any — :focus it, then :why, to see its values"
             }
         }
     }
