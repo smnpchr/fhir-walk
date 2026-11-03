@@ -62,8 +62,8 @@ class Printer(private val style: Style, private val columns: Int, private val ro
      * the window's share goes first to the columns that fit it; see [fitColumns].
      */
     private fun laidOut(table: Output.Table): Output.Listing {
-        val labelWidth = table.rows.maxOfOrNull { it.label.length } ?: 0
-        val wholeLabelWidth = table.rows.maxOfOrNull { it.wholeLabel.length } ?: 0
+        val labelWidth = table.rows.maxOfOrNull { it.guide.length + it.label.length } ?: 0
+        val wholeLabelWidth = table.rows.maxOfOrNull { it.guide.length + it.wholeLabel.length } ?: 0
         val natural = table.titles.indices.map { idx -> maxOf(table.titles[idx].length, table.rows.maxOfOrNull { it.cells.getOrNull(idx)?.length ?: 0 } ?: 0) }
         // A note after the cells shrinks to no less than MIN_VALUE_WIDTH, so that much
         // of the window, or the whole note when shorter, is kept from the cells.
@@ -71,9 +71,11 @@ class Printer(private val style: Style, private val columns: Int, private val ro
         val reserved = if (noteWidth == 0) 0 else 2 + minOf(noteWidth, MIN_VALUE_WIDTH)
         val room = columns - 2 - labelWidth - COLUMN_GAP * table.titles.size - reserved
         val fitting = fitColumns(natural, room, MIN_CELL_WIDTH)
-        fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean, labelWidth: Int, note: Output.Line? = null) = Output.line {
+        fun line(label: String, cells: List<String>, widths: List<Int>, errors: Set<Int>, titles: Boolean, labelWidth: Int, note: Output.Line? = null, guide: String = "") = Output.line {
             +"  "
-            if (titles) hint(label.padEnd(labelWidth)) else label(label.padEnd(labelWidth))
+            if (guide.isNotEmpty()) hint(guide)
+            val padded = label.padEnd((labelWidth - guide.length).coerceAtLeast(0))
+            if (titles) hint(padded) else label(padded)
             cells.zip(widths).forEachIndexed { idx, (cell, width) ->
                 // Padded after shortening, so the columns line up; the last needs none.
                 val text = abbreviate(cell, width).let { if (idx == cells.lastIndex) it else it.padEnd(width) }
@@ -91,7 +93,7 @@ class Printer(private val style: Style, private val columns: Int, private val ro
             // A row with no cells keeps no padding: its note follows the label.
             val width = if (it.cells.isEmpty() && it.note != null) 0 else if (whole) wholeLabelWidth else labelWidth
             val note = if (whole) it.wholeNote else it.note
-            trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths.take(it.cells.size), it.errors, titles = false, width, note))
+            trimmed(line(if (whole) it.wholeLabel else it.label, it.cells, widths.take(it.cells.size), it.errors, titles = false, width, note, it.guide))
         }
         return Output.Listing(header(fitting, labelWidth), rows(fitting, whole = false), rows(natural, whole = true), header(natural, wholeLabelWidth))
     }

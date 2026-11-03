@@ -142,12 +142,13 @@ internal class TreeCommands(private val state: ReplState, private val records: R
                 // A row marked as shown elsewhere points there; its cells are on that row.
                 val viewRow = cells[row.resource].takeIf { row.mark == ReferenceTree.Mark.None }
                 Output.Table.Row(
-                    label = guides[idx] + name(row, row.resource, whole = false),
+                    label = name(row, row.resource, whole = false),
                     cells = if (row.mark != ReferenceTree.Mark.None) emptyList() else viewRow?.cells ?: blank,
                     errors = viewRow?.failed.orEmpty(),
-                    wholeLabel = guides[idx] + name(row, row.resource, whole = true),
+                    wholeLabel = name(row, row.resource, whole = true),
                     note = note(row, whole = false),
                     wholeNote = note(row, whole = true),
+                    guide = guides[idx],
                 )
             },
         )
@@ -156,7 +157,8 @@ internal class TreeCommands(private val state: ReplState, private val records: R
 
     /** A row of the tree alone, after the listing's own two spaces. */
     private fun listed(row: ReferenceTree.Row, guide: String, whole: Boolean): Output.Line = Output.line {
-        +"  $guide"
+        +"  "
+        if (guide.isNotEmpty()) hint(guide)
         label(name(row, row.resource, whole))
         note(row, whole)?.let { +"  "; spans += it.spans }
     }
