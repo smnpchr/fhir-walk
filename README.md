@@ -66,16 +66,21 @@ whether that is a gap in your data or the wrong level of the hierarchy:
 
 ```
 r4:Patient/pat1> :why Patient.contact.name.given
-  Patient                                          1
-  .contact                                         0      <-- empty here
-  .name                                            —
-  .given                                           —
+  1  Patient
+  0  .contact  <-- empty here
+  —  .name
+  —  .given
   Patient.contact is populated in 1 of 2 resource(s) of that type
 ```
 
 That last line is the point. One hit in two says the element is real and this resource
 simply lacks it; zero in two would say the expression is aimed at the wrong level, or
 the element name is wrong. Only the pool can tell those apart.
+
+With no focus, `:why` counts instead how many resources of the expression's type get
+through each step, so a `where()` narrows the count rather than reading as the step
+that went empty. A long step, such as an extension URL, is cut in the middle to fit
+the window; `:more` prints every step whole.
 
 ## Sample pool
 

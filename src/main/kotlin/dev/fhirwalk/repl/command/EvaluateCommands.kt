@@ -6,7 +6,6 @@ import dev.fhirwalk.eval.Outcome
 import dev.fhirwalk.pool.PooledResource
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Session
-import dev.fhirwalk.repl.abbreviate
 import org.hl7.fhir.instance.model.api.IBase
 
 /** Running an expression, against the focus or across the pool, and finding out why it came back empty. */
@@ -239,7 +238,6 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
         }
         val focus = session.focus
             ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
-        if (session.focus == null) out.text("(no focus; diagnosing against ${focus.label})")
         // A relative step is rooted at the focus, then stripped of where()/[n] the way
         // the census spells it: "how many Observations populate code.coding.foo" is
         // the question, not how many share this one's indexes.
@@ -247,78 +245,94 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
             val rooted = session.focus?.absolute(prefix)
             if (rooted == null || rooted == prefix) prefix else session.navigator.censusPath(rooted)
         }
-        val labels = stepLabels(expression)
-        for ((idx, step) in diagnosis.steps.withIndex()) {
-            val marker = if (idx == diagnosis.firstEmpty) "  <-- empty here" else ""
-            val count = when {
-                !step.reached -> "—"
-                step.error != null -> "! ${step.error}"
-                else -> "${step.count}"
-            }
-            val label = labels.getOrNull(idx) ?: step.expression
-            out.line {
-                +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
-                if (step.error != null) error(count.padEnd(5)) else +count.padEnd(5)
-                +marker
-            }
-        }
-        if (diagnosis.firstEmpty == null) {
-            out.text("  path resolves fully")
-            return
-        }
-        diagnosis.poolCoverage?.let { coverage ->
-            out.text(
-                "  ${abbreviate(coverage.expression, 60)} is populated in ${coverage.matching} of " +
-                    "${coverage.considered} resource(s) of that type",
+        val steps = diagnosis.steps.mapIndexed { idx, step ->
+            Step(
+                count = when {
+                    !step.reached -> "—"
+                    step.error != null -> "!"
+                    else -> "${step.count}"
+                },
+                marker = if (idx != diagnosis.firstEmpty) null else if (step.error != null) "fails here" else "empty here",
+                error = step.error,
             )
-            if (coverage.matching == 0) {
-                out.text("  nothing in the pool populates it — check the element name or the data")
+        }
+        val after = mutableListOf<Output.Line>()
+        if (diagnosis.firstEmpty == null) {
+            after += Output.text("  path resolves fully")
+        } else {
+            diagnosis.poolCoverage?.let { coverage ->
+                after += Output.line {
+                    +"  "
+                    shrink(coverage.expression)
+                    +" is populated in ${coverage.matching} of ${coverage.considered} resource(s) of that type"
+                }
+                if (coverage.matching == 0) {
+                    after += Output.text("  nothing in the pool populates it — check the element name or the data")
+                }
             }
         }
+        val header = if (session.focus == null) listOf(Output.text("(no focus; diagnosing against ${focus.label})")) else emptyList()
+        showSteps(expression, header, steps, after, out)
     }
 
+    /** A row of `:why`: what the step gives, and whether the path breaks there. */
+    private class Step(val count: String, val marker: String?, val error: String?)
+
     /**
-     * Each row shows only the step it adds, not the whole prefix: with long
-     * extension URLs in the path, repeating the prefix makes the table unreadable.
+     * Prints `:why`'s steps as a listing, the count first: the step is what gives way
+     * to the window, cut in the middle so both ends of a long extension URL stay, and
+     * `:more` prints every step whole. Each row shows only the step it adds, not the
+     * whole prefix: with long extension URLs in the path, repeating the prefix makes
+     * the table unreadable.
      */
-    private fun stepLabels(expression: String): List<String> =
-        FhirPathTokenizer.segments(expression).filter { it.text.isNotBlank() }
+    private fun showSteps(expression: String, header: List<Output.Line>, steps: List<Step>, after: List<Output.Line>, out: Output) {
+        val labels = FhirPathTokenizer.segments(expression).filter { it.text.isNotBlank() }
             .mapIndexed { idx, segment -> if (idx == 0) segment.text else ".${segment.text}" }
+        val width = steps.maxOf { it.count.length }
+        val rows = steps.mapIndexed { idx, step ->
+            Output.line {
+                +"  "
+                val count = step.count.padStart(width)
+                if (step.error != null && step.count == "!") error(count) else +count
+                +"  "
+                shrink(labels.getOrNull(idx) ?: expression)
+                step.marker?.let { +"  <-- $it" }
+                step.error?.let {
+                    +"  "
+                    shrink("! $it", Output.Kind.ERROR, cutsEnd = true)
+                }
+            }
+        }
+        out.listing(header, rows + after)
+    }
 
     /** :why with no focus: how many resources of the root type get through each step. */
     private fun survey(expression: String, root: String, candidates: List<PooledResource>, out: Output) {
         val survey = session.prefixWalker.survey(expression, candidates)
         val where = if (session.pool.scope != null) "$root resources in scope" else "$root resources"
-        out.text("(no focus; counting the $where that get through each step)")
-        val labels = stepLabels(expression)
-        for ((idx, step) in survey.steps.withIndex()) {
-            val label = labels.getOrNull(idx) ?: step.expression
+        val steps = survey.steps.mapIndexed { idx, step ->
             // Every resource that got this far failed here: it errs rather than goes empty.
             val arrived = if (idx == 0) survey.considered else survey.steps[idx - 1].reached
             val failed = step.reached == 0 && step.errors > 0 && step.errors == arrived
-            out.line {
-                +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
-                +(step.reached?.toString() ?: "—").padEnd(5)
-                if (idx == survey.firstEmpty) +(if (failed) "  <-- fails here" else "  <-- empty here")
-                if (step.errors > 0) {
-                    +"  "
-                    shrink("! ${step.errors} failed: ${step.error}", Output.Kind.ERROR, cutsEnd = true)
-                }
-            }
+            Step(
+                count = step.reached?.toString() ?: "—",
+                marker = if (idx != survey.firstEmpty) null else if (failed) "fails here" else "empty here",
+                error = step.error?.takeIf { step.errors > 0 }?.let { "${step.errors} failed: $it" },
+            )
         }
         val furthest = survey.furthest
-        when {
-            survey.firstEmpty == null -> {
-                val through = survey.steps.last().reached
-                out.text("  path resolves fully in $through of ${survey.considered} $root")
-            }
-            survey.firstEmpty == 0 -> out.text("  nothing in the pool populates it — check the element name or the data")
-            furthest != null -> out.line {
+        val after = when {
+            survey.firstEmpty == null ->
+                Output.text("  path resolves fully in ${survey.steps.last().reached} of ${survey.considered} $root")
+            survey.firstEmpty == 0 -> Output.text("  nothing in the pool populates it — check the element name or the data")
+            furthest != null -> Output.line {
                 +"  "
-                label(furthest.label)
+                shrink(furthest.label, Output.Kind.LABEL)
                 +" gets as far as any — :focus it, then :why, to see its values"
             }
+            else -> null
         }
+        showSteps(expression, listOf(Output.text("(no focus; counting the $where that get through each step)")), steps, listOfNotNull(after), out)
     }
 
     private fun extensions(argument: String, out: Output) {
@@ -352,9 +366,5 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                 }
             },
         )
-    }
-
-    private companion object {
-        const val STEP_WIDTH = 48
     }
 }
