@@ -71,6 +71,76 @@ class ReplTest {
     }
 
     @Test
+    fun `tally counts the resources holding each value, most first`() {
+        val out = run(":tally Observation.status").lines()
+        assertEquals("3 of 6 resource(s) matched; 2 distinct value(s)", out.first())
+        assertEquals(listOf("  2  final", "  1  amended"), out.drop(1).filter { it.isNotBlank() })
+    }
+
+    @Test
+    fun `tally counts a value once per resource, however often it holds it`() {
+        // pat1 has three given names, pat2 one: each gives 'x' per name.
+        val out = run(":tally Patient.name.given.select('x')")
+        assertContains(out, "; 1 distinct value(s)")
+        assertContains(out, "  2  x")
+    }
+
+    @Test
+    fun `tally's more lists the resources under each value`() {
+        run(":tally Observation.status")
+        val more = run(":more").lines()
+        val final = more.indexOfFirst { it.contains("final") }
+        assertEquals(setOf("Observation/obs1", "Observation/obs2"), more.subList(final + 1, final + 3).map { it.trim() }.toSet(), more.joinToString("\n"))
+    }
+
+    @Test
+    fun `tally runs across the pool whatever is in focus, and points to why when nothing matches`() {
+        run(":focus Patient/pat1")
+        assertContains(run(":tally Observation.status"), "3 of 6 resource(s) matched")
+        assertContains(run(":tally Patient.contact.telecom"), "nothing matched — :why")
+        assertContains(run(":tally"), "usage: :tally <expr>")
+    }
+
+    @Test
+    fun `tally records what matched, so it can be named right after`() {
+        run(":tally Observation.status")
+        assertEquals(listOf("Observation.status"), log.entries())
+        run(":name-expr st")
+        assertEquals("Observation.status", names.get("st"))
+        run(":tally Patient.contact.telecom")
+        assertEquals(listOf("Observation.status"), log.entries(), "nothing matched, nothing recorded")
+    }
+
+    @Test
+    fun `tally says how many resources failed`() {
+        assertContains(run(":tally Patient.name.given.substring('a')"), "0 of 6 resource(s) matched; 0 distinct value(s); 6 error(s): ")
+    }
+
+    @Test
+    fun `tally keeps apart values that only look the same on one line`() {
+        val file = java.nio.file.Files.createTempFile("tally", ".json")
+        fun obs(id: String, value: String) = """{"resource":{"resourceType":"Observation","id":"$id","status":"final","code":{"text":"t"},$value}}"""
+        file.toFile().writeText(
+            """{"resourceType":"Bundle","type":"collection","entry":[""" +
+                listOf(
+                    obs("s1", "\"valueString\":\"Stool\""), obs("s2", "\"valueString\":\"Stool \""),
+                    obs("n1", "\"valueString\":\"5\""), obs("n2", "\"valueInteger\":5"),
+                ).joinToString(",") + "]}",
+        )
+        try {
+            run(":load $file")
+            val out = run(":tally Observation.value")
+            assertContains(out, "7 of 10 resource(s) matched; 7 distinct value(s)")
+            assertContains(out, "string \"Stool \"")
+            assertContains(out, "string \"Stool\"")
+            assertContains(out, "integer \"5\"")
+            assertContains(out, "string \"5\"")
+        } finally {
+            java.nio.file.Files.delete(file)
+        }
+    }
+
+    @Test
     fun `command output does not replace the rows`() {
         run(":focus Observation.code.coding")
         run(":pool")

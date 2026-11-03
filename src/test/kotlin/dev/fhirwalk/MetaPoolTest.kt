@@ -87,6 +87,20 @@ class MetaPoolTest {
     }
 
     @Test
+    fun `tally counts bundles per value, resolves within each, and keeps to the scope`() {
+        run(":meta exports ${archive()}")
+        val status = run(":tally Observation.status")
+        assertContains(status, "2 of 4 resource(s) matched, in 2 of 2 bundle(s); 1 distinct value(s)")
+        assertContains(status, "  2  final · in 2 bundle(s)")
+        // r2's Observation refers to a Patient only r1 holds.
+        assertContains(run(":tally Observation.subject.resolve().gender"), "  1  female · in 1 bundle(s)")
+        run(":scope specimen-r2")
+        val scoped = run(":tally Observation.status")
+        assertContains(scoped, "1 of 1 resource(s) matched; 1 distinct value(s)")
+        assertFalse(scoped.contains("bundle(s)"), scoped)
+    }
+
+    @Test
     fun `scope narrows pool-wide evaluation to one bundle`() {
         run(":meta exports ${archive()}")
         assertContains(run(":scope specimen-r2"), "scope: bundle specimen-r2, 1 resource(s)")

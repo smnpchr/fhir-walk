@@ -636,6 +636,7 @@ class CompleterTest {
         val completer = focusedOn("Observation/obs2", "code")
         assertTrue(completer.values(":all Pat").contains("Patient"))
         assertTrue(completer.values(":all Patient.").contains("name"))
+        assertTrue(completer.values(":tally Patient.").contains("name"))
     }
 
     @Test
