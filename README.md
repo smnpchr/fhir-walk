@@ -213,8 +213,10 @@ r4:pool(6)> :tally Observation.status
 ```
 
 A resource holding a value twice counts once. In a meta pool each value also says how
-many bundles hold it. `:more` lists the resources under each value. Structured values
-are told apart by their JSON.
+many bundles hold it. `:more` lists the resources under each value. Values are told
+apart by type and exact text, structured ones by their JSON: `"Stool"` and `"Stool "`,
+or the string `"5"` and the integer `5`, are two rows, spelled out with their type
+and quotes where a row would otherwise show them alike.
 
 ### Recorded expressions and `:view`
 

@@ -102,6 +102,45 @@ class ReplTest {
     }
 
     @Test
+    fun `tally records what matched, so it can be named right after`() {
+        run(":tally Observation.status")
+        assertEquals(listOf("Observation.status"), log.entries())
+        run(":name-expr st")
+        assertEquals("Observation.status", names.get("st"))
+        run(":tally Patient.contact.telecom")
+        assertEquals(listOf("Observation.status"), log.entries(), "nothing matched, nothing recorded")
+    }
+
+    @Test
+    fun `tally says how many resources failed`() {
+        assertContains(run(":tally Patient.name.given.substring('a')"), "0 of 6 resource(s) matched; 0 distinct value(s); 6 error(s): ")
+    }
+
+    @Test
+    fun `tally keeps apart values that only look the same on one line`() {
+        val file = java.nio.file.Files.createTempFile("tally", ".json")
+        fun obs(id: String, value: String) = """{"resource":{"resourceType":"Observation","id":"$id","status":"final","code":{"text":"t"},$value}}"""
+        file.toFile().writeText(
+            """{"resourceType":"Bundle","type":"collection","entry":[""" +
+                listOf(
+                    obs("s1", "\"valueString\":\"Stool\""), obs("s2", "\"valueString\":\"Stool \""),
+                    obs("n1", "\"valueString\":\"5\""), obs("n2", "\"valueInteger\":5"),
+                ).joinToString(",") + "]}",
+        )
+        try {
+            run(":load $file")
+            val out = run(":tally Observation.value")
+            assertContains(out, "7 of 10 resource(s) matched; 7 distinct value(s)")
+            assertContains(out, "string \"Stool \"")
+            assertContains(out, "string \"Stool\"")
+            assertContains(out, "integer \"5\"")
+            assertContains(out, "string \"5\"")
+        } finally {
+            java.nio.file.Files.delete(file)
+        }
+    }
+
+    @Test
     fun `command output does not replace the rows`() {
         run(":focus Observation.code.coding")
         run(":pool")

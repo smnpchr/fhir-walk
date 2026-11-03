@@ -5,7 +5,7 @@ import dev.fhirwalk.pool.ResourceHistory
 /**
  * Where, in a line typed at the prompt, the FHIRPath expression begins.
  *
- * A bare line is all expression. `:all`, `:why`, `:focus` and `:tree` take an expression as
+ * A bare line is all expression. `:all`, `:why`, `:tally`, `:focus` and `:tree` take an expression as
  * their argument, so everything after the command name completes exactly as a bare
  * expression would -- the alternative is completion that works until you prefix the
  * line with a command, which is worse than no completion at all. (`:focus` also

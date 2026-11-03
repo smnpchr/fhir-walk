@@ -73,7 +73,7 @@ class FhirPathCompleter(
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
         val cursor = line.cursor()
-        // `:all`, `:why` and `:focus` take an expression, so their argument completes
+        // `:all`, `:why`, `:tally`, `:focus` and `:tree` take an expression, so their argument completes
         // exactly as a bare expression does; every other command argument is its own thing.
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {

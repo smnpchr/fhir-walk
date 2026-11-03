@@ -371,8 +371,9 @@ topics:
   - name: completion
     title: Completion
     text: |
-      TAB completes, including after :all and :why. On an empty line it
-      lists the pool's resource types; after a '.' the elements and
-      functions available there, with the ones present in the pool first;
-      inside extension('…') the URLs observed on that element.
+      TAB completes, including after :all, :why, :tally and :tree. On an
+      empty line it lists the pool's resource types; after a '.' the
+      elements and functions available there, with the ones present in
+      the pool first; inside extension('…') the URLs observed on that
+      element.
       Up/Down or further TABs walk the candidates; Enter takes the one shown.
