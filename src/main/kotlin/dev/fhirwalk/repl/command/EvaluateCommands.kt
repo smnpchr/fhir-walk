@@ -138,6 +138,10 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                 survey(expression, root!!, candidates, out)
                 return
             }
+            if (root != null && session.pool.scope != null && session.pool.ofType(root).isNotEmpty()) {
+                out.text("no $root in scope — :scope all to count the whole pool")
+                return
+            }
         }
         val focus = session.focus
             ?: (session.prefixWalker.diagnosisTarget(expression) ?: session.pool.all().first()).let { Focus.of(it) }
@@ -190,17 +194,21 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
     /** :why with no focus: how many resources of the root type get through each step. */
     private fun survey(expression: String, root: String, candidates: List<PooledResource>, out: Output) {
         val survey = session.prefixWalker.survey(expression, candidates)
-        out.text("(no focus; counting the $root resources that get through each step)")
+        val where = if (session.pool.scope != null) "$root resources in scope" else "$root resources"
+        out.text("(no focus; counting the $where that get through each step)")
         val labels = stepLabels(expression)
         for ((idx, step) in survey.steps.withIndex()) {
             val label = labels.getOrNull(idx) ?: step.expression
+            // Every resource that got this far failed here: it errs rather than goes empty.
+            val arrived = if (idx == 0) survey.considered else survey.steps[idx - 1].reached
+            val failed = step.reached == 0 && step.errors > 0 && step.errors == arrived
             out.line {
                 +"  ${abbreviate(label, STEP_WIDTH).padEnd(STEP_WIDTH)} "
                 +(step.reached?.toString() ?: "—").padEnd(5)
-                if (idx == survey.firstEmpty) +"  <-- empty here"
+                if (idx == survey.firstEmpty) +(if (failed) "  <-- fails here" else "  <-- empty here")
                 if (step.errors > 0) {
                     +"  "
-                    error("! ${step.errors} failed: ${step.error}")
+                    shrink("! ${step.errors} failed: ${step.error}", Output.Kind.ERROR, cutsEnd = true)
                 }
             }
         }

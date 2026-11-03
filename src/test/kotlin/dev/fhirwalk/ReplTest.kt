@@ -65,6 +65,12 @@ class ReplTest {
     }
 
     @Test
+    fun `why without a focus says a step fails rather than goes empty`() {
+        val out = run(":why Patient.name.given.substring('a')")
+        assertTrue(Regex("""\.substring\('a'\)\s+0\s+<-- fails here  ! 2 failed: """).containsMatchIn(out), out)
+    }
+
+    @Test
     fun `command output does not replace the rows`() {
         run(":focus Observation.code.coding")
         run(":pool")

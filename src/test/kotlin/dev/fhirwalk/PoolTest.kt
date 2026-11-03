@@ -142,6 +142,15 @@ class PoolTest {
     }
 
     @Test
+    fun `survey counts only the resources in scope, as the pool-wide run does`() {
+        val walker = PrefixWalker(evaluator, pool)
+        pool.scope = setOf(requireNonNull(pool.find("Patient/pat1")))
+        val survey = walker.survey("Patient.contact", walker.surveyCandidates("Patient.contact"))
+        assertEquals(1, survey.considered)
+        assertEquals(listOf(1, 0), survey.steps.map { it.reached })
+    }
+
+    @Test
     fun `navigator resolves types through calls using the schema axis`() {
         val navigator = ModelNavigator(ctx, pool.census)
         assertEquals("HumanName", navigator.resolveType("Patient.name.where(use = 'official')")?.name)

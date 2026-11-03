@@ -137,8 +137,13 @@ class PrefixWalker(private val evaluator: Evaluator, private val pool: ResourceP
         return Survey(steps, firstEmpty, candidates.size, furthest)
     }
 
-    /** The resources [survey] counts for an expression: those of its root type, or none. */
-    fun surveyCandidates(expression: String): List<PooledResource> = candidatesFor(expression)
+    /**
+     * The resources [survey] counts for an expression: those of its root type in
+     * scope, or none. A count over the pool answers for what `:all` ran over, so
+     * `:why` after "nothing matched" counts the same resources.
+     */
+    fun surveyCandidates(expression: String): List<PooledResource> =
+        rootTypeOf(expression)?.let { pool.inScope(it) } ?: emptyList()
 
     /**
      * The resource to diagnose against when nothing is in focus.
