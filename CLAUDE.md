@@ -92,8 +92,8 @@ when extending the walker.
 
 - **The delta scope narrows only pool-wide evaluation**: `ResourcePool.inScope()`,
   used by `Evaluator.evaluateAll`, `ViewBuilder` and `:why`'s count without a focus.
-  Lookup, `resolve()`, a focused `:why` and the census see the whole snapshot, because a changed resource usually references
-  an unchanged one. New pool-wide features should iterate `inScope()`, not `all()`.
+  Lookup, `resolve()`, a focused `:why` and the census see the whole snapshot,
+  because a changed resource usually references an unchanged one. New pool-wide features should iterate `inScope()`, not `all()`.
 - **Parsed resources are shared between revisions**, kept by blob id in
   `RevisionLoader`. Never mutate a resource from the pool; it may belong to the
   revision you step to next.
