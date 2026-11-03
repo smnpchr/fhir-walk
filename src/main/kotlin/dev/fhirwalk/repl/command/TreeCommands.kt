@@ -124,11 +124,12 @@ internal class TreeCommands(private val state: ReplState, private val records: R
             state.lastListing = null
             return false
         }
+        val guides = guides(tree.rows)
         if (table == null) {
             out.listing(
                 listOf(header),
-                rows = tree.rows.map { row -> listed(row, whole = false) },
-                full = tree.rows.map { row -> listed(row, whole = true) },
+                rows = tree.rows.mapIndexed { idx, row -> listed(row, guides[idx], whole = false) },
+                full = tree.rows.mapIndexed { idx, row -> listed(row, guides[idx], whole = true) },
             )
             return true
         }
@@ -137,14 +138,14 @@ internal class TreeCommands(private val state: ReplState, private val records: R
         out.table(
             header = listOf(header),
             titles = table.columns.map { it.title(table.type) },
-            rows = tree.rows.map { row ->
+            rows = tree.rows.mapIndexed { idx, row ->
                 // A row marked as shown elsewhere points there; its cells are on that row.
                 val viewRow = cells[row.resource].takeIf { row.mark == ReferenceTree.Mark.None }
                 Output.Table.Row(
-                    label = indent(row) + name(row, row.resource, whole = false),
+                    label = guides[idx] + name(row, row.resource, whole = false),
                     cells = if (row.mark != ReferenceTree.Mark.None) emptyList() else viewRow?.cells ?: blank,
                     errors = viewRow?.failed.orEmpty(),
-                    wholeLabel = indent(row) + name(row, row.resource, whole = true),
+                    wholeLabel = guides[idx] + name(row, row.resource, whole = true),
                     note = note(row, whole = false),
                     wholeNote = note(row, whole = true),
                 )
@@ -153,15 +154,36 @@ internal class TreeCommands(private val state: ReplState, private val records: R
         return true
     }
 
-    /** A row of the tree alone, indented below the listing's own two spaces. */
-    private fun listed(row: ReferenceTree.Row, whole: Boolean): Output.Line = Output.line {
-        +"  ${indent(row)}"
+    /** A row of the tree alone, after the listing's own two spaces. */
+    private fun listed(row: ReferenceTree.Row, guide: String, whole: Boolean): Output.Line = Output.line {
+        +"  $guide"
         label(name(row, row.resource, whole))
         note(row, whole)?.let { +"  "; spans += it.spans }
     }
 
-    /** Two spaces a level: a table puts its own two before the label. */
-    private fun indent(row: ReferenceTree.Row): String = "  ".repeat(row.depth)
+    /**
+     * What goes before each row's label: the lines joining it to its parent and
+     * carrying on past it to that parent's later children. Indentation alone blurs
+     * once a long run of children separates two siblings.
+     *
+     * [rows] are in tree order, so a row has a later sibling when a row of its
+     * depth follows before any shallower one; walking backwards, [later] holds
+     * that for every depth.
+     */
+    private fun guides(rows: List<ReferenceTree.Row>): List<String> {
+        val later = BooleanArray((rows.maxOfOrNull { it.depth } ?: 0) + 1)
+        val guides = arrayOfNulls<String>(rows.size)
+        for (idx in rows.indices.reversed()) {
+            val depth = rows[idx].depth
+            guides[idx] = buildString {
+                for (level in 1 until depth) append(if (later[level]) "│  " else "   ")
+                if (depth > 0) append(if (later[depth]) "├─ " else "└─ ")
+            }
+            later[depth] = true
+            for (deeper in depth + 1 until later.size) later[deeper] = false
+        }
+        return guides.map { it!! }
+    }
 
     /**
      * Below a root, labels leave out the bundle: a link stays inside its bundle,

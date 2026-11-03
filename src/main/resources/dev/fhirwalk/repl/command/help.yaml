@@ -233,12 +233,12 @@ topics:
 
       :tree Specimen.parent follows the links an expression makes, from
       each resource to its parents, and prints them top down: roots first,
-      children indented below. The links are a graph, so a resource with
-      two parents is shown in full under the first and marked (shown under
-      …) under the other; a link back up the path is marked ↻ cycle. A
-      reference that does not resolve is said on its resource's row; a
-      reference by identifier only is not followed, as resolve() does not,
-      and is counted in the header. It
+      children below, joined to their parent by lines. The links are a
+      graph, so a resource with two parents is shown in full under the
+      first and marked (shown under …) under the other; a link back up
+      the path is marked ↻ cycle. A reference that does not resolve is
+      said on its resource's row; a reference by identifier only is not
+      followed, as resolve() does not, and is counted in the header. It
       runs over the scope, and in a meta pool within each bundle; with a
       focus it shows the tree below the focus only. :tree takes FHIRPath
       only; a recorded or named link is :tree-view's, see :manual recording.
