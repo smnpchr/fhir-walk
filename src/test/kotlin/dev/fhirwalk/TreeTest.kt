@@ -58,6 +58,29 @@ class TreeTest {
     private fun rows(output: String): List<String> = output.lines().drop(1).filter { it.isNotBlank() }
 
     @Test
+    fun `a line carries on past a deep subtree to the next sibling, and ends with the last`() {
+        root.resolve("deep.json").writeText(
+            bundle(
+                specimen("r"), specimen("a", "r"), specimen("a1", "a"), specimen("a1x", "a1"),
+                specimen("a2", "a"), specimen("b", "r"), specimen("b1", "b"),
+            ),
+        )
+        run(":load ${root.resolve("deep.json")}")
+        assertEquals(
+            listOf(
+                "  Specimen/r",
+                "  ├─ Specimen/a",
+                "  │  ├─ Specimen/a1",
+                "  │  │  └─ Specimen/a1x",
+                "  │  └─ Specimen/a2",
+                "  └─ Specimen/b",
+                "     └─ Specimen/b1",
+            ),
+            rows(run(":tree Specimen.parent")),
+        )
+    }
+
+    @Test
     fun `a tree hangs each child below its parents, roots first`() {
         run(":load ${specimens()}")
         val tree = run(":tree Specimen.parent")
