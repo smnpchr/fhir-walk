@@ -133,7 +133,10 @@ commands:
           answers, most first. A resource whose answer stayed the same is
           counted, not listed: that is how a reformat or a change elsewhere in
           it shows. An added one pairs with nothing before (— → x), a deleted
-          one with nothing after. resolve() on the base side reads the base.
+          one with nothing after. Resources pair by Type/id or fullUrl,
+          within the files the delta touched; one whose label is held twice,
+          or that has neither, is counted as not compared. Answers differ by
+          type too. resolve() on the base side reads the base.
           :more lists the resources under each pair.
         topic: git
       - name: ":scope"
@@ -374,7 +377,8 @@ topics:
       another order, or another resource in the same file changing does not
       count, while extensions or codings in another order do, since order is
       part of the content. :trace Specimen/s1 <expr> and :changes go by the
-      answer: a row only where it changed. Whitespace inside a string counts.
+      answer: a row only where it changed. Whitespace inside a string
+      counts, and so does a value's type.
 
   - name: workspaces
     title: Workspaces

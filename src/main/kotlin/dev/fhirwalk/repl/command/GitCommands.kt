@@ -531,13 +531,13 @@ internal class GitCommands(
     }
 
     /**
-     * [outcome] as a trace compares it: every value whole, whitespace in its strings
-     * included, and never equal to a failure or a deletion.
+     * [outcome] as a trace compares it: every value whole, by type and text, as
+     * [dev.fhirwalk.repl.Render.exactly] has it, and never equal to a failure or a deletion.
      */
     private fun exactly(outcome: Outcome?): String = when (outcome) {
         null -> "-"
         is Outcome.Failure -> "!${outcome.message}"
-        is Outcome.Values -> "=" + outcome.values.joinToString("\u0000") { session.render.pretty(it).joinToString("\n") }
+        is Outcome.Values -> "=" + session.render.exactly(outcome.values)
     }
 
     /**

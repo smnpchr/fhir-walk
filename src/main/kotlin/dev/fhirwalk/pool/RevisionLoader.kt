@@ -67,7 +67,8 @@ class RevisionLoader(
      *
      * @param changed its resources from the files the delta changed or deleted: the
      *   resources the delta touched, as they were.
-     * @param problems the base's files that could not be read or parsed.
+     * @param problems the files the delta changed or deleted that could not be read
+     *   or parsed at the base. The others were said when the revision loaded.
      */
     class Base(val pool: ResourcePool, val changed: List<PooledResource>, val problems: List<String>)
 
@@ -91,11 +92,15 @@ class RevisionLoader(
         if (against != null) {
             val touched = fileChanges.filter { it.kind != GitSource.Kind.ADDED }.mapTo(HashSet()) { it.path }
             // Everything read before anything is added, as a load does.
-            val files = source.files(against, importer::reads).map { it to (current[it.blob] ?: previous[it.blob] ?: parse(it.path, it.blob)) }
+            val files = source.files(against, importer::reads).map {
+                it to (current[it.blob] ?: previous[it.blob] ?: parse(it.path, it.blob, counted = false))
+            }
             for ((file, blob) in files) {
-                problems += blob.problems
                 val added = blob.parsed.map { snapshot.add(it.resource, it.fullUrl, it.origin) }
-                if (file.path in touched) changed += added
+                if (file.path in touched) {
+                    changed += added
+                    problems += blob.problems
+                }
             }
         }
         return Base(snapshot, changed, problems).also { baseSide = it }
@@ -146,8 +151,9 @@ class RevisionLoader(
         return report
     }
 
-    private fun parse(path: String, id: ObjectId): Blob {
-        parsedBlobs++
+    /** @param counted whether it counts in [parsedBlobs], which is about loads only. */
+    private fun parse(path: String, id: ObjectId, counted: Boolean = true): Blob {
+        if (counted) parsedBlobs++
         val report = Importer.Report()
         val parsed = runCatching { importer.parse(path, source.read(id), report) }.getOrElse {
             report.problems += "$path: unreadable (${it.message})"

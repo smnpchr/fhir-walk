@@ -43,6 +43,14 @@ class Render(private val ctx: FhirContext) {
      * Previews have to stay one row per result to remain tabular, so indentation is
      * only ever worth it once a value is shown in full.
      */
+    /**
+     * [values] as an answer compares across revisions, by `:trace` and `:changes`:
+     * each value's type and whole text, whitespace in its strings included. So the
+     * string `"5"` and the integer `5` differ, as they do in a `:tally`.
+     */
+    fun exactly(values: List<IBase>): String =
+        values.joinToString("\u0000") { typeOf(it) + "\u0001" + pretty(it).joinToString("\n") }
+
     fun pretty(value: IBase): List<String> {
         val text = when {
             value is IPrimitiveType<*> -> return listOf(value.valueAsString ?: "(null)")

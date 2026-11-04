@@ -956,6 +956,31 @@ class GitPoolTest {
     }
 
     @Test
+    fun `changes reads the new base after a move`() {
+        val session = opened()
+        assertContains(
+            session.run(":changes Patient.name.family"),
+            "1 Patient(s) in the delta from ${registry.out3.short} to ${registry.out4.short}; 1 answer(s) changed",
+        )
+        session.run(":step")
+        assertContains(session.run(":changes Patient.name.family"), "no Patient in the delta from ${registry.out2.short} to ${registry.out3.short}")
+    }
+
+    @Test
+    fun `a base is dropped on every load, and its parses are not a load's`() {
+        val session = Session(FhirVersion.R4)
+        val git = GitPool(GitSource.open(registry.import), "branch/out", session.importer, session.pool)
+        git.load(git.source.resolve("branch/out")!!)
+        val parsed = git.parsedBlobs
+        val first = git.before()
+        assertTrue(first === git.before())
+        assertEquals(parsed, git.parsedBlobs)
+        git.step(-1)
+        assertFalse(first === git.before())
+        git.source.close()
+    }
+
+    @Test
     fun `changes needs a git pool`() {
         assertContains(Run().run(":changes Patient.name"), "is not a git pool")
     }

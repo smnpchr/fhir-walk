@@ -58,13 +58,10 @@ class GitPool(
     private var before: Before? = null
 
     /**
-     * The snapshot the delta compares with, read when first asked for and kept until
-     * the pool moves; see [RevisionLoader.base]. Throws when it cannot be read.
+     * The snapshot the delta compares with, read when first asked for and dropped
+     * when the pool moves; see [RevisionLoader.base]. Throws when it cannot be read.
      */
-    fun before(): Before {
-        val base = loader.base()
-        return before?.takeIf { it.base === base } ?: Before(base, Evaluator(pool.ctx, base.pool)).also { before = it }
-    }
+    fun before(): Before = before ?: loader.base().let { Before(it, Evaluator(pool.ctx, it.pool)) }.also { before = it }
 
     /** For tests: how many blobs were parsed rather than reused. */
     internal val parsedBlobs: Int get() = loader.parsedBlobs
@@ -110,7 +107,11 @@ class GitPool(
      *   is about one commit, so `:at` and `:step` go back to that.
      */
     fun load(commit: GitSource.Commit, base: GitSource.Commit? = null): Importer.Report =
-        loader.load(commit, base).also { applyScope() }
+        loader.load(commit, base).also {
+            // The last base is a whole snapshot: not kept past the move that ends its use.
+            before = null
+            applyScope()
+        }
 
     /** A revision looked up: the commit, with which one a date named, since it need not be one made then; or why not. */
     private sealed interface Lookup {

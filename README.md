@@ -464,8 +464,16 @@ r4:in@dc9a375 Δ3> :changes Specimen.subject.reference
 
 A resource whose answer stayed the same is counted but not listed: that is how a
 reformat, or a change elsewhere in the resource, shows up. An added resource pairs with
-nothing before (`— → BUFFY`), a deleted one with nothing after. Resources pair by
-`Type/id` (or fullUrl), so one that only moved to another file is still one resource.
+nothing before (`— → BUFFY`), a deleted one with nothing after.
+
+Resources pair by `Type/id`, or by fullUrl when there is no id, and only within the files
+the delta touched. A resource that only moved to another file is still one resource, and
+a file left alone never stands in for one that was added or deleted. FHIR gives a
+resource no other identity, so nothing is guessed. A label held more than once on a side,
+and a resource with neither id nor fullUrl, are not compared. The header counts them
+(`not compared: Patient/p1 held more than once`), and `:more` lists them with their files.
+Answers compare by type as well as text: the string `"5"` becoming the integer `5` is a
+change, spelled out with both types.
 The base side is evaluated against the base snapshot, so `resolve()` there reads what
 the base held. That snapshot is read on the first `:changes` after a move: unchanged
 files reuse the resources already parsed, and only what the delta changed is parsed
@@ -527,7 +535,7 @@ Each of these counts a different kind of change:
 | `:log Specimen/30012`, `:trace Specimen/30012` | a change to the resource's content: a reformat, keys in another order, or another resource in the same file changing does not count; extensions or codings in another order do |
 | `:trace Specimen/30012 <expr>`, `:changes <expr>` | a change to the answer |
 
-Content is compared exactly, whitespace inside a string included.
+Content is compared exactly, whitespace inside a string included; an answer also by each value's type.
 
 A resource is followed by its label, `Type/id` as `:pool` shows it (an id-less bundle
 entry's is `Patient/urn:uuid:…`), whatever file it is in:
