@@ -186,6 +186,15 @@ produces confusing results that look like product bugs.
   `./gradlew test --rerun-tasks` whenever an outcome depends on sample data (new
   fixtures, or checking the `assumeTrue` skip guard by hiding one). A real run of this
   suite takes about ten seconds; a sub-second success means nothing executed.
+- **Test temp files go under one directory per checkout**, not straight into the
+  system's: the `test` task points `java.io.tmpdir` at
+  `<tmp>/fhir-walk-tests-<hash>`, empties it first and removes it after (#94).
+  So `Files.createTempDirectory` in a test needs no cleanup of its own, but only
+  under Gradle: an IDE run that bypasses it still leaves its files in `/tmp`. Keep
+  that directory outside the project, since tests like `GitPoolTest`'s
+  `not-a-repo` need a directory in no git repository. A test asserting on a path
+  should read `Repl.outputOf`, not printed text: the printer shortens long paths
+  to the window.
 - `Repl` keeps its expressions, names, views, state and line history in a workspace
   under `~/.fhir-walk` by default. Tests must pass `Workspaces(null)` (all in memory)
   or `Workspaces(<temp dir>)`, or they write into the developer's home. `./gradlew run` does not forward `JAVA_OPTS`, so `-Duser.home=…` does not

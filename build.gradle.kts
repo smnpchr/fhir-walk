@@ -69,8 +69,24 @@ application {
     mainClass.set("dev.fhirwalk.MainKt")
 }
 
+// A test's temporary files go under a directory of this checkout's own (#94), emptied
+// before a run and removed after it, pass or fail, so a run leaves nothing in the
+// system's temp directory, which on a tmpfs runs out of inodes. It stays outside the
+// project: some tests need a directory that is in no git repository.
+val testTemp = File(System.getProperty("java.io.tmpdir"), "fhir-walk-tests-" + Integer.toHexString(rootDir.absolutePath.hashCode()))
+
+val removeTestTemp by tasks.registering(Delete::class) {
+    delete(testTemp)
+}
+
 tasks.test {
     useJUnitPlatform()
+    systemProperty("java.io.tmpdir", testTemp.absolutePath)
+    doFirst {
+        testTemp.deleteRecursively()
+        testTemp.mkdirs()
+    }
+    finalizedBy(removeTestTemp)
 }
 
 tasks.named<JavaExec>("run") {
