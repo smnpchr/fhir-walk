@@ -44,22 +44,31 @@ class ResourceHistory(
      */
     fun of(label: String, line: List<GitSource.Commit>): Sequence<Change> {
         val needle = label.substringAfter('/')
-        // For this walk only: a blob is the same file in every commit that holds it.
-        val holding = HashMap<ObjectId, List<IBaseResource>>()
-        // A file is told about once, at the first (newest) commit that holds it.
-        fun resourcesIn(commit: GitSource.Commit, path: String, blob: ObjectId): List<IBaseResource> = holding.getOrPut(blob) {
-            val text = runCatching { source.read(blob) }.getOrElse {
-                problem("at ${commit.short}: $path: unreadable (${it.message})")
-                return@getOrPut emptyList()
+        // For this walk only: a blob read as one format is the same parse in every commit
+        // that holds it. Kept with the path it was parsed as, to say its problems under another.
+        class Parse(val path: String, val resources: List<IBaseResource>, val problems: List<String>)
+        val holding = HashMap<Pair<ObjectId, String>, Parse>()
+        // Each file is told about once, at the first (newest) commit that holds it, under its own name.
+        val told = HashSet<Pair<ObjectId, String>>()
+        fun resourcesIn(commit: GitSource.Commit, path: String, blob: ObjectId): List<IBaseResource> {
+            val parse = holding.getOrPut(blob to importer.formatOf(path)) {
+                val text = runCatching { source.read(blob) }.getOrElse {
+                    return@getOrPut Parse(path, emptyList(), listOf("$path: unreadable (${it.message})"))
+                }
+                if (!text.contains(needle)) return@getOrPut Parse(path, emptyList(), emptyList())
+                val report = Importer.Report()
+                val parsed = runCatching { importer.parse(path, text, report) }.getOrElse {
+                    report.problems += "$path: unreadable (${it.message})"
+                    emptyList()
+                }
+                Parse(path, parsed.filter { it.label(ctx) == label }.map { it.resource }, report.problems)
             }
-            if (!text.contains(needle)) return@getOrPut emptyList()
-            val report = Importer.Report()
-            val parsed = runCatching { importer.parse(path, text, report) }.getOrElse {
-                report.problems += "$path: unreadable (${it.message})"
-                emptyList()
+            if (told.add(blob to path)) {
+                parse.problems.forEach { text ->
+                    problem("at ${commit.short}: " + if (text.startsWith(parse.path)) path + text.removePrefix(parse.path) else text)
+                }
             }
-            report.problems.forEach { problem("at ${commit.short}: $it") }
-            parsed.filter { it.label(ctx) == label }.map { it.resource }
+            return parse.resources
         }
         return line.asSequence().mapNotNull { commit ->
             val changed = changes(commit)

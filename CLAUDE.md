@@ -94,11 +94,15 @@ when extending the walker.
   used by `Evaluator.evaluateAll`, `ViewBuilder` and `:why`'s count without a focus.
   Lookup, `resolve()`, a focused `:why` and the census see the whole snapshot,
   because a changed resource usually references an unchanged one. New pool-wide features should iterate `inScope()`, not `all()`.
-- **Parsed resources are shared between revisions**, kept by blob id in
-  `RevisionLoader`. Never mutate a resource from the pool; it may belong to the
-  revision you step to next. `:changes` reads the delta's base as a second pool
-  (`RevisionLoader.base`): no census, built on first asking, dropped on every load,
-  and holding the very same parsed resources for every file the delta left alone.
+- **Parsed resources are shared between revisions**, kept in `RevisionLoader` by
+  blob id, the format the file is read as, and position. Never mutate a resource
+  from the pool; it may belong to the revision you step to next. Two files with
+  the same content are one blob, so a blob keeps one parse per file holding it,
+  and an origin, label or problem is re-based onto the file being added: never
+  add one parse to a pool twice. `:changes` reads the delta's base as a second
+  pool (`RevisionLoader.base`): no census, built on first asking, dropped on
+  every load, and holding the very same parsed resources for every file the
+  delta left alone.
 - **A resource's identity across snapshots is its label, and only where unique.**
   `DeltaPairs` pairs by `Type/id` or fullUrl within the files a delta touched; a
   label held twice on a side, or a resource with neither, is reported as not
