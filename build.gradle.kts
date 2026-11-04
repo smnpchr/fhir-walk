@@ -1,3 +1,5 @@
+import java.nio.file.Files
+
 plugins {
     // Must be >= the stdlib HAPI pulls in transitively (via okhttp), or the
     // compiler cannot read those modules' metadata.
@@ -69,8 +71,61 @@ application {
     mainClass.set("dev.fhirwalk.MainKt")
 }
 
+/**
+ * Where one build's tests keep their temporary files (#94): a fresh directory under
+ * the system's temp, made the first time a test JVM starts and removed when the build
+ * ends, whether the tests passed or failed. Its own name for every build, so two
+ * builds of one checkout never share it, and outside the project, since some tests
+ * need a directory that is in no git repository. Ones left by a build that never got
+ * to end (a killed daemon) are swept once a day old.
+ */
+abstract class TestTemp : BuildService<BuildServiceParameters.None>, AutoCloseable {
+    private var made: File? = null
+
+    @get:Synchronized
+    val dir: File
+        get() = made ?: run {
+            sweep()
+            Files.createTempDirectory(PREFIX).toFile().also {
+                File(it, "home").mkdirs()
+                made = it
+            }
+        }
+
+    private fun sweep() {
+        val dayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        File(System.getProperty("java.io.tmpdir")).listFiles { file ->
+            file.isDirectory && file.name.startsWith(PREFIX) && file.lastModified() < dayAgo
+        }?.forEach { it.deleteRecursively() }
+    }
+
+    override fun close() {
+        made?.deleteRecursively()
+    }
+
+    private companion object {
+        const val PREFIX = "fhir-walk-tests-"
+    }
+}
+
+/**
+ * Hands [TestTemp] to the test JVM as its temp directory and its home, so tests write
+ * neither into the system's temp nor into the user's home (`~/.fhir-walk`, JGit's
+ * `~/.config/jgit`) and read no `~/.gitconfig`. Internal: the path is new each build,
+ * and must not make every build's tests look changed to the build cache.
+ */
+class TestTempArguments(@get:Internal val temp: Provider<TestTemp>) : CommandLineArgumentProvider {
+    override fun asArguments(): List<String> = temp.get().dir.let {
+        listOf("-Djava.io.tmpdir=$it", "-Duser.home=${File(it, "home")}")
+    }
+}
+
+val testTemp = gradle.sharedServices.registerIfAbsent("fhirWalkTestTemp", TestTemp::class) {}
+
 tasks.test {
     useJUnitPlatform()
+    usesService(testTemp)
+    jvmArgumentProviders += TestTempArguments(testTemp)
 }
 
 tasks.named<JavaExec>("run") {

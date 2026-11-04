@@ -58,6 +58,9 @@ class MetaPoolTest {
 
     private fun run(line: String) = repl.run(line)
 
+    /** What [line] writes, before the printer fits it to a window: paths stay whole. */
+    private fun whole(line: String) = repl.outputOf(line).lines().joinToString("\n")
+
     private fun assertContains(output: String, expected: String) =
         assertTrue(output.contains(expected), "expected \"$expected\" in:\n$output")
 
@@ -65,7 +68,7 @@ class MetaPoolTest {
     fun `a meta pool holds every bundle under its directory, and skips what is not one`() {
         val root = archive()
         assertContains(run(":meta exports $root"), "meta pool exports: 2 bundle(s), 4 resource(s); 1 file(s) skipped, not a Bundle")
-        assertContains(run(":pools"), "meta: $root, 2 bundle(s)")
+        assertContains(whole(":pools"), "meta: $root, 2 bundle(s)")
         val members = run(":members")
         assertContains(members, "specimen-r1")
         assertContains(members, "specimen-r2")
@@ -394,7 +397,7 @@ class MetaPoolTest {
         val switched = run(":fhir r4")
         assertContains(switched, "switched to FHIR R4")
         assertContains(switched, "is not a directory — kept, to read once it is back")
-        assertContains(run(":pools"), "meta: $root")
+        assertContains(whole(":pools"), "meta: $root")
         assertContains(run(":meta exports"), "is not a directory")
     }
 

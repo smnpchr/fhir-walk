@@ -26,6 +26,9 @@ class GitPoolTest {
         val out: String = capture { repl.open(it) }
 
         fun run(line: String): String = capture { repl.dispatch(line, it) }
+
+        /** What [line] writes, before the printer fits it to a window: paths stay whole. */
+        fun whole(line: String): String = repl.outputOf(line).lines().joinToString("\n")
     }
 
     private fun capture(block: (PrintWriter) -> Unit): String {
@@ -776,7 +779,7 @@ class GitPoolTest {
         assertContains(gone, "pool is empty")
         // Said once, not before every line.
         assertFalse(session.run("Patient.id").contains("is gone"))
-        assertContains(session.run(":pools"), "unavailable: ${registry.spec}")
+        assertContains(session.whole(":pools"), "unavailable: ${registry.spec}")
         val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
         assertTrue("source\t${registry.spec}" in state, state.toString())
     }
@@ -793,7 +796,7 @@ class GitPoolTest {
         val back = session.run("Patient.id")
         assertContains(back, "${registry.import} is back")
         assertContains(back, "2 of 2 resource(s) matched")
-        assertContains(session.run(":pools"), "${registry.spec} at ")
+        assertContains(session.whole(":pools"), "${registry.spec} at ")
         val state = Files.readAllLines(home.resolve("workspaces/w1/state"))
         assertFalse(state.any { it == "at\t${registry.out4.name}" }, state.toString())
     }
@@ -848,7 +851,7 @@ class GitPoolTest {
         assertContains(output, "pool spec emptied")
         assertContains(output, "pat1")
         assertContains(session.run(":pools"), "* pool ")
-        assertContains(session.run(":pools"), "unavailable: ${registry.spec}")
+        assertContains(session.whole(":pools"), "unavailable: ${registry.spec}")
     }
 
     @Test
