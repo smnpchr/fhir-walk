@@ -188,8 +188,10 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
      */
     private fun versionHint(text: String, failure: Throwable): String {
         val base = failure.message?.take(120) ?: failure.javaClass.simpleName
+        // Only the versions that load: one that cannot is no advice, and trying it
+        // would build a failing context for every file.
         val alternatives = FhirVersion.entries
-            .filter { it.id != currentId }
+            .filter { it.id != currentId && it.isAvailable() }
             .filter { candidate ->
                 // Contexts are expensive, so they are built at most once per session
                 // even if every file in a large tree fails to parse.

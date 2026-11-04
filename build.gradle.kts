@@ -36,6 +36,9 @@ dependencies {
     // reader for those lives in hapi-fhir-validation, deliberately not a dependency.
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r4:$hapiVersion")
     runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r5:$hapiVersion")
+    // R4B and DSTU3 need theirs too, with their structures above: loose files, as R4's.
+    // runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-r4b:$hapiVersion")
+    // runtimeOnly("ca.uhn.hapi.fhir:hapi-fhir-validation-resources-dstu3:$hapiVersion")
 
     // Both are optional in HAPI's POM but required in practice: UCUM is loaded
     // eagerly by the FHIRPath engine (quantity comparison), and the cache SPI has no

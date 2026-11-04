@@ -34,7 +34,7 @@ fun main(args: Array<String>) {
     while (i < args.size) {
         when (val arg = args[i]) {
             "--help", "-h" -> {
-                println(USAGE.trimStart().format(FhirVersion.ids()))
+                println(USAGE.trimStart().format(FhirVersion.availableIds()))
                 return
             }
             "--workspace", "-w" -> {
@@ -44,8 +44,8 @@ fun main(args: Array<String>) {
             }
             "--fresh" -> fresh = true
             "--fhir" -> {
-                val value = args.getOrNull(++i) ?: fail("--fhir needs a version (${FhirVersion.ids()})")
-                version = FhirVersion.parse(value) ?: fail("unknown FHIR version '$value' (${FhirVersion.ids()})")
+                val value = args.getOrNull(++i) ?: fail("--fhir needs a version (${FhirVersion.availableIds()})")
+                version = FhirVersion.parse(value) ?: fail("unknown FHIR version '$value' (${FhirVersion.availableIds()})")
             }
             else ->
                 if (arg.startsWith("-")) fail("unknown option '$arg' — try --help") else paths += arg

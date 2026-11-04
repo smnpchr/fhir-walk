@@ -530,7 +530,7 @@ class CompleterTest {
         assertEquals(listOf("specimen-run-078714f4a0"), values(":scope 0787 x", 11).filter { it.startsWith("specimen") })
         // A second TAB, at the start of the argument the first one left alone, completes it.
         assertEquals(listOf("specimen-run-078714f4a0"), values(":scope 078714f4a0", 7).filter { it.startsWith("specimen") })
-        assertTrue("r4b" in values(":fhir  r4", 6))
+        assertTrue("r4" in values(":fhir  r4", 6))
         // A middle argument completes as itself: a path, not the cut-off after it.
         assertTrue(values(":meta n samp 30d", 12).any { it.startsWith("samples") })
     }
