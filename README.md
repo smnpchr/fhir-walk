@@ -520,6 +520,14 @@ the pool stays at its revision. With a focus, `:trace <expr>` traces the focused
 resource, or the focused element by the steps that reached it. TAB completes the
 expression against the resource the label names.
 
+What a row says it was is what that commit started from, not the row below it. A label
+names one resource only where one file holds it. Where a commit's changed files hold
+the label more than once (two files, or twice in one bundle), the row says
+`held 2 times here — not followed`, and `:log` marks it `held ×2`. `:more` lists the
+files holding it before and after. The trace goes on past it. As in `:changes`, only the
+files a commit changed are looked at, so a copy added next to an untouched original
+reads as added.
+
 Without an expression, `:trace Specimen/30012` (or `:trace` alone, with a resource
 in focus) traces the resource itself: the commits `:log Specimen/30012` lists, each
 saying whether it added, modified or deleted the resource, with a preview of it.

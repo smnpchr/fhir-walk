@@ -114,7 +114,9 @@ commands:
           alone traces the whole resource: the commits :log Specimen/s1 lists,
           each with what it holds. :more prints each answer whole, a resource as
           pretty-printed JSON. resolve() is refused: it would read the pool at
-          its own revision, not the one traced.
+          its own revision, not the one traced. A commit whose changed files
+          hold the label more than once says so and is not followed; each row's
+          "was" is what its own commit started from.
         topic: git
       - name: ":delta"
         args: "[from..to]"

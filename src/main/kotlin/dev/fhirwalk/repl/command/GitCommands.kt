@@ -18,6 +18,7 @@ import java.nio.file.Paths
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.WeakHashMap
+import org.hl7.fhir.instance.model.api.IBaseResource
 
 /** A git pool: opening one at a revision, moving it along its line, and reading its history. */
 internal class GitCommands(
@@ -406,10 +407,15 @@ internal class GitCommands(
             header = listOf(Output.text("$label on ${git.lineLabel}, newest first")),
             rows = changes.map { change ->
                 commitRow(git, change.commit) {
-                    count(change.kind.name.lowercase().padEnd(8))
+                    count(kindOf(change).padEnd(8))
                     +"  "
                     shrink(change.commit.subject)
                 }
+            },
+            // With the files that held it, where it was held more than once.
+            full = changes.flatMap { change ->
+                listOf(commitRow(git, change.commit) { count(kindOf(change).padEnd(8)); +"  "; +change.commit.subject }) +
+                    change.held?.let(::heldLines).orEmpty()
             },
         )
         if (read.size.toLong() > skipped.toLong() + page) {
@@ -471,28 +477,31 @@ internal class GitCommands(
             out.text("no commit on ${git.lineLabel} added, changed or deleted $label")
             return
         }
-        // Oldest first, so each answer can say what it replaced.
-        var before: String? = null
-        var beforeExactly: String? = null
+        // Each row says what its own commit started from, never what the row before it
+        // showed: a commit may touch a copy of the label, which is not what that row was.
         val traced = mutableListOf<Traced>()
+        fun answerOf(resource: IBaseResource?): Outcome? = resource?.let {
+            if (expression == null) Outcome.Values(listOf(it)) else session.evaluator.evaluate(it, expression)
+        }
+        fun shown(outcome: Outcome?): String = when (outcome) {
+            null -> "deleted"
+            is Outcome.Failure -> "! ${outcome.message}"
+            is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
+        }
         for (change in changes.asReversed()) {
-            val outcome = change.resource?.let { resource ->
-                if (expression == null) Outcome.Values(listOf(resource)) else session.evaluator.evaluate(resource, expression)
+            val held = change.held
+            if (held != null) {
+                traced += Traced(change, null, "held ${held.most} times here — not followed", was = null)
+                continue
             }
-            val answer = when (outcome) {
-                null -> "deleted"
-                is Outcome.Failure -> "! ${outcome.message}"
-                is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
-            }
-            val exactly = exactly(outcome)
+            val was = answerOf(change.was)
+            val outcome = answerOf(change.resource)
             // The history already holds only commits that changed the resource's
             // content, so with no expression every one is a row. An answer is
             // compared whole: its one-line form runs whitespace together, which a
             // string's value may differ by.
-            if (expression != null && exactly == beforeExactly && change.kind != GitSource.Kind.ADDED) continue
-            traced += Traced(change, outcome, answer, was = before)
-            before = answer
-            beforeExactly = exactly
+            if (expression != null && change.kind == GitSource.Kind.MODIFIED && exactly(outcome) == exactly(was)) continue
+            traced += Traced(change, outcome, shown(outcome), was = change.was?.let { shown(was) })
         }
         traced.reverse()
         val what = expression?.let { "  $it" }.orEmpty()
@@ -506,6 +515,8 @@ internal class GitCommands(
                         if (row.outcome != null) {
                             +"  "
                             shrink(row.answer, Output.Kind.PREVIEW, cutsEnd = true)
+                        } else if (row.change.held != null) {
+                            hint("  not followed")
                         }
                     } else {
                         when (row.outcome) {
@@ -521,7 +532,7 @@ internal class GitCommands(
             full = traced.flatMap { row ->
                 listOf(commitRow(git, row.change.commit) { count(row.kind) }) +
                     when (val outcome = row.outcome) {
-                        null -> emptyList()
+                        null -> row.change.held?.let(::heldLines).orEmpty()
                         is Outcome.Failure -> listOf(Output.line { +"      "; error(row.answer) })
                         is Outcome.Values ->
                             if (outcome.values.isEmpty()) listOf(Output.text("      {}")) else outcome.values.flatMap { state.expanded("      ", it) }
@@ -545,11 +556,17 @@ internal class GitCommands(
      * line, and what it [was] before, if anything.
      */
     private class Traced(val change: ResourceHistory.Change, val outcome: Outcome?, val answer: String, val was: String?) {
-        val came: Boolean get() = change.kind == GitSource.Kind.ADDED
+        val came: Boolean get() = change.kind == GitSource.Kind.ADDED && change.held == null
 
-        /** `added`, `modified`, `deleted`, as `:log <label>` says. */
-        val kind: String get() = change.kind.name.lowercase()
+        /** As `:log <label>` says it; see [kindOf]. */
+        val kind: String get() = kindOf(change)
     }
+
+    /** The files that held a label more than once in a commit, under the commit's row. */
+    private fun heldLines(held: ResourceHistory.Held): List<Output.Line> =
+        listOf("before" to held.before, "after" to held.after).filter { it.second.isNotEmpty() }.map { (side, paths) ->
+            Output.line { +"      "; hint("$side: "); +paths.joinToString(", ") }
+        }
 
     /**
      * [expression] as the focused resource would take it: the focus's own steps, and
@@ -715,6 +732,10 @@ internal class GitCommands(
     }
 
     private companion object {
+        /** `added`, `modified`, `deleted`, or `held ×2` where the commit held the label more than once. */
+        fun kindOf(change: ResourceHistory.Change): String =
+            change.held?.let { "held ×${it.most}" } ?: change.kind.name.lowercase()
+
         const val DEFAULT_LOG = 20
         /** Commits searched for TAB after `:at`: enough to narrow by id in a long history. */
         const val MAX_CHOICES = 2000
