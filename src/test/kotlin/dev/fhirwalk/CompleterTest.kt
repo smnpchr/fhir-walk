@@ -9,6 +9,7 @@ import dev.fhirwalk.pool.ResourcePool
 import dev.fhirwalk.repl.FhirPathParser
 import dev.fhirwalk.repl.FhirWalkLineReader
 import org.jline.reader.Candidate
+import org.jline.reader.CompletingParsedLine
 import org.jline.reader.LineReader
 import org.jline.reader.LineReaderBuilder
 import org.jline.reader.Parser
@@ -486,6 +487,52 @@ class CompleterTest {
         // Not read yet: :pool offers it, and says how; :close has nothing to close.
         assertEquals(setOf("pool", "exports", "older"), values(":pool ").toSet())
         assertEquals(listOf("pool"), values(":close "))
+    }
+
+    @Test
+    fun `a command name completes whatever follows the cursor, and an argument from before it`() {
+        val completer = FhirPathCompleter(
+            { ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS },
+            members = { listOf("specimen-run-078714f4a0", "specimen-run-0017") },
+        )
+        fun values(line: String, cursor: Int) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, cursor, Parser.ParseContext.COMPLETE), it)
+        }.map { it.value() }
+
+        // JLine replaces the word the parser names: the one the cursor is in, not the last.
+        fun word(line: String, cursor: Int) = parser.parse(line, cursor, Parser.ParseContext.COMPLETE).let { it.word() to it.wordCursor() }
+        /** What JLine deletes from the cursor on: the raw word's rest. */
+        fun replaced(line: String, cursor: Int) = (parser.parse(line, cursor, Parser.ParseContext.COMPLETE) as CompletingParsedLine)
+            .let { line.substring(cursor - it.rawWordCursor(), cursor - it.rawWordCursor() + it.rawWordLength()) }
+        assertEquals(":fh" to 3, word(":fh r4", 3))
+        assertEquals(":fh" to 2, word(":fh r4", 2))
+        assertEquals("0787" to 4, word(":scope 0787 x", 11))
+        assertEquals("x" to 0, word(":scope  x", 7))
+        assertEquals("" to 0, word(":fhir ", 6))
+        // At a word's start, where a completed name leaves the cursor: that word.
+        assertEquals("r4" to 0, word(":fhir r4", 6))
+        assertEquals("r4", replaced(":fhir r4", 6))
+        // A name picked from the menu brings its own space: the space goes with the argument.
+        assertEquals("r4" to 0, word(":fhir  r4", 6))
+        assertEquals(" r4", replaced(":fhir  r4", 6))
+        // Further along, a gap is a new argument, not the next one.
+        assertEquals("" to 0, word(":meta a  b", 8))
+        assertEquals("", replaced(":meta a  b", 8))
+        assertEquals("samp" to 4, word(":meta n samp 30d", 12))
+        assertEquals(":sc" to 3, word("  :sc x", 5))
+        assertEquals(":fh" to 0, word(":fh r4", 0))
+        // #84: what follows the name was read as the argument of a command `:fh`.
+        assertEquals(listOf(":fhir"), values(":fh r4", 3).filter { it.startsWith(":f") })
+        assertEquals(listOf(":fhir"), values(":fh  r4", 3).filter { it.startsWith(":f") })
+        // An expression command's name completes too, with its expression after it.
+        assertTrue(":all" in values(":al Patient.name", 3))
+        // The argument under the cursor, not the line's last word: `x` stays out of it.
+        assertEquals(listOf("specimen-run-078714f4a0"), values(":scope 0787 x", 11).filter { it.startsWith("specimen") })
+        // A second TAB, at the start of the argument the first one left alone, completes it.
+        assertEquals(listOf("specimen-run-078714f4a0"), values(":scope 078714f4a0", 7).filter { it.startsWith("specimen") })
+        assertTrue("r4b" in values(":fhir  r4", 6))
+        // A middle argument completes as itself: a path, not the cut-off after it.
+        assertTrue(values(":meta n samp 30d", 12).any { it.startsWith("samples") })
     }
 
     @Test

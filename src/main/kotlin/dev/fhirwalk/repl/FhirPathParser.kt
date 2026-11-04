@@ -33,7 +33,19 @@ class FhirPathParser : Parser {
         )
     }
 
-    /** Commands are conventional: whitespace-separated words. */
+    /**
+     * Commands are conventional: whitespace-separated words, and the word is the one
+     * the cursor is in, not the last: in `:sco| 0787` it is `:sco`, which completion
+     * replaces as a whole. At the start of a word it is that word, cursor 0, so
+     * `:scope |0787` completes `0787`: where a first TAB leaves the cursor after
+     * completing the name.
+     *
+     * A name picked from the menu gets a space of its own, `:fhir | r4`, so whitespace
+     * up to the first argument counts as its start too: the word is `r4`, and what is
+     * replaced runs from the cursor to its end, which takes the extra space away.
+     * Elsewhere in whitespace the cursor starts a new, empty word there, so TAB can
+     * add an argument between two.
+     */
     private fun parseCommand(line: String, cursor: Int): ParsedLine {
         val words = mutableListOf<String>()
         val starts = mutableListOf<Int>()
@@ -46,25 +58,32 @@ class FhirPathParser : Parser {
             starts += start
             words += line.substring(start, i)
         }
-        var index = words.size - 1
-        if (index < 0) {
-            words += ""
-            starts += line.length
-            index = 0
-        } else if (cursor > 0 && cursor <= line.length && line.getOrNull(cursor - 1)?.isWhitespace() == true) {
-            // Cursor sits after a space: a new, empty word.
-            words += ""
-            starts += cursor
-            index = words.size - 1
+        val at = cursor.coerceIn(0, line.length)
+        val within = words.indices.firstOrNull { at >= starts[it] && at <= starts[it] + words[it].length }
+        if (within != null) {
+            val word = words[within]
+            return Parsed(line, cursor, word, (at - starts[within]).coerceIn(0, word.length), within, words)
         }
-        val word = words[index]
-        return Parsed(line, cursor, word, (cursor - starts[index]).coerceIn(0, word.length), index, words)
+        val before = starts.count { it < at }
+        if (before == 1 && words.size > 1) {
+            // Between the name and its first argument, with only whitespace to it.
+            val word = words[1]
+            return Parsed(line, cursor, word, 0, 1, words, rawWordCursor = 0, rawWordLength = starts[1] - at + word.length)
+        }
+        // In whitespace, or on an empty line: a new, empty word, in its place among the others.
+        words.add(before, "")
+        return Parsed(line, cursor, "", 0, before, words)
     }
 
     /**
      * Implements [CompletingParsedLine] so completion works inside quoted strings.
      * Without it JLine warns and mis-handles the replacement — which would break the
      * most valuable case, completing an extension URL inside `extension('…')`.
+     */
+    /**
+     * @param rawWordCursor where the cursor is in what completion replaces, and
+     * @param rawWordLength how long that is: the [word] itself, unless whitespace
+     *   before it goes with it (see [parseCommand]).
      */
     private class Parsed(
         private val line: String,
@@ -73,6 +92,8 @@ class FhirPathParser : Parser {
         private val wordCursor: Int,
         private val wordIndex: Int,
         private val words: MutableList<String>,
+        private val rawWordCursor: Int = wordCursor,
+        private val rawWordLength: Int = word.length,
     ) : CompletingParsedLine {
         override fun word(): String = word
         override fun wordCursor(): Int = wordCursor
@@ -88,8 +109,8 @@ class FhirPathParser : Parser {
          */
         override fun escape(candidate: CharSequence, complete: Boolean): CharSequence = candidate
 
-        override fun rawWordCursor(): Int = wordCursor
+        override fun rawWordCursor(): Int = rawWordCursor
 
-        override fun rawWordLength(): Int = word.length
+        override fun rawWordLength(): Int = rawWordLength
     }
 }

@@ -406,3 +406,6 @@ topics:
       the pool first; inside extension('…') the URLs observed on that
       element.
       Up/Down or further TABs walk the candidates; Enter takes the one shown.
+      A command completes where the cursor is, whatever follows: :sco 0787
+      with the cursor after :sco becomes :scope 0787, and a second TAB
+      completes 0787. TAB at the start of an argument replaces it.

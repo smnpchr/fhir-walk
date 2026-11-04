@@ -11,6 +11,7 @@ import dev.fhirwalk.pool.Census
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.ResourcePool
 import org.jline.reader.Candidate
+import org.jline.reader.CompletingParsedLine
 import org.jline.reader.Completer
 import org.jline.reader.LineReader
 import org.jline.reader.ParsedLine
@@ -77,7 +78,13 @@ class FhirPathCompleter(
         // exactly as a bare expression does; every other command argument is its own thing.
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {
-            completeCommand(text, candidates)
+            // Only the word under the cursor and what is before it: `:sco| 0787` is a
+            // command name being typed, whatever follows it. The parser says where that
+            // word ends, the whitespace it may take with it included.
+            val at = cursor.coerceIn(0, text.length)
+            val end = (line as? CompletingParsedLine)?.let { at - it.rawWordCursor() + it.rawWordLength() }
+                ?: (at - line.wordCursor() + line.word().length)
+            completeCommand(text.substring(0, end.coerceIn(at, text.length)), candidates)
             return
         }
         // `:all`, `:tally`, `:changes` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
@@ -95,6 +102,7 @@ class FhirPathCompleter(
 
     // ------------------------------------------------------------------ commands
 
+    /** @param text the line up to the end of the word under the cursor: what follows is not being completed. */
     private fun completeCommand(text: String, candidates: MutableList<Candidate>) {
         val trimmed = text.trimStart()
         val command = trimmed.takeWhile { !it.isWhitespace() }
