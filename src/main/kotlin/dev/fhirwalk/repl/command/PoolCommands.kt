@@ -179,11 +179,15 @@ internal class PoolCommands(
 
     private fun switchVersion(argument: String, out: Output) {
         if (argument.isBlank()) {
-            out.text("FHIR ${session.version.id} — available: ${FhirVersion.ids()}")
+            out.text("FHIR ${session.version.id} — available: ${FhirVersion.availableIds()}")
+            // The others are listed by what they need, which is a line in build.gradle.kts.
+            FhirVersion.entries.filterNot { it.isAvailable() }.forEach {
+                out.hint("  ${it.id} needs ${it.missing} in build.gradle.kts")
+            }
             return
         }
         val version = FhirVersion.parse(argument) ?: run {
-            out.text("unknown version $argument — available: ${FhirVersion.ids()}")
+            out.text("unknown version $argument — available: ${FhirVersion.availableIds()}")
             return
         }
         if (version == session.version) {

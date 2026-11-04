@@ -117,7 +117,8 @@ class FhirPathCompleter(
         // The arguments so far, the last being the one under the cursor (possibly "").
         val arguments = trimmed.split(Regex("[\\s,]+")).drop(1)
         when (command) {
-            ":fhir" -> FhirVersion.entries.forEach {
+            // Only the versions that load: switching to another fails.
+            ":fhir" -> FhirVersion.entries.filter { it.isAvailable() }.forEach {
                 candidates += commandCand(it.id, it.id, "fhir versions", "FHIR ${it.id.uppercase()}")
             }
             ":load" -> completePath(lastToken, candidates)

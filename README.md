@@ -695,8 +695,9 @@ R4 by default; `--fhir r5` or `:fhir r5` to switch. One pool is always one versi
 switching resets it. Mixed-version pools are the one complexity refused outright.
 
 R4 and R5 structures ship by default; R4B and DSTU3 need their dependency lines
-uncommented in `build.gradle.kts` (the enum entries are already there, and
-`FhirVersion.create()` reports a clear error until then). Since FHIR JSON carries no
+uncommented in `build.gradle.kts`. The enum entries are already there. Until then
+`:fhir` alone lists only the versions that load and says what the others need, TAB
+after `:fhir` offers only those, and switching to one says which dependency to add. Since FHIR JSON carries no
 version marker, the version is declared rather than sniffed — but a parse failure
 retries under the other versions and tells you which one fits.
 

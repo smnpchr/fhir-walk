@@ -77,7 +77,8 @@ commands:
         summary: switch FHIR version (resets the pool)
         details: |
           Loaded pools keep their names and lose their contents; git pools read
-          their revision again in the new version.
+          their revision again in the new version. :fhir alone lists the
+          versions that load, and what each other one needs in build.gradle.kts.
 
   - group: Git history
     commands:

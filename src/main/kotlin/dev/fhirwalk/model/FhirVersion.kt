@@ -1,6 +1,7 @@
 package dev.fhirwalk.model
 
 import ca.uhn.fhir.context.FhirContext
+import ca.uhn.fhir.context.FhirVersionEnum
 
 /**
  * The only version-aware code in the project. Everything downstream takes a
@@ -47,15 +48,28 @@ enum class FhirVersion(
         throw FhirVersionUnavailable(this, e)
     } catch (e: ClassNotFoundException) {
         throw FhirVersionUnavailable(this, e)
+    } catch (e: RuntimeException) {
+        // How HAPI itself says the structures JAR is missing (`FhirContext.forDstu3()`);
+        // any other failure is not that, and surfaces as itself.
+        if (e.message?.startsWith(STRUCTURES_MISSING) == true) throw FhirVersionUnavailable(this, e)
+        throw e
     }
 
-    /** True when this version's structures are on the classpath. */
-    fun isAvailable(): Boolean = try {
-        create()
-        true
-    } catch (e: FhirVersionUnavailable) {
-        false
+    /**
+     * True when this version loads: its structures are on the classpath and, where
+     * it needs one, its definitions package. Asked without building a context, which
+     * is slow, and kept: the classpath does not change while the process runs.
+     */
+    fun isAvailable(): Boolean = available
+
+    private val available: Boolean by lazy {
+        FhirVersionEnum.valueOf(name).isPresentOnClasspath &&
+            (definitions == null || PackageDefinitions.locate(definitions.directory, definitions.namePrefix) != null)
     }
+
+    /** What this version needs before it loads: `hapi-fhir-structures-dstu3`. */
+    val missing: String
+        get() = if (!FhirVersionEnum.valueOf(name).isPresentOnClasspath) "hapi-fhir-structures-$id" else "hapi-fhir-validation-resources-$id"
 
     companion object {
         val DEFAULT = R4
@@ -64,6 +78,12 @@ enum class FhirVersion(
             entries.firstOrNull { it.id.equals(text, ignoreCase = true) }
 
         fun ids(): String = entries.joinToString(", ") { it.id }
+
+        /** The versions that load, as [ids] spells them. */
+        fun availableIds(): String = entries.filter { it.isAvailable() }.joinToString(", ") { it.id }
+
+        /** HAPI's message code for a structures JAR that is not on the classpath. */
+        private const val STRUCTURES_MISSING = "HAPI-1680:"
     }
 }
 
