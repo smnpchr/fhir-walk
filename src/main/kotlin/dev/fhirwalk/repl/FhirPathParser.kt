@@ -33,7 +33,13 @@ class FhirPathParser : Parser {
         )
     }
 
-    /** Commands are conventional: whitespace-separated words. */
+    /**
+     * Commands are conventional: whitespace-separated words, and the word is the one
+     * the cursor is in, not the last: in `:sco| 0787` it is `:sco`, which completion
+     * replaces as a whole. At the start of a word it is that word, cursor 0, so
+     * `:scope |0787` completes `0787`: where a first TAB leaves the cursor after
+     * completing the name. Elsewhere after whitespace, a new, empty word there.
+     */
     private fun parseCommand(line: String, cursor: Int): ParsedLine {
         val words = mutableListOf<String>()
         val starts = mutableListOf<Int>()
@@ -46,16 +52,16 @@ class FhirPathParser : Parser {
             starts += start
             words += line.substring(start, i)
         }
-        var index = words.size - 1
-        if (index < 0) {
-            words += ""
-            starts += line.length
-            index = 0
-        } else if (cursor > 0 && cursor <= line.length && line.getOrNull(cursor - 1)?.isWhitespace() == true) {
-            // Cursor sits after a space: a new, empty word.
-            words += ""
-            starts += cursor
-            index = words.size - 1
+        val at = cursor.coerceIn(0, line.length)
+        val within = words.indices.firstOrNull { at >= starts[it] && at <= starts[it] + words[it].length }
+        val index = if (within != null) {
+            within
+        } else {
+            // In whitespace, or on an empty line: a new, empty word, in its place among the others.
+            val before = starts.count { it < at }
+            words.add(before, "")
+            starts.add(before, at)
+            before
         }
         val word = words[index]
         return Parsed(line, cursor, word, (cursor - starts[index]).coerceIn(0, word.length), index, words)

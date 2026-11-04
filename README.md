@@ -644,7 +644,7 @@ up front, letting the terminal scroll instead.
 
 ## Completion
 
-TAB completes, including inside the `:all`, `:why`, `:tally` and `:tree` arguments, which are expressions
+TAB completes, including inside the `:all`, `:why`, `:tally`, `:changes` and `:tree` arguments, which are expressions
 like any other. On an empty line it lists the pool's resource types; after a `.` the
 elements and functions available there, pool-populated ones first; inside
 `extension('…')` the URLs observed on that element.
@@ -661,6 +661,11 @@ candidate goes into the line. **Up/Down** walk the candidates from there, as do 
 TABs, and Enter takes whichever is shown. That is how you pick a long extension URL
 without typing it. A candidate in a string position brings its own closing `')`, so
 Enter always submits something that parses.
+
+A command completes where the cursor is, whatever follows it. In `:sco 0787` with the
+cursor after `:sco`, TAB makes it `:scope 0787` and leaves the cursor at the argument,
+and a second TAB completes `0787` (to the bundle whose name holds it). An argument
+completes from the word the cursor is in, not the last one on the line.
 
 ## Import paths
 

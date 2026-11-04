@@ -77,7 +77,20 @@ class FhirPathCompleter(
         // exactly as a bare expression does; every other command argument is its own thing.
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {
-            completeCommand(text, candidates)
+            // Only the word under the cursor and what is before it: `:sco| 0787` is a
+            // command name being typed, whatever follows it.
+            val word = line.word()
+            val end = (cursor - line.wordCursor() + word.length).coerceIn(cursor, text.length)
+            val found = mutableListOf<Candidate>()
+            completeCommand(text.substring(0, end), found)
+            // JLine matches candidates on the word up to the cursor, which at its start
+            // (`:fhir |r4`, where a completed name leaves it) is nothing: the whole word
+            // narrows them here, by what contains it, or offers every one when none does.
+            candidates += if (line.wordCursor() < word.length) {
+                found.filter { it.value().contains(word, ignoreCase = true) }.ifEmpty { found }
+            } else {
+                found
+            }
             return
         }
         // `:all`, `:tally`, `:changes` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
@@ -95,6 +108,7 @@ class FhirPathCompleter(
 
     // ------------------------------------------------------------------ commands
 
+    /** @param text the line up to the end of the word under the cursor: what follows is not being completed. */
     private fun completeCommand(text: String, candidates: MutableList<Candidate>) {
         val trimmed = text.trimStart()
         val command = trimmed.takeWhile { !it.isWhitespace() }
