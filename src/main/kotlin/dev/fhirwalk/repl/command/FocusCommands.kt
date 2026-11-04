@@ -43,6 +43,7 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
         if (resolution.evaluated) state.nameable = null
         state.lastPicks = when (resolution) {
             is Resolution.Several -> resolution.picks
+            is Resolution.SameLabel -> resolution.picks
             // Picking, or failing to, leaves the same rows on offer for the next pick.
             is Resolution.CannotPick -> lastPicks
             is Resolution.Focused -> lastPicks.takeIf { resolution.picked }
@@ -69,6 +70,24 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
                     ""
                 }
                 out.text("$label$argument yields nothing — :why$meta")
+            }
+            is Resolution.SameLabel -> {
+                val held = resolution.picks.results
+                // Each by the file it came from, which is what tells them apart.
+                val rows = held.mapIndexed { idx, found ->
+                    Output.line {
+                        +"  "
+                        index("[$idx]")
+                        +" "
+                        label(state.shown(found.owner).padEnd(ReplState.LABEL_WIDTH))
+                        +" "
+                        hint("(${found.owner.origin})")
+                    }
+                }
+                out.listing(
+                    header = listOf(Output.text("${resolution.label} is held ${held.size} times; focus needs one — pick it with  :focus [n]")),
+                    rows = rows,
+                )
             }
             is Resolution.Several -> {
                 val results = resolution.picks.results

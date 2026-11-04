@@ -486,4 +486,22 @@ class MetaPoolTest {
         assertContains(run(":scope all-2"), "scope: bundle all-2, 3 resource(s)")
         assertContains(run(":scope all"), "scope: all 2 bundle(s)")
     }
+
+    @Test
+    fun `the same label in two bundles is not held twice, and one held twice in a bundle is`() {
+        run(":meta exports ${archive()}")
+        // obs1 is in r1 and in r2: a label names its bundle, so each is held once.
+        assertFalse("held more than once" in run(":pool"), run(":pool"))
+        assertTrue(repl.outputOf(":focus specimen-r2:Observation/obs1").lines().first().startsWith("focus specimen-r2:Observation/obs1"))
+
+        root.resolve("specimen/r3").createDirectories().resolve("bundle.json").writeText(
+            """{"resourceType":"Bundle","type":"collection","entry":[
+              {"resource":{"resourceType":"Patient","id":"twice","name":[{"family":"A"}]}},
+              {"resource":{"resourceType":"Patient","id":"twice","name":[{"family":"B"}]}}]}""",
+        )
+        run(":meta exports")
+        assertContains(run(":pool"), "1 label(s) held more than once")
+        val listed = repl.outputOf(":focus specimen-r3:Patient/twice").lines()
+        assertEquals("specimen-r3:Patient/twice is held 2 times; focus needs one — pick it with  :focus [n]", listed.first())
+    }
 }

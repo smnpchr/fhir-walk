@@ -6,6 +6,7 @@ import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
 import java.io.StringWriter
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -104,5 +105,35 @@ class PoolsTest {
         val listed = run(":pools")
         assertContains(listed, "* tree")
         assertContains(listed, "nothing loaded")
+    }
+
+    @Test
+    fun `loading what is loaded is refused, a file in it or a directory around it too`() {
+        assertContains(run(":load samples/basic"), "samples/basic: already loaded in pool — loading it again would hold its resources twice")
+        assertContains(run(":load samples/basic/bundle.json"), "overlaps ")
+        assertContains(run(":load samples"), "overlaps ")
+        assertContains(run(":pool"), "6 resource(s)")
+    }
+
+    @Test
+    fun `a label held twice is counted, listed, and picked from when focused`() {
+        val copy = java.nio.file.Files.createTempDirectory("copy")
+        java.nio.file.Files.copy(java.nio.file.Paths.get("samples/basic/bundle.json"), copy.resolve("copy.json"))
+        run(":load $copy")
+
+        val pool = repl.outputOf(":pool")
+        assertContains(pool.lines().first(), "3 label(s) held more than once — :focus one to pick, :more lists them")
+        val whole = (pool.listing as dev.fhirwalk.repl.Output.Listing).full!!.joinToString("\n") { line -> line.spans.joinToString("") { it.text } }
+        assertContains(whole, "held more than once:\n  Patient/pat1\n      (bundle.json#entry[0])\n      (copy.json#entry[0])")
+
+        val listed = repl.outputOf(":focus Patient/pat1").lines()
+        assertEquals("Patient/pat1 is held 2 times; focus needs one — pick it with  :focus [n]", listed.first())
+        assertTrue(listed[1].contains("[0]") && listed[1].contains("(bundle.json#entry[0])"), listed.toString())
+        assertTrue(listed[2].contains("[1]") && listed[2].contains("(copy.json#entry[0])"), listed.toString())
+        assertContains(run(":focus [1]"), "focus Patient/pat1  (copy.json#entry[0])")
+
+        // Held once, a label focuses straight away, as before.
+        run(":focus ..")
+        assertContains(run(":focus Encounter/enc1"), "focus Encounter/enc1")
     }
 }

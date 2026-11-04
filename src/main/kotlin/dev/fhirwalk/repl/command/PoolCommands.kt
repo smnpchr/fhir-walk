@@ -37,12 +37,26 @@ internal class PoolCommands(
             out.text("${state.poolName()} is a meta pool of ${it.definition.dir} — :meta ${session.current.name} reads it again; :open another pool to load files")
             return
         }
-        val report = session.importer.load(Paths.get(state.expandHome(path)))
         // Absolute, so the next session finds it from wherever it is started.
         val absolute = Paths.get(state.expandHome(path)).toAbsolutePath().normalize().toString()
         val loaded = session.current.loadedPaths
+        // Loading what is loaded only holds each of its resources twice, under one
+        // label; there is nothing to read again into a pool that is not a revision.
+        loaded.firstOrNull { overlaps(it, absolute) }?.let { already ->
+            val how = if (already == absolute) "already loaded" else "overlaps $already, already loaded"
+            out.text("$path: $how in ${state.poolName()} — loading it again would hold its resources twice; :open <name> $path for a fresh pool")
+            return
+        }
+        val report = session.importer.load(Paths.get(state.expandHome(path)))
         if (report.files > 0 && absolute !in loaded) loaded += absolute
         state.withProblems(out, "loaded ${report.summary()}; ${state.poolName()} now ${session.pool.size}", report.problems)
+    }
+
+    /** Whether one of two absolute paths is the other, or inside it. */
+    private fun overlaps(one: String, other: String): Boolean {
+        val a = Paths.get(one)
+        val b = Paths.get(other)
+        return a.startsWith(b) || b.startsWith(a)
     }
 
     private fun poolSummary(out: Output) {
@@ -63,20 +77,33 @@ internal class PoolCommands(
             meta?.scoped != null -> "; scope: ${meta.scoped}'s ${session.pool.inScope().size}"
             else -> ""
         }
+        val held = session.pool.heldMoreThanOnce()
+        val rows = session.pool.typeCounts().map { (type, count) ->
+            Output.line {
+                +"  "
+                type(type.padEnd(ReplState.LABEL_WIDTH))
+                +" "
+                count(count.toString())
+            }
+        } + Output.text(
+            "census: ${census.extensions.size} extension url/path pair(s), " +
+                "${census.pathCounts.size} populated path(s)",
+        )
         out.listing(
-            listOf(Output.text("$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}$scoped")),
-            session.pool.typeCounts().map { (type, count) ->
+            listOf(
                 Output.line {
-                    +"  "
-                    type(type.padEnd(ReplState.LABEL_WIDTH))
-                    +" "
-                    count(count.toString())
+                    +"$which${session.pool.size} resource(s), FHIR ${session.version.id.uppercase()}$scoped"
+                    if (held.isNotEmpty()) hint("; ${held.size} label(s) held more than once — :focus one to pick, :more lists them")
+                },
+            ),
+            rows,
+            // Whole, with every label held more than once, and the files holding it.
+            full = rows + if (held.isEmpty()) emptyList() else {
+                listOf(Output.line { hint("held more than once:") }) + held.flatMap { same ->
+                    listOf(Output.line { +"  "; label(same.first().label) }) +
+                        same.map { Output.line { +"      "; hint("(${it.origin})") } }
                 }
-            } +
-                Output.text(
-                    "census: ${census.extensions.size} extension url/path pair(s), " +
-                        "${census.pathCounts.size} populated path(s)",
-                ),
+            },
         )
     }
 

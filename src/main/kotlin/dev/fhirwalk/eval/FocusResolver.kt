@@ -79,6 +79,13 @@ class FocusResolver(
         data class Several(val picks: Picks, val owners: Int) : Resolution {
             override val evaluated: Boolean get() = true
         }
+
+        /**
+         * A label the pool holds more than once: it names none of them alone.
+         *
+         * @param picks the resources holding it, numbered for `:focus [n]`.
+         */
+        data class SameLabel(val label: String, val picks: Picks) : Resolution
     }
 
     /** @param picks the rows of the last numbered listing, if any. */
@@ -94,7 +101,13 @@ class FocusResolver(
         val target = pool.find(argument, bareIds = current == null)
             ?: pool.all().firstOrNull { it.label == argument }
             ?: inOnePart(argument, bareIds = current == null)
-        if (target != null) return Resolution.Focused(Focus.of(target, current))
+        if (target != null) {
+            // Lookups keep the first resource under a label; another held under it is
+            // as much what the label names, so which one is the user's to say.
+            val held = pool.sameLabel(target)
+            if (held.size > 1) return Resolution.SameLabel(target.label, Picks(argument, current) { held.map { Found(it, it.resource, 0, 1) } })
+            return Resolution.Focused(Focus.of(target, current))
+        }
         return byExpression(argument, current)
     }
 

@@ -67,13 +67,15 @@ internal class WorkspaceCommands(
                 continue
             }
             for (path in pool.loads) {
-                if (path !in session.current.loadedPaths) session.current.loadedPaths += path
                 if (Files.exists(Paths.get(path))) {
                     pools.load(path, out)
                 } else {
                     val file = state.workspace.dir?.resolve("state")?.let { " (or drop it from $it)" }.orEmpty()
                     out.error("$path is missing${state.inPool()} — kept in the workspace, to load once it is back$file")
                 }
+                // Kept whether it loaded or not, in its place; after the load, which
+                // would otherwise find it loaded already and refuse it.
+                if (path !in session.current.loadedPaths) session.current.loadedPaths += path
             }
             focus.restoreFocus(pool.focus, out)
         }

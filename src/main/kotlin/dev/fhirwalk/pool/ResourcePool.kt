@@ -28,6 +28,13 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
     private val byBareId = HashMap<String, MutableList<PooledResource>>()
     private val byInstance = IdentityHashMap<IBaseResource, PooledResource>()
 
+    /**
+     * Every resource by the label that names it -- `Type/id`, else its fullUrl, within
+     * its part -- where lookups by label keep only the first. Several under one label
+     * are one label held more than once: a label then names none of them alone.
+     */
+    private val byLabel = HashMap<String, MutableList<PooledResource>>()
+
     val census = Census()
     private val walker = CensusWalker(ctx, census)
 
@@ -93,6 +100,7 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
         fullUrl?.takeIf { it.isNotBlank() }?.let { byFullUrl.putIfAbsent(keyIn(part, it), item) }
         id?.let { byBareId.getOrPut(keyIn(part, it)) { mutableListOf() } += item }
         byInstance[resource] = item
+        labelOf(item)?.let { byLabel.getOrPut(it) { mutableListOf() } += item }
         if (censused) walker.visit(resource, type)
         return item
     }
@@ -131,6 +139,15 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
 
     private fun keyIn(part: String?, key: String): String = if (part == null) key else "$part:$key"
 
+    /** What names [item] across loads, within its part; null for one known only by its place. */
+    private fun labelOf(item: PooledResource): String? = (item.key ?: item.fullUrl)?.let { keyIn(item.part, it) }
+
+    /** Every resource of the pool held under [item]'s label, [item] among them, in pool order. */
+    fun sameLabel(item: PooledResource): List<PooledResource> = labelOf(item)?.let { byLabel[it] } ?: listOf(item)
+
+    /** The labels held more than once, each with its resources, in the order they came. */
+    fun heldMoreThanOnce(): List<List<PooledResource>> = byLabel.values.filter { it.size > 1 }.sortedBy { it.first().index }
+
     /**
      * Types the references the census could not type from their string, by resolving
      * them the same way `resolve()` does at eval time -- so completion after
@@ -153,6 +170,7 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
         byFullUrl.clear()
         byBareId.clear()
         byInstance.clear()
+        byLabel.clear()
         partNames.clear()
         census.clear()
     }

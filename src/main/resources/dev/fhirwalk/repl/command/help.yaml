@@ -21,10 +21,18 @@ commands:
       - name: ":load"
         args: "<path>"
         summary: import a file, bundle, NDJSON or directory tree
+        details: |
+          A path already loaded, or one inside or around it, is refused: it
+          would hold each of its resources twice. :open <name> <path> reads it
+          into a fresh pool.
         topic: pools
       - name: ":pool"
         args: "[name]"
         summary: switch pool; alone, what is in the current one
+        details: |
+          Alone, it also counts the labels the pool holds more than once, the
+          same Type/id from two files or twice in one bundle; :more lists them
+          with their files.
         topic: pools
       - name: ":pools"
         args: ""
@@ -161,7 +169,9 @@ commands:
         args: "[label|#index|expr|[n]|..]"
         summary: evaluate against one resource or element
         details: |
-          Alone, it clears the focus; .. steps back to the previous one.
+          Alone, it clears the focus; .. steps back to the previous one. A
+          label the pool holds more than once lists its resources, numbered
+          with their files; :focus [n] picks one.
         topic: focus
       - name: ":all"
         args: "<expr>"

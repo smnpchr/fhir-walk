@@ -149,6 +149,15 @@ Type a FHIRPath expression, or:
 With a focus set, a bare expression runs against that resource; with no focus it runs
 across the pool.
 
+A label names one resource only where the pool holds it once. The same `Type/id` from
+two files, or twice in one bundle, is held more than once. `:pool` counts such labels
+(`3 label(s) held more than once`) and its `:more` lists them with their files.
+`:focus Patient/pat1` lists the resources holding the label, numbered with their files,
+and `:focus [n]` picks one. In a meta pool a label belongs to its bundle, so the same
+Patient in two bundles is held once in each. `resolve()` still takes the first: a
+reference has to name one target. `:load` refuses a path already loaded, or one inside
+or around it, since that would hold every resource it reads twice.
+
 ### Focusing on an element
 
 `:focus` also takes an expression. It runs against the current focus (or across the
