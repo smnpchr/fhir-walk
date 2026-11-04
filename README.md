@@ -664,8 +664,10 @@ Enter always submits something that parses.
 
 A command completes where the cursor is, whatever follows it. In `:sco 0787` with the
 cursor after `:sco`, TAB makes it `:scope 0787` and leaves the cursor at the argument,
-and a second TAB completes `0787` (to the bundle whose name holds it). An argument
-completes from the word the cursor is in, not the last one on the line.
+and a second TAB completes `0787` (to the bundle whose name holds it), also when the
+name was picked from a menu. An argument completes from the word the cursor is in,
+not the last one on the line. TAB at the start of an argument replaces it, while TAB
+in a gap between two later arguments adds one there.
 
 ## Import paths
 

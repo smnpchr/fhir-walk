@@ -11,6 +11,7 @@ import dev.fhirwalk.pool.Census
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.ResourcePool
 import org.jline.reader.Candidate
+import org.jline.reader.CompletingParsedLine
 import org.jline.reader.Completer
 import org.jline.reader.LineReader
 import org.jline.reader.ParsedLine
@@ -78,19 +79,12 @@ class FhirPathCompleter(
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {
             // Only the word under the cursor and what is before it: `:sco| 0787` is a
-            // command name being typed, whatever follows it.
-            val word = line.word()
-            val end = (cursor - line.wordCursor() + word.length).coerceIn(cursor, text.length)
-            val found = mutableListOf<Candidate>()
-            completeCommand(text.substring(0, end), found)
-            // JLine matches candidates on the word up to the cursor, which at its start
-            // (`:fhir |r4`, where a completed name leaves it) is nothing: the whole word
-            // narrows them here, by what contains it, or offers every one when none does.
-            candidates += if (line.wordCursor() < word.length) {
-                found.filter { it.value().contains(word, ignoreCase = true) }.ifEmpty { found }
-            } else {
-                found
-            }
+            // command name being typed, whatever follows it. The parser says where that
+            // word ends, the whitespace it may take with it included.
+            val at = cursor.coerceIn(0, text.length)
+            val end = (line as? CompletingParsedLine)?.let { at - it.rawWordCursor() + it.rawWordLength() }
+                ?: (at - line.wordCursor() + line.word().length)
+            completeCommand(text.substring(0, end.coerceIn(at, text.length)), candidates)
             return
         }
         // `:all`, `:tally`, `:changes` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
