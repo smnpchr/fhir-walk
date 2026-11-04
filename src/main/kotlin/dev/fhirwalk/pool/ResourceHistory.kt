@@ -14,6 +14,12 @@ import org.hl7.fhir.instance.model.api.IBaseResource
  * several resources -- a bundle, NDJSON -- so a change to the file is a change to
  * the resource only when the resource itself reads differently on the two sides.
  *
+ * A label names one resource only where one file holds it. Where a commit's changed
+ * files hold it more than once on either side -- two files, or twice in one bundle --
+ * the commit says so ([Change.held]) and nothing is followed through it: which of
+ * them was "the" resource would be a guess. As in [DeltaPairs], only what the commit
+ * changed is looked at.
+ *
  * @param changes what a commit changed, as [GitSource.changes] has it for the files
  *   the importer reads; passed in so a caller can keep what it already asked.
  * @param problem told of a file that held the resource's id but could not be read
@@ -28,8 +34,37 @@ class ResourceHistory(
     private val problem: (String) -> Unit = {},
 ) {
 
-    /** @param resource the resource as [commit] left it; null when [commit] deleted it. */
-    class Change(val commit: GitSource.Commit, val kind: GitSource.Kind, val resource: IBaseResource?)
+    /**
+     * @param resource the resource as [commit] left it, where one file holds it; null
+     *   when [commit] deleted it, or left it [held] more than once.
+     * @param was the resource as it was before [commit], where one file held it; null
+     *   when it was added, or held more than once. A side held once is said even in
+     *   a [held] commit: only the other side is ambiguous.
+     * @param held the files that held the label on each side, where one side held it
+     *   more than once; null when each side held it once at most.
+     */
+    class Change(
+        val commit: GitSource.Commit,
+        val kind: GitSource.Kind,
+        val resource: IBaseResource?,
+        val was: IBaseResource? = null,
+        val held: Held? = null,
+    )
+
+    /** The files holding a label in a commit, before and after, one entry per copy. */
+    class Held(val before: List<String>, val after: List<String>) {
+        /** How many copies the fuller side held. */
+        val most: Int get() = maxOf(before.size, after.size)
+
+        /** `held 2 times before`, `held 3 times after`, `held 2 times before, 3 after`: the sides that held it more than once. */
+        val said: String get() {
+            val sides = listOf(before.size to "before", after.size to "after").filter { it.first > 1 }
+            return "held " + sides.mapIndexed { i, (n, side) -> if (i == 0) "$n times $side" else "$n $side" }.joinToString(", ")
+        }
+    }
+
+    /** One copy of the label in one file. */
+    private class Copy(val path: String, val resource: IBaseResource)
 
     private val json by lazy { ctx.newJsonParser() }
 
@@ -50,7 +85,7 @@ class ResourceHistory(
         val holding = HashMap<Pair<ObjectId, String>, Parse>()
         // Each file is told about once, at the first (newest) commit that holds it, under its own name.
         val told = HashSet<Pair<ObjectId, String>>()
-        fun resourcesIn(commit: GitSource.Commit, path: String, blob: ObjectId): List<IBaseResource> {
+        fun resourcesIn(commit: GitSource.Commit, path: String, blob: ObjectId): List<Copy> {
             val parse = holding.getOrPut(blob to importer.formatOf(path)) {
                 val text = runCatching { source.read(blob) }.getOrElse {
                     return@getOrPut Parse(path, emptyList(), listOf("$path: unreadable (${it.message})"))
@@ -68,25 +103,40 @@ class ResourceHistory(
                     problem("at ${commit.short}: " + if (text.startsWith(parse.path)) path + text.removePrefix(parse.path) else text)
                 }
             }
-            return parse.resources
+            return parse.resources.map { Copy(path, it) }
         }
         return line.asSequence().mapNotNull { commit ->
             val changed = changes(commit)
             val before = changed.flatMap { change -> change.oldBlob?.let { resourcesIn(commit, change.path, it) }.orEmpty() }
             val after = changed.flatMap { change -> change.newBlob?.let { resourcesIn(commit, change.path, it) }.orEmpty() }
+            val kind = when {
+                before.isEmpty() -> GitSource.Kind.ADDED
+                after.isEmpty() -> GitSource.Kind.DELETED
+                else -> GitSource.Kind.MODIFIED
+            }
             when {
                 before.isEmpty() && after.isEmpty() -> null
-                before.isEmpty() -> Change(commit, GitSource.Kind.ADDED, after.first())
-                after.isEmpty() -> Change(commit, GitSource.Kind.DELETED, null)
+                before.size > 1 || after.size > 1 ->
+                    // Every copy reads as it did: another resource in their files changed.
+                    if (encoded(before) == encoded(after)) null
+                    else Change(
+                        commit, kind, after.singleOrNull()?.resource, was = before.singleOrNull()?.resource,
+                        held = Held(before.map { it.path }, after.map { it.path }),
+                    )
+                before.isEmpty() -> Change(commit, kind, after.single().resource)
+                after.isEmpty() -> Change(commit, kind, null, was = before.single().resource)
                 // Another resource in the same file changed, or this one moved file.
-                same(before.first(), after.first()) -> null
-                else -> Change(commit, GitSource.Kind.MODIFIED, after.first())
+                same(before.single().resource, after.single().resource) -> null
+                else -> Change(commit, kind, after.single().resource, was = before.single().resource)
             }
         }
     }
 
     private fun same(one: IBaseResource, other: IBaseResource): Boolean =
         json.encodeResourceToString(one) == json.encodeResourceToString(other)
+
+    /** The copies' content, whatever files hold them. */
+    private fun encoded(copies: List<Copy>): List<String> = copies.map { json.encodeResourceToString(it.resource) }.sorted()
 
     companion object {
         /**
