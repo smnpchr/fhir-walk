@@ -55,6 +55,52 @@ class RevisionLoader(
     private var current = HashMap<ObjectId, Blob>()
     private var previous = HashMap<ObjectId, Blob>()
 
+    /** What [commit] changed against [Delta.base], file by file, for reading the base side. */
+    private var fileChanges: List<GitSource.Change> = emptyList()
+
+    /** The base side, once asked for; dropped on every load. */
+    private var baseSide: Base? = null
+
+    /**
+     * The snapshot the delta compares with, as a pool of its own: what `resolve()`
+     * reads when an expression is answered as it stood before the delta.
+     *
+     * @param changed its resources from the files the delta changed or deleted: the
+     *   resources the delta touched, as they were.
+     * @param problems the base's files that could not be read or parsed.
+     */
+    class Base(val pool: ResourcePool, val changed: List<PooledResource>, val problems: List<String>)
+
+    /**
+     * Reads [Delta.base] on first asking and keeps it until the next load. A file the
+     * delta did not change has the same blob on both sides, so its resources are the
+     * very ones the pool holds; only what the delta changed or deleted is parsed
+     * again, and it is not kept with the revision's blobs. No census is walked: the
+     * base is evaluated, never completed against. Empty for a first commit, which is
+     * compared with nothing.
+     *
+     * Throws when the base cannot be read, leaving nothing kept.
+     */
+    fun base(): Base {
+        baseSide?.let { return it }
+        checkNotNull(commit) { "not loaded yet" }
+        val against = delta?.base
+        val snapshot = ResourcePool(pool.ctx, censused = false)
+        val changed = mutableListOf<PooledResource>()
+        val problems = mutableListOf<String>()
+        if (against != null) {
+            val touched = fileChanges.filter { it.kind != GitSource.Kind.ADDED }.mapTo(HashSet()) { it.path }
+            // Everything read before anything is added, as a load does.
+            val files = source.files(against, importer::reads).map { it to (current[it.blob] ?: previous[it.blob] ?: parse(it.path, it.blob)) }
+            for ((file, blob) in files) {
+                problems += blob.problems
+                val added = blob.parsed.map { snapshot.add(it.resource, it.fullUrl, it.origin) }
+                if (file.path in touched) changed += added
+            }
+        }
+        return Base(snapshot, changed, problems).also { baseSide = it }
+    }
+
     /**
      * Everything that reads the repository happens before the pool is touched, so a
      * revision that cannot be read throws with the pool, [commit] and [delta] still
@@ -94,6 +140,8 @@ class RevisionLoader(
         )
         previous = current
         current = next
+        fileChanges = changes
+        baseSide = null
         this.commit = commit
         return report
     }

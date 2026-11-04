@@ -1,5 +1,6 @@
 package dev.fhirwalk.repl
 
+import dev.fhirwalk.eval.Evaluator
 import dev.fhirwalk.pool.GitSource
 import dev.fhirwalk.pool.Importer
 import dev.fhirwalk.pool.RevisionLoader
@@ -50,6 +51,20 @@ class GitPool(
 
     /** The commit `:delta A..B` compares with, while one was asked for; null for the first parent. */
     val base: GitSource.Commit? get() = loader.delta?.takeIf { it.ranged }?.base
+
+    /** The delta's base side, with an evaluator whose `resolve()` reads it. */
+    class Before(val base: RevisionLoader.Base, val evaluator: Evaluator)
+
+    private var before: Before? = null
+
+    /**
+     * The snapshot the delta compares with, read when first asked for and kept until
+     * the pool moves; see [RevisionLoader.base]. Throws when it cannot be read.
+     */
+    fun before(): Before {
+        val base = loader.base()
+        return before?.takeIf { it.base === base } ?: Before(base, Evaluator(pool.ctx, base.pool)).also { before = it }
+    }
 
     /** For tests: how many blobs were parsed rather than reused. */
     internal val parsedBlobs: Int get() = loader.parsedBlobs

@@ -124,6 +124,18 @@ commands:
           end takes what :at takes, empty for where the pool is. :delta ..
           compares with the parent again, as :step and :at do.
         topic: git
+      - name: ":changes"
+        args: "<expr>"
+        summary: how an answer changed across the delta, before → after, e.g. :changes Specimen.type.coding.code
+        details: |
+          Answers the expression for every resource the delta touched, of its
+          root type, once at the base and once here, and counts each pair of
+          answers, most first. A resource whose answer stayed the same is
+          counted, not listed: that is how a reformat or a change elsewhere in
+          it shows. An added one pairs with nothing before (— → x), a deleted
+          one with nothing after. resolve() on the base side reads the base.
+          :more lists the resources under each pair.
+        topic: git
       - name: ":scope"
         args: "[delta|bundle|all]"
         summary: run pool-wide over the delta only, one bundle of a meta pool, or everything
@@ -352,15 +364,17 @@ topics:
       parent: one tree diff, so a resource changed twice counts once.
       :log Specimen/s1 lists the commits that changed one resource, and
       :trace Specimen/s1 type.coding.code how an answer changed across them;
-      :trace Specimen/s1 alone, how the resource itself did.
+      :trace Specimen/s1 alone, how the resource itself did. :changes
+      Specimen.type.coding.code asks the same of the whole delta: each
+      before → after pair, with how many resources gave it.
 
       Each counts a different kind of change. :log alone goes by the files
       git changed, so a reformat counts. :log Specimen/s1 and :trace
       Specimen/s1 go by the resource's content: a reformat, its keys in
       another order, or another resource in the same file changing does not
       count, while extensions or codings in another order do, since order is
-      part of the content. :trace Specimen/s1 <expr> goes by the answer: a
-      row only where it changed. Whitespace inside a string counts.
+      part of the content. :trace Specimen/s1 <expr> and :changes go by the
+      answer: a row only where it changed. Whitespace inside a string counts.
 
   - name: workspaces
     title: Workspaces
@@ -382,7 +396,7 @@ topics:
   - name: completion
     title: Completion
     text: |
-      TAB completes, including after :all, :why, :tally and :tree. On an
+      TAB completes, including after :all, :why, :tally, :changes and :tree. On an
       empty line it lists the pool's resource types; after a '.' the
       elements and functions available there, with the ones present in
       the pool first; inside extension('…') the URLs observed on that

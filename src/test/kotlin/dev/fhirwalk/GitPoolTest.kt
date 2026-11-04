@@ -883,4 +883,89 @@ class GitPoolTest {
         assertFalse(first.contains("is back"), first)
         assertFalse(first.contains("cannot read"), first)
     }
+
+    // -------------------------------------------------------------------- :changes
+
+    /** A `:changes` row as the count and the pair, `3` to `EDTA_PLASMA → CITRATE_PLASMA`. */
+    private fun pairsOf(output: Output) = output.listed().rows.map { row ->
+        row.spans.single { it.kind == Output.Kind.COUNT }.text.trim() to row.spans.last().text
+    }
+
+    @Test
+    fun `changes counts how an answer changed across the delta`() {
+        val session = opened()
+        session.run(":step")
+        val output = session.repl.outputOf(":changes Specimen.type.coding.code")
+        assertContains(output.lines().first(), "3 Specimen(s) in the delta from ${registry.out2.short} to ${registry.out3.short}; 3 answer(s) changed")
+        assertEquals(listOf("3" to "EDTA_PLASMA → CITRATE_PLASMA"), pairsOf(output))
+        // Read from both ends: the pool stays where it was.
+        assertContains(session.run(":log 2"), "* ${registry.out3.short}")
+    }
+
+    @Test
+    fun `changes counts an answer that stayed the same without listing it`() {
+        val session = opened()
+        session.run(":step")
+        val output = session.run(":changes Specimen.subject.reference")
+        assertContains(output, "3 Specimen(s) in the delta from ${registry.out2.short} to ${registry.out3.short}; no answer changed")
+    }
+
+    @Test
+    fun `changes resolves the base side in the base snapshot`() {
+        val session = opened()
+        session.run(":step")
+        // 30012 and 30013 hang off 30011, which out3 changed too; 30011's own parent did not change.
+        val output = session.repl.outputOf(":changes Specimen.parent.resolve().type.coding.code")
+        assertContains(output.lines().first(), "3 Specimen(s) in the delta from ${registry.out2.short} to ${registry.out3.short}; 2 answer(s) changed")
+        assertEquals(listOf("2" to "EDTA_PLASMA → CITRATE_PLASMA"), pairsOf(output))
+    }
+
+    @Test
+    fun `changes pairs an added or deleted resource with nothing`() {
+        val session = opened()
+        session.run(":delta ${registry.out2.short}..")
+        val deleted = session.repl.outputOf(":changes Patient.name.family")
+        assertContains(deleted.lines().first(), "1 Patient(s) in the delta from ${registry.out2.short} to ${registry.out4.short}; 1 answer(s) changed")
+        assertEquals(listOf("1" to "Dummy → —"), pairsOf(deleted))
+
+        session.run(":at ${registry.out2.short}")
+        assertEquals(listOf("1" to "— → Beispiel", "1" to "— → Dummy"), pairsOf(session.repl.outputOf(":changes Patient.name.family")))
+    }
+
+    @Test
+    fun `changes lists the resources under each pair on more`() {
+        val session = opened()
+        session.run(":step")
+        val full = session.repl.outputOf(":changes Specimen.type.coding.code").listed().full!!
+            .joinToString("\n") { line -> line.spans.joinToString("") { it.text } }
+        listOf("before", "EDTA_PLASMA", "after", "CITRATE_PLASMA", "Specimen/30011", "Specimen/30012", "Specimen/30013")
+            .forEach { assertContains(full, it) }
+    }
+
+    @Test
+    fun `changes says when nothing of the type changed, or nothing matched`() {
+        val session = opened()
+        assertContains(
+            session.run(":changes Specimen.type"),
+            "no Specimen in the delta from ${registry.out3.short} to ${registry.out4.short}",
+        )
+        session.run(":step")
+        assertContains(session.run(":changes Specimen.nosuch"), "nothing matched on either side — :why")
+        assertContains(session.run(":changes"), "usage: :changes <expr>")
+        assertContains(session.run(":changes Specimen.type.where("), "! ")
+    }
+
+    @Test
+    fun `changes needs a git pool`() {
+        assertContains(Run().run(":changes Patient.name"), "is not a git pool")
+    }
+
+    @Test
+    fun `changes on a first commit pairs everything with nothing before`() {
+        val session = opened()
+        session.run(":at ${registry.m1.short}")
+        val output = session.repl.outputOf(":changes Patient.name.family")
+        assertContains(output.lines().first(), "1 Patient(s) in the delta of ${registry.m1.short}, the first commit; 1 answer(s) changed")
+        assertEquals(listOf("1" to "— → Muster"), pairsOf(output))
+    }
 }

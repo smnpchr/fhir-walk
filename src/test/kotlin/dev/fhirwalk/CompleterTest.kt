@@ -637,6 +637,7 @@ class CompleterTest {
         assertTrue(completer.values(":all Pat").contains("Patient"))
         assertTrue(completer.values(":all Patient.").contains("name"))
         assertTrue(completer.values(":tally Patient.").contains("name"))
+        assertTrue(completer.values(":changes Patient.").contains("name"))
     }
 
     @Test

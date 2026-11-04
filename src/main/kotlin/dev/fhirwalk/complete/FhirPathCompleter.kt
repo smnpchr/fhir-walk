@@ -73,14 +73,14 @@ class FhirPathCompleter(
     override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
         val text = line.line()
         val cursor = line.cursor()
-        // `:all`, `:why`, `:tally`, `:focus` and `:tree` take an expression, so their argument completes
+        // `:all`, `:why`, `:tally`, `:changes`, `:focus` and `:tree` take an expression, so their argument completes
         // exactly as a bare expression does; every other command argument is its own thing.
         val slice = PromptLine.expressionSlice(text, cursor)
         if (slice == null) {
             completeCommand(text, candidates)
             return
         }
-        // `:all`, `:tally` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
+        // `:all`, `:tally`, `:changes` and `:tree` run across the pool whatever is in focus, so they complete unrebased.
         // `:trace Specimen/s1 …` runs against that resource, when this revision holds it.
         val relativeTo = slice.subject?.let { label -> pool().find(label, bareIds = false)?.let { Focus.of(it) } }
             ?: focus().takeIf { slice.command !in POOL_WIDE }
@@ -673,7 +673,7 @@ class FhirPathCompleter(
         const val MAX_ROWS = 60
 
         /** Commands whose expression runs across the pool, never against the focus. */
-        val POOL_WIDE = setOf(":all", ":tally", ":tree")
+        val POOL_WIDE = setOf(":all", ":tally", ":changes", ":tree")
         /** Past 100 matching candidates JLine asks "see all N possibilities?". */
         const val MAX_MENU = 99
         const val MAX_EXTENSION_STEPS = 24
