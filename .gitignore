@@ -7,3 +7,6 @@ build/
 # not published. The tests that use them skip when they are absent.
 samples/biobank/
 samples/hdrp/
+
+# Experimental local agent definitions, not part of the project for now.
+.codex/

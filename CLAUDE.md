@@ -96,7 +96,14 @@ when extending the walker.
   because a changed resource usually references an unchanged one. New pool-wide features should iterate `inScope()`, not `all()`.
 - **Parsed resources are shared between revisions**, kept by blob id in
   `RevisionLoader`. Never mutate a resource from the pool; it may belong to the
-  revision you step to next.
+  revision you step to next. `:changes` reads the delta's base as a second pool
+  (`RevisionLoader.base`): no census, built on first asking, dropped on every load,
+  and holding the very same parsed resources for every file the delta left alone.
+- **A resource's identity across snapshots is its label, and only where unique.**
+  `DeltaPairs` pairs by `Type/id` or fullUrl within the files a delta touched; a
+  label held twice on a side, or a resource with neither, is reported as not
+  compared, never matched by file or position (the guess #43 ruled out). A new
+  comparison across revisions should use it rather than a pool-wide `find`.
 - **A revision is read completely before the pool is touched.** A missing or
   damaged commit or tree throws from the JGit read; `RevisionLoader.load` does all
   of those first, `GitPool` turns a failure into `Move.Failed`, and `Repl.openGit`

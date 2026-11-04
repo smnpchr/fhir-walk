@@ -124,6 +124,7 @@ Type a FHIRPath expression, or:
 | `:at <rev\|date>` | move a git pool to a revision (a branch, tag, id or `branch~2`), or to its line as of a date |
 | `:step [-n\|+n]` | move a git pool along its line; alone, one commit back |
 | `:delta [from..to]` | what this revision added, modified and deleted; with a range, against `from` |
+| `:changes <expr>` | how an answer changed across the delta, before → after, with how many resources gave each pair |
 | `:scope [delta\|bundle\|all]` | run pool-wide over the delta only, one bundle of a meta pool, or everything |
 | `:focus [label\|#index\|expr\|[n]\|..]` | evaluate against one resource or element (blank clears) |
 | `:all <expr>` | evaluate across the whole pool |
@@ -443,8 +444,42 @@ diff: a resource changed twice is listed once, and one added and deleted within 
 at all. The prompt spells it the same way (`in@a1b2c3d..533a322 Δ15`), and the scope is
 its delta. The pool is still the snapshot at the end of the range, so `:tally` or
 `:all` say which resources the runs since Monday touched and what those look like
-now, not what they were before: for one resource's earlier answers, `:trace`. A base that is not an ancestor is still compared, as two trees, and says so.
+now, not what they were before: `:changes` answers that for the whole delta, and
+`:trace` for one resource's earlier answers. A base that is not an ancestor is still compared, as two trees, and says so.
 `:step` and `:at` go back to comparing with the parent, and so does `:delta ..`.
+
+### What a delta changed: `:changes`
+
+`:changes` answers an expression twice for every resource the delta touched, of the
+expression's root type: once at the base, once at the revision. It then counts each pair
+of answers, most first:
+
+```
+r4:in@dc9a375 Δ3> :changes Specimen.type.coding.code
+3 Specimen(s) in the delta from 5c0e2b8 to dc9a375; 3 answer(s) changed
+  3  EDTA_PLASMA → CITRATE_PLASMA
+r4:in@dc9a375 Δ3> :changes Specimen.subject.reference
+3 Specimen(s) in the delta from 5c0e2b8 to dc9a375; no answer changed
+```
+
+A resource whose answer stayed the same is counted but not listed: that is how a
+reformat, or a change elsewhere in the resource, shows up. An added resource pairs with
+nothing before (`— → BUFFY`), a deleted one with nothing after.
+
+Resources pair by `Type/id`, or by fullUrl when there is no id, and only within the files
+the delta touched. A resource that only moved to another file is still one resource, and
+a file left alone never stands in for one that was added or deleted. FHIR gives a
+resource no other identity, so nothing is guessed. A label held more than once on a side,
+and a resource with neither id nor fullUrl, are not compared. The header counts them
+(`not compared: Patient/p1 held more than once`), and `:more` lists them with their files.
+Answers compare by type as well as text: the string `"5"` becoming the integer `5` is a
+change, spelled out with both types.
+The base side is evaluated against the base snapshot, so `resolve()` there reads what
+the base held. That snapshot is read on the first `:changes` after a move: unchanged
+files reuse the resources already parsed, and only what the delta changed is parsed
+again. It works with any delta, a commit against its parent or a range, and the pool
+stays where it is. `:more` prints both answers whole, with the resources under each
+pair.
 
 `:at` also takes a date — `2026-03`, `2026-03-11`, `2026-03-11T11:00`, or the
 `2026-03-11 11:00` that `:log` shows — and moves to the line as it stood at the end of
@@ -498,9 +533,9 @@ Each of these counts a different kind of change:
 |---|---|
 | `:log` | a file git changed: a reformat counts |
 | `:log Specimen/30012`, `:trace Specimen/30012` | a change to the resource's content: a reformat, keys in another order, or another resource in the same file changing does not count; extensions or codings in another order do |
-| `:trace Specimen/30012 <expr>` | a change to the answer |
+| `:trace Specimen/30012 <expr>`, `:changes <expr>` | a change to the answer |
 
-Content is compared exactly, whitespace inside a string included.
+Content is compared exactly, whitespace inside a string included; an answer also by each value's type.
 
 A resource is followed by its label, `Type/id` as `:pool` shows it (an id-less bundle
 entry's is `Patient/urn:uuid:…`), whatever file it is in:

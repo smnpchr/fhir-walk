@@ -15,8 +15,12 @@ import java.util.IdentityHashMap
  * A meta pool adds each bundle as a part ([PooledResource.part]). Every key is then
  * the part's: `resolve()` stays inside the bundle the resource came from, and a
  * label names its part, since the same Patient comes back in many exports.
+ *
+ * @param censused whether resources are walked into the [census] as they are added.
+ *   Only a pool that completion reads needs it; one read for evaluation alone, such
+ *   as a delta's base snapshot, saves the walk and what it keeps.
  */
-class ResourcePool(val ctx: FhirContext) {
+class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
 
     private val items = mutableListOf<PooledResource>()
     private val byKey = HashMap<String, PooledResource>()
@@ -89,7 +93,7 @@ class ResourcePool(val ctx: FhirContext) {
         fullUrl?.takeIf { it.isNotBlank() }?.let { byFullUrl.putIfAbsent(keyIn(part, it), item) }
         id?.let { byBareId.getOrPut(keyIn(part, it)) { mutableListOf() } += item }
         byInstance[resource] = item
-        walker.visit(resource, type)
+        if (censused) walker.visit(resource, type)
         return item
     }
 
