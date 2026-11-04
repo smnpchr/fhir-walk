@@ -606,7 +606,9 @@ it, so `:focus ..` still steps back up; one that no longer resolves ends the foc
 far as it got. `:fhir` empties the pools and forgets their paths.
 
 On the command line, `--fhir` wins over the version the workspace was left on, and
-paths load on top of the restored ones. A pool is one version, so a session on another
+paths load on top of the restored ones. A file the pool already holds is skipped (`3
+already in the pool`), so starting again with the same path does not read it twice,
+and neither does `:load`ing a path again or one overlapping it. A pool is one version, so a session on another
 version than the workspace's restores neither its paths nor its focus, and says so;
 they stay saved until something changes, just as `:fhir` would reset them. A
 workspace left on a version this build cannot open starts on the default instead. `--fresh` starts with an empty pool and no

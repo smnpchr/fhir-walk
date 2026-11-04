@@ -32,9 +32,12 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         /** Files that were one Bundle, as against a single resource or NDJSON, which may hold Bundles. */
         var bundles: Int = 0,
         val problems: MutableList<String> = mutableListOf(),
+        /** Files not read again: the pool already holds what they hold. */
+        var skipped: Int = 0,
     ) {
         fun summary(): String = buildString {
             append("$resources resource(s) from $files file(s)")
+            if (skipped > 0) append(", $skipped already in the pool")
             if (problems.isNotEmpty()) append("; ${problems.size} problem(s)")
         }
     }
@@ -77,13 +80,28 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         }
     }
 
+    /**
+     * A file the pool already read is not read again (#98): loading a path twice,
+     * overlapping paths, or a start path the workspace restores anyway would
+     * otherwise hold each of its resources twice and double every count. Files are
+     * told apart by their real path, so a symlink to one is the same file. A file
+     * that added nothing -- unreadable, or every resource in it broken -- is not
+     * remembered, so it is read again once fixed.
+     */
     private fun loadFile(file: Path, report: Report) {
+        val real = runCatching { file.toRealPath() }.getOrElse { file.toAbsolutePath().normalize() }
+        if (pool.hasRead(real)) {
+            report.skipped++
+            return
+        }
         report.files++
+        val before = pool.size
         when (file.extension.lowercase()) {
             "ndjson", "jsonl" -> loadNdjson(file, report)
             "xml" -> loadSingle(file, xml, report)
             else -> loadSingle(file, json, report)
         }
+        if (pool.size > before) pool.read(real)
     }
 
     private fun loadSingle(file: Path, parser: IParser, report: Report) {

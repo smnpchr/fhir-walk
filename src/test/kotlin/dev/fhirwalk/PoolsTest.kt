@@ -5,6 +5,8 @@ import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.nio.file.Files
+import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -104,5 +106,33 @@ class PoolsTest {
         val listed = run(":pools")
         assertContains(listed, "* tree")
         assertContains(listed, "nothing loaded")
+    }
+
+    @Test
+    fun `a file already read is not read again, by any path`() {
+        // The pool holds samples/basic from init.
+        assertContains(run(":load samples/basic"), "loaded 0 resource(s) from 0 file(s), 3 already in the pool; pool now 6")
+        assertContains(run(":load samples/basic/bundle.json"), "1 already in the pool; pool now 6")
+        val link = Files.createTempDirectory("link").resolve("linked.json")
+        val linked = runCatching { Files.createSymbolicLink(link, Paths.get("samples/basic/bundle.json").toAbsolutePath()) }.isSuccess
+        if (linked) assertContains(run(":load $link"), "1 already in the pool; pool now 6")
+    }
+
+    @Test
+    fun `a directory after one of its files reads the rest`() {
+        val fresh = Repl(FhirVersion.R4, emptyList(), Workspaces(null))
+        fun line(text: String) = fresh.outputOf(text).lines().joinToString("\n")
+        assertContains(line(":load samples/basic/bundle.json"), "pool now 3")
+        assertContains(line(":load samples/basic"), "loaded 3 resource(s) from 2 file(s), 1 already in the pool; pool now 6")
+    }
+
+    @Test
+    fun `a file that added nothing is read again once fixed`() {
+        val dir = Files.createTempDirectory("broken")
+        val file = dir.resolve("p.json")
+        Files.writeString(file, """{"resourceType":"Patient","id":""")
+        assertContains(run(":load $file"), "1 problem(s)")
+        Files.writeString(file, """{"resourceType":"Patient","id":"fixed"}""")
+        assertContains(run(":load $file"), "loaded 1 resource(s) from 1 file(s); pool now 7")
     }
 }

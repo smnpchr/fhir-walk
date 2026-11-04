@@ -3,6 +3,7 @@ package dev.fhirwalk.pool
 import ca.uhn.fhir.context.FhirContext
 import org.hl7.fhir.instance.model.api.IBaseResource
 import org.hl7.fhir.instance.model.api.IIdType
+import java.nio.file.Path
 import java.util.IdentityHashMap
 
 /**
@@ -27,6 +28,15 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
     private val byFullUrl = HashMap<String, PooledResource>()
     private val byBareId = HashMap<String, MutableList<PooledResource>>()
     private val byInstance = IdentityHashMap<IBaseResource, PooledResource>()
+
+    /** The files read into the pool by their real path, so none is read into it twice. */
+    private val readFiles = HashSet<Path>()
+
+    fun hasRead(file: Path): Boolean = file in readFiles
+
+    fun read(file: Path) {
+        readFiles.add(file)
+    }
 
     val census = Census()
     private val walker = CensusWalker(ctx, census)
@@ -153,6 +163,7 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
         byFullUrl.clear()
         byBareId.clear()
         byInstance.clear()
+        readFiles.clear()
         partNames.clear()
         census.clear()
     }

@@ -298,4 +298,21 @@ class WorkspaceTest {
         assertContains(listed, "  tree")
         assertContains(listed, "* other")
     }
+
+    @Test
+    fun `starting again with a path the workspace restores does not read it twice`() {
+        Session(paths = listOf(basic))
+        val next = Session(paths = listOf(basic))
+        assertContains(next.out, "3 already in the pool; pool now 6")
+        assertContains(next.run(":pool"), "6 resource(s)")
+    }
+
+    @Test
+    fun `a state that loaded a file and then its directory restores whole, once`() {
+        Files.createDirectories(stateFile().parent)
+        Files.writeString(stateFile(), "fhir\tr4\nload\t$basic/bundle.json\nload\t$basic\n")
+        val restored = Session()
+        assertContains(restored.out, "1 already in the pool; pool now 6")
+        assertContains(restored.run(":pool"), "6 resource(s)")
+    }
 }

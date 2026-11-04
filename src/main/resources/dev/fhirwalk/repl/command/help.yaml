@@ -21,6 +21,9 @@ commands:
       - name: ":load"
         args: "<path>"
         summary: import a file, bundle, NDJSON or directory tree
+        details: |
+          A file the pool already read is skipped and counted, however its path
+          is spelled: loading a directory after one of its files reads the rest.
         topic: pools
       - name: ":pool"
         args: "[name]"
