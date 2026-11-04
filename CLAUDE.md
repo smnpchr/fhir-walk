@@ -110,8 +110,10 @@ when extending the walker.
   comparison across revisions should use it rather than a pool-wide `find`.
   Within one pool a label is assumed unique: `find`, `:focus` and `resolve()` take
   the first resource added under it. Reporting labels held twice in a pool was
-  declined (#89); the one way to get them, reading a file twice, is prevented
-  instead: `Importer` skips a file the pool already read, by its real path (#98).
+  declined (#89); the one way to get them, loading a resource twice, is prevented
+  instead: a load merges by FHIR identity (`Type/id`, else fullUrl), so a resource
+  read again replaces the one held, whatever file it came from (#98,
+  `ResourcePool.merge`). That is about FHIR, not files: nothing tracks paths.
 - **A revision is read completely before the pool is touched.** A missing or
   damaged commit or tree throws from the JGit read; `RevisionLoader.load` does all
   of those first, `GitPool` turns a failure into `Move.Failed`, and `Repl.openGit`

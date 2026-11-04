@@ -109,30 +109,36 @@ class PoolsTest {
     }
 
     @Test
-    fun `a file already read is not read again, by any path`() {
+    fun `loading what the pool holds replaces it, by FHIR identity`() {
         // The pool holds samples/basic from init.
-        assertContains(run(":load samples/basic"), "loaded 0 resource(s) from 0 file(s), 3 already in the pool; pool now 6")
-        assertContains(run(":load samples/basic/bundle.json"), "1 already in the pool; pool now 6")
-        val link = Files.createTempDirectory("link").resolve("linked.json")
-        val linked = runCatching { Files.createSymbolicLink(link, Paths.get("samples/basic/bundle.json").toAbsolutePath()) }.isSuccess
-        if (linked) assertContains(run(":load $link"), "1 already in the pool; pool now 6")
+        assertContains(run(":load samples/basic"), "loaded 6 resource(s) from 3 file(s), 6 replaced; pool now 6")
+        assertContains(run(":load samples/basic/bundle.json"), "3 replaced; pool now 6")
     }
 
     @Test
-    fun `a directory after one of its files reads the rest`() {
-        val fresh = Repl(FhirVersion.R4, emptyList(), Workspaces(null))
+    fun `a directory after one of its files reads the rest, and is saved`() {
+        val home = Files.createTempDirectory("home")
+        val fresh = Repl(FhirVersion.R4, emptyList(), Workspaces(home))
         fun line(text: String) = fresh.outputOf(text).lines().joinToString("\n")
         assertContains(line(":load samples/basic/bundle.json"), "pool now 3")
-        assertContains(line(":load samples/basic"), "loaded 3 resource(s) from 2 file(s), 1 already in the pool; pool now 6")
+        assertContains(line(":load samples/basic"), "loaded 6 resource(s) from 3 file(s), 3 replaced; pool now 6")
+        val state = Files.readAllLines(home.resolve("state"))
+        assertTrue(state.any { it.startsWith("load\t") && it.endsWith("samples/basic") }, state.toString())
     }
 
     @Test
-    fun `a file that added nothing is read again once fixed`() {
-        val dir = Files.createTempDirectory("broken")
-        val file = dir.resolve("p.json")
-        Files.writeString(file, """{"resourceType":"Patient","id":""")
-        assertContains(run(":load $file"), "1 problem(s)")
-        Files.writeString(file, """{"resourceType":"Patient","id":"fixed"}""")
-        assertContains(run(":load $file"), "loaded 1 resource(s) from 1 file(s); pool now 7")
+    fun `a file edited since it was read updates the pool, and the focus follows`() {
+        val dir = Files.createTempDirectory("edited")
+        val file = dir.resolve("p.ndjson")
+        Files.writeString(file, """{"resourceType":"Patient","id":"a","name":[{"family":"A"}]}""" + "\n" + """{"resourceType":"Patient","id":"b",""")
+        assertContains(run(":load $file"), "loaded 1 resource(s) from 1 file(s); 1 problem(s); pool now 7")
+        run(":focus Patient/a")
+
+        // The broken line fixed, the other edited: both arrive, neither doubles.
+        Files.writeString(file, """{"resourceType":"Patient","id":"a","name":[{"family":"A2"}]}""" + "\n" + """{"resourceType":"Patient","id":"b"}""")
+        assertContains(run(":load $file"), "loaded 2 resource(s) from 1 file(s), 1 replaced; pool now 8")
+        // The focus is found again, on the resource as it now reads, in its old place.
+        assertContains(run("name.family"), "A2")
+        assertContains(run(":focus #6"), "focus Patient/a")
     }
 }

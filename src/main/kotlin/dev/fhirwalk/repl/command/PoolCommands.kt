@@ -15,6 +15,7 @@ internal class PoolCommands(
     private val state: ReplState,
     private val git: GitCommands,
     private val meta: MetaCommands,
+    private val focus: FocusCommands,
 ) : CommandGroup {
 
     private val session: Session get() = state.session
@@ -37,12 +38,21 @@ internal class PoolCommands(
             out.text("${state.poolName()} is a meta pool of ${it.definition.dir} — :meta ${session.current.name} reads it again; :open another pool to load files")
             return
         }
+        val steps = focus.focusSteps(session.focus)
         val report = session.importer.load(Paths.get(state.expandHome(path)))
+        if (report.replaced > 0) {
+            // The pool was rebuilt: rows and picks name resources it no longer holds, and
+            // a focused one may be among those replaced. Found again by its steps.
+            state.lastPicks = null
+            state.lastListing = null
+            session.focus = null
+        }
         // Absolute, so the next session finds it from wherever it is started.
         val absolute = Paths.get(state.expandHome(path)).toAbsolutePath().normalize().toString()
         val loaded = session.current.loadedPaths
         if (report.files > 0 && absolute !in loaded) loaded += absolute
         state.withProblems(out, "loaded ${report.summary()}; ${state.poolName()} now ${session.pool.size}", report.problems)
+        if (report.replaced > 0) focus.restoreFocus(steps, out)
     }
 
     private fun poolSummary(out: Output) {

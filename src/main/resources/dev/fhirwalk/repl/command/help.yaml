@@ -22,8 +22,9 @@ commands:
         args: "<path>"
         summary: import a file, bundle, NDJSON or directory tree
         details: |
-          A file the pool already read is skipped and counted, however its path
-          is spelled: loading a directory after one of its files reads the rest.
+          A resource with the Type/id (else fullUrl) of one the pool holds
+          replaces it, whatever file it came from: loading a path again updates
+          the pool rather than doubling it.
         topic: pools
       - name: ":pool"
         args: "[name]"

@@ -32,12 +32,12 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         /** Files that were one Bundle, as against a single resource or NDJSON, which may hold Bundles. */
         var bundles: Int = 0,
         val problems: MutableList<String> = mutableListOf(),
-        /** Files not read again: the pool already holds what they hold. */
-        var skipped: Int = 0,
+        /** Resources that took the place of one with the same identity; see [ResourcePool.merge]. */
+        var replaced: Int = 0,
     ) {
         fun summary(): String = buildString {
             append("$resources resource(s) from $files file(s)")
-            if (skipped > 0) append(", $skipped already in the pool")
+            if (replaced > 0) append(", $replaced replaced")
             if (problems.isNotEmpty()) append("; ${problems.size} problem(s)")
         }
     }
@@ -59,16 +59,26 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     private val json: IParser by lazy { ctx.newJsonParser() }
     private val xml: IParser by lazy { ctx.newXmlParser() }
 
+    /**
+     * Reads [path] whole, then merges what it read into the pool: a resource the pool
+     * holds under the same identity is replaced, not added again ([ResourcePool.merge]).
+     */
     fun load(path: Path): Report {
         val report = Report()
+        read.clear()
         when {
             path.isDirectory() -> loadTree(path, report)
             path.isRegularFile() -> loadFile(path, report)
             else -> report.problems += "not found: $path"
         }
+        report.replaced = pool.merge(read.toList())
+        read.clear()
         pool.settleReferences()
         return report
     }
+
+    /** What the load under way has read, merged into the pool once it is done. */
+    private val read = mutableListOf<ResourcePool.Incoming>()
 
     /** Import #2: walk a directory tree, picking up everything that looks like FHIR. */
     private fun loadTree(root: Path, report: Report) {
@@ -80,28 +90,13 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         }
     }
 
-    /**
-     * A file the pool already read is not read again (#98): loading a path twice,
-     * overlapping paths, or a start path the workspace restores anyway would
-     * otherwise hold each of its resources twice and double every count. Files are
-     * told apart by their real path, so a symlink to one is the same file. A file
-     * that added nothing -- unreadable, or every resource in it broken -- is not
-     * remembered, so it is read again once fixed.
-     */
     private fun loadFile(file: Path, report: Report) {
-        val real = runCatching { file.toRealPath() }.getOrElse { file.toAbsolutePath().normalize() }
-        if (pool.hasRead(real)) {
-            report.skipped++
-            return
-        }
         report.files++
-        val before = pool.size
         when (file.extension.lowercase()) {
             "ndjson", "jsonl" -> loadNdjson(file, report)
             "xml" -> loadSingle(file, xml, report)
             else -> loadSingle(file, json, report)
         }
-        if (pool.size > before) pool.read(real)
     }
 
     private fun loadSingle(file: Path, parser: IParser, report: Report) {
@@ -173,7 +168,7 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     fun reads(name: String): Boolean = name.substringAfterLast('.', "").lowercase() in SUPPORTED
 
     private fun addToPool(resource: IBaseResource, fullUrl: String?, origin: String) {
-        pool.add(resource, fullUrl, origin)
+        read += ResourcePool.Incoming(resource, fullUrl, origin)
     }
 
     /** Import #1: a Bundle flattens into its entries, recursively. */

@@ -3,7 +3,6 @@ package dev.fhirwalk.pool
 import ca.uhn.fhir.context.FhirContext
 import org.hl7.fhir.instance.model.api.IBaseResource
 import org.hl7.fhir.instance.model.api.IIdType
-import java.nio.file.Path
 import java.util.IdentityHashMap
 
 /**
@@ -28,15 +27,6 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
     private val byFullUrl = HashMap<String, PooledResource>()
     private val byBareId = HashMap<String, MutableList<PooledResource>>()
     private val byInstance = IdentityHashMap<IBaseResource, PooledResource>()
-
-    /** The files read into the pool by their real path, so none is read into it twice. */
-    private val readFiles = HashSet<Path>()
-
-    fun hasRead(file: Path): Boolean = file in readFiles
-
-    fun read(file: Path) {
-        readFiles.add(file)
-    }
 
     val census = Census()
     private val walker = CensusWalker(ctx, census)
@@ -141,6 +131,49 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
 
     private fun keyIn(part: String?, key: String): String = if (part == null) key else "$part:$key"
 
+    /** A resource read and not yet in the pool, as [merge] takes it. */
+    class Incoming(val resource: IBaseResource, val fullUrl: String?, val origin: String)
+
+    /**
+     * Adds [incoming] to a plain pool, each read resource taking the place of the one
+     * already held under the same identity: `Type/id`, else its fullUrl. That identity
+     * is what makes two resources the same one, whatever file either came from, so
+     * loading a path again, or one overlapping it, replaces rather than doubles, and a
+     * file edited since it was read updates the pool. A resource with neither id nor
+     * fullUrl has no identity and is added. A replaced resource keeps its place, and
+     * so its `#index`; the indexes and the census are then rebuilt, as for a revision.
+     *
+     * @return how many resources replaced one held before or read earlier in [incoming].
+     */
+    fun merge(incoming: List<Incoming>): Int {
+        class Slot(val resource: IBaseResource, val fullUrl: String?, val origin: String)
+        fun identity(resource: IBaseResource, fullUrl: String?): String? =
+            resource.idElement?.idPart?.takeIf { it.isNotBlank() }?.let { "${ctx.getResourceType(resource)}/$it" }
+                ?: fullUrl?.takeIf { it.isNotBlank() }
+        val slots = items.mapTo(mutableListOf()) { Slot(it.resource, it.fullUrl, it.origin) }
+        val at = HashMap<String, Int>()
+        slots.forEachIndexed { i, slot -> identity(slot.resource, slot.fullUrl)?.let { at.putIfAbsent(it, i) } }
+        var replaced = 0
+        for (read in incoming) {
+            val id = identity(read.resource, read.fullUrl)
+            val i = id?.let(at::get)
+            if (i != null) {
+                slots[i] = Slot(read.resource, read.fullUrl, read.origin)
+                replaced++
+            } else {
+                id?.let { at[it] = slots.size }
+                slots += Slot(read.resource, read.fullUrl, read.origin)
+            }
+        }
+        if (replaced == 0) {
+            incoming.forEach { add(it.resource, it.fullUrl, it.origin) }
+        } else {
+            clear()
+            slots.forEach { add(it.resource, it.fullUrl, it.origin) }
+        }
+        return replaced
+    }
+
     /**
      * Types the references the census could not type from their string, by resolving
      * them the same way `resolve()` does at eval time -- so completion after
@@ -163,7 +196,6 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
         byFullUrl.clear()
         byBareId.clear()
         byInstance.clear()
-        readFiles.clear()
         partNames.clear()
         census.clear()
     }

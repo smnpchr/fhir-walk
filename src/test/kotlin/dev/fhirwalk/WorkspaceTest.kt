@@ -300,19 +300,19 @@ class WorkspaceTest {
     }
 
     @Test
-    fun `starting again with a path the workspace restores does not read it twice`() {
+    fun `starting again with a path the workspace restores does not double the pool`() {
         Session(paths = listOf(basic))
         val next = Session(paths = listOf(basic))
-        assertContains(next.out, "3 already in the pool; pool now 6")
+        assertContains(next.out, "6 replaced; pool now 6")
         assertContains(next.run(":pool"), "6 resource(s)")
     }
 
     @Test
-    fun `a state that loaded a file and then its directory restores whole, once`() {
+    fun `a state that loaded a file and then its directory restores whole, each resource once`() {
         Files.createDirectories(stateFile().parent)
         Files.writeString(stateFile(), "fhir\tr4\nload\t$basic/bundle.json\nload\t$basic\n")
         val restored = Session()
-        assertContains(restored.out, "1 already in the pool; pool now 6")
+        assertContains(restored.out, "3 replaced; pool now 6")
         assertContains(restored.run(":pool"), "6 resource(s)")
     }
 }
