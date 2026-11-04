@@ -17,6 +17,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.IdentityHashMap
 import java.util.WeakHashMap
 import org.hl7.fhir.instance.model.api.IBaseResource
 
@@ -403,8 +404,10 @@ internal class GitCommands(
             out.text("only ${read.size} commit(s) on ${git.lineLabel} touched $label")
             return
         }
+        val title = Output.text("$label on ${git.lineLabel}, newest first")
         out.listing(
-            header = listOf(Output.text("$label on ${git.lineLabel}, newest first")),
+            header = listOf(title) + heldPointer(changes.count { it.held != null }),
+            fullHeader = listOf(title),
             rows = changes.map { change ->
                 commitRow(git, change.commit) {
                     count(kindOf(change).padEnd(8))
@@ -480,66 +483,90 @@ internal class GitCommands(
         // Each row says what its own commit started from, never what the row before it
         // showed: a commit may touch a copy of the label, which is not what that row was.
         val traced = mutableListOf<Traced>()
+        // Neighbouring commits often hold the very same parsed resource.
+        val answers = IdentityHashMap<IBaseResource, Outcome>()
         fun answerOf(resource: IBaseResource?): Outcome? = resource?.let {
-            if (expression == null) Outcome.Values(listOf(it)) else session.evaluator.evaluate(it, expression)
-        }
-        fun shown(outcome: Outcome?): String = when (outcome) {
-            null -> "deleted"
-            is Outcome.Failure -> "! ${outcome.message}"
-            is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
+            answers.getOrPut(it) { if (expression == null) Outcome.Values(listOf(it)) else session.evaluator.evaluate(it, expression) }
         }
         for (change in changes.asReversed()) {
-            val held = change.held
-            if (held != null) {
-                traced += Traced(change, null, "held ${held.most} times here — not followed", was = null)
-                continue
-            }
             val was = answerOf(change.was)
             val outcome = answerOf(change.resource)
             // The history already holds only commits that changed the resource's
             // content, so with no expression every one is a row. An answer is
             // compared whole: its one-line form runs whitespace together, which a
-            // string's value may differ by.
-            if (expression != null && change.kind == GitSource.Kind.MODIFIED && exactly(outcome) == exactly(was)) continue
-            traced += Traced(change, outcome, shown(outcome), was = change.was?.let { shown(was) })
+            // string's value may differ by. A held commit is always a row.
+            val unchanged = change.kind == GitSource.Kind.MODIFIED && change.held == null && exactly(outcome) == exactly(was)
+            if (expression != null && unchanged) continue
+            traced += Traced(change, outcome, shown(outcome), was, change.was?.let { shown(was) })
         }
         traced.reverse()
         val what = expression?.let { "  $it" }.orEmpty()
+        val notFollowed = traced.count { it.change.held != null }
+        val counted = "${traced.size - notFollowed} change(s)" + if (notFollowed > 0) ", $notFollowed not followed" else ""
+        val title = Output.text("$label$what on ${git.lineLabel}, newest first — $counted in ${changes.size} commit(s) that touched it")
         out.listing(
-            header = listOf(Output.text("$label$what on ${git.lineLabel}, newest first — ${traced.size} change(s) in ${changes.size} commit(s) that touched it")),
+            header = listOf(title) + heldPointer(notFollowed),
+            fullHeader = listOf(title),
             rows = traced.map { row ->
                 commitRow(git, row.change.commit) {
+                    val held = row.change.held
                     if (expression == null) {
                         // A resource's answer is the whole of it: what happened says more than what it was.
                         count(row.kind.padEnd(8))
                         if (row.outcome != null) {
                             +"  "
                             shrink(row.answer, Output.Kind.PREVIEW, cutsEnd = true)
-                        } else if (row.change.held != null) {
-                            hint("  not followed")
                         }
+                        held?.let { hint("  ${it.said} — not followed") }
                     } else {
-                        when (row.outcome) {
-                            null -> hint(row.answer)
-                            is Outcome.Failure -> shrink(row.answer, Output.Kind.ERROR)
-                            else -> shrink(row.answer)
+                        // A held commit says the side held once, if one was: that is unambiguous.
+                        val answered = row.outcome != null || held == null || held.after.isEmpty()
+                        if (answered) {
+                            when (row.outcome) {
+                                null -> hint(row.answer)
+                                is Outcome.Failure -> shrink(row.answer, Output.Kind.ERROR)
+                                else -> shrink(row.answer)
+                            }
                         }
-                        if (row.came) hint("  (added)") else row.was?.let { shrink("  (was $it)", Output.Kind.HINT) }
+                        when {
+                            held != null -> hint(if (answered) "  (${held.said} — not followed)" else "${held.said} — not followed")
+                            row.came -> hint("  (added)")
+                            else -> row.was?.let { shrink("  (was $it)", Output.Kind.HINT) }
+                        }
                     }
                 }
             },
-            // Each answer whole under its commit; what it was is the row below.
-            full = traced.flatMap { row ->
+            // Each answer whole under its commit. What the commit started from is
+            // usually the row below, and said here only where it is not: where a copy
+            // came between. Then the files, where it held the label more than once.
+            full = traced.flatMapIndexed { i, row ->
+                val below = traced.getOrNull(i + 1)
+                val wasShown = row.change.was != null && (below == null || exactly(below.outcome) != exactly(row.wasOutcome))
                 listOf(commitRow(git, row.change.commit) { count(row.kind) }) +
-                    when (val outcome = row.outcome) {
-                        null -> row.change.held?.let(::heldLines).orEmpty()
-                        is Outcome.Failure -> listOf(Output.line { +"      "; error(row.answer) })
-                        is Outcome.Values ->
-                            if (outcome.values.isEmpty()) listOf(Output.text("      {}")) else outcome.values.flatMap { state.expanded("      ", it) }
-                    }
+                    whole(row.outcome, "      ") +
+                    (if (wasShown) listOf(Output.line { +"      "; hint("was") }) + whole(row.wasOutcome, "        ") else emptyList()) +
+                    row.change.held?.let(::heldLines).orEmpty()
             },
         )
     }
+
+    /** An answer whole, as `:more` prints it; nothing for a resource that is not there. */
+    private fun whole(outcome: Outcome?, indent: String): List<Output.Line> = when (outcome) {
+        null -> emptyList()
+        is Outcome.Failure -> listOf(Output.line { +indent; error("! ${outcome.message}") })
+        is Outcome.Values ->
+            if (outcome.values.isEmpty()) listOf(Output.text("$indent{}")) else outcome.values.flatMap { state.expanded(indent, it) }
+    }
+
+    private fun shown(outcome: Outcome?): String = when (outcome) {
+        null -> "deleted"
+        is Outcome.Failure -> "! ${outcome.message}"
+        is Outcome.Values -> outcome.values.joinToString(", ") { session.render.value(it) }.ifEmpty { "{}" }
+    }
+
+    /** Where a listing has rows not followed, the pointer to the files `:more` lists; not on `:more` itself. */
+    private fun heldPointer(notFollowed: Int): List<Output.Line> =
+        if (notFollowed == 0) emptyList() else listOf(Output.line { hint("  :more lists the files that held it more than once") })
 
     /**
      * [outcome] as a trace compares it: every value whole, by type and text, as
@@ -555,17 +582,24 @@ internal class GitCommands(
      * A commit in a trace: what [change] made the answer, as [answer] reads it on one
      * line, and what it [was] before, if anything.
      */
-    private class Traced(val change: ResourceHistory.Change, val outcome: Outcome?, val answer: String, val was: String?) {
+    private class Traced(
+        val change: ResourceHistory.Change,
+        val outcome: Outcome?,
+        val answer: String,
+        val wasOutcome: Outcome?,
+        val was: String?,
+    ) {
         val came: Boolean get() = change.kind == GitSource.Kind.ADDED && change.held == null
 
         /** As `:log <label>` says it; see [kindOf]. */
         val kind: String get() = kindOf(change)
     }
 
-    /** The files that held a label more than once in a commit, under the commit's row. */
+    /** The files that held a label in a held commit, under the commit's row: `b.json ×2, c.json`. */
     private fun heldLines(held: ResourceHistory.Held): List<Output.Line> =
         listOf("before" to held.before, "after" to held.after).filter { it.second.isNotEmpty() }.map { (side, paths) ->
-            Output.line { +"      "; hint("$side: "); +paths.joinToString(", ") }
+            val files = paths.groupingBy { it }.eachCount().entries.joinToString(", ") { (path, n) -> if (n > 1) "$path ×$n" else path }
+            Output.line { +"      "; hint("$side: "); +files }
         }
 
     /**

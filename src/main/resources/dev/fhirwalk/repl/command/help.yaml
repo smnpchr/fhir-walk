@@ -89,6 +89,8 @@ commands:
           a commit that only reformatted one counts. :log Specimen/s1 goes by
           the resource's content instead: a reformat, or a change to another
           resource in the same file, is left out; reordered extensions are not.
+          A commit whose changed files hold the label more than once is marked
+          held ×2, and :more lists those files.
         topic: git
       - name: ":at"
         args: "<rev|date>"
@@ -115,8 +117,9 @@ commands:
           each with what it holds. :more prints each answer whole, a resource as
           pretty-printed JSON. resolve() is refused: it would read the pool at
           its own revision, not the one traced. A commit whose changed files
-          hold the label more than once says so and is not followed; each row's
-          "was" is what its own commit started from.
+          hold the label more than once says so and is not followed, though a
+          side held once is still said; each row's "was" is what its own commit
+          started from.
         topic: git
       - name: ":delta"
         args: "[from..to]"

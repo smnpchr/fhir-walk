@@ -35,12 +35,13 @@ class ResourceHistory(
 ) {
 
     /**
-     * @param resource the resource as [commit] left it; null when [commit] deleted it,
-     *   or when it is [held] more than once.
+     * @param resource the resource as [commit] left it, where one file holds it; null
+     *   when [commit] deleted it, or left it [held] more than once.
      * @param was the resource as it was before [commit], where one file held it; null
-     *   when it was added, or held more than once.
-     * @param held the files that held the label more than once on a side; null when
-     *   each side held it once at most.
+     *   when it was added, or held more than once. A side held once is said even in
+     *   a [held] commit: only the other side is ambiguous.
+     * @param held the files that held the label on each side, where one side held it
+     *   more than once; null when each side held it once at most.
      */
     class Change(
         val commit: GitSource.Commit,
@@ -54,6 +55,12 @@ class ResourceHistory(
     class Held(val before: List<String>, val after: List<String>) {
         /** How many copies the fuller side held. */
         val most: Int get() = maxOf(before.size, after.size)
+
+        /** `held 2 times before`, `held 3 times after`, `held 2 times before, 3 after`: the sides that held it more than once. */
+        val said: String get() {
+            val sides = listOf(before.size to "before", after.size to "after").filter { it.first > 1 }
+            return "held " + sides.mapIndexed { i, (n, side) -> if (i == 0) "$n times $side" else "$n $side" }.joinToString(", ")
+        }
     }
 
     /** One copy of the label in one file. */
@@ -112,7 +119,10 @@ class ResourceHistory(
                 before.size > 1 || after.size > 1 ->
                     // Every copy reads as it did: another resource in their files changed.
                     if (encoded(before) == encoded(after)) null
-                    else Change(commit, kind, null, held = Held(before.map { it.path }, after.map { it.path }))
+                    else Change(
+                        commit, kind, after.singleOrNull()?.resource, was = before.singleOrNull()?.resource,
+                        held = Held(before.map { it.path }, after.map { it.path }),
+                    )
                 before.isEmpty() -> Change(commit, kind, after.single().resource)
                 after.isEmpty() -> Change(commit, kind, null, was = before.single().resource)
                 // Another resource in the same file changed, or this one moved file.
