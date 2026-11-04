@@ -185,16 +185,20 @@ produces confusing results that look like product bugs.
   looks exactly like a passing test of the change you just made. Use
   `./gradlew test --rerun-tasks` whenever an outcome depends on sample data (new
   fixtures, or checking the `assumeTrue` skip guard by hiding one). A real run of this
-  suite takes about ten seconds; a sub-second success means nothing executed.
-- **Test temp files go under one directory per checkout**, not straight into the
-  system's: the `test` task points `java.io.tmpdir` at
-  `<tmp>/fhir-walk-tests-<hash>`, empties it first and removes it after (#94).
-  So `Files.createTempDirectory` in a test needs no cleanup of its own, but only
-  under Gradle: an IDE run that bypasses it still leaves its files in `/tmp`. Keep
-  that directory outside the project, since tests like `GitPoolTest`'s
-  `not-a-repo` need a directory in no git repository. A test asserting on a path
-  should read `Repl.outputOf`, not printed text: the printer shortens long paths
-  to the window.
+  suite takes ten seconds warm and up to a minute cold; a sub-second success means
+  nothing executed.
+- **Test temp files go under one directory per build**, not straight into the
+  system's: a shared build service (`TestTemp` in `build.gradle.kts`) makes
+  `<tmp>/fhir-walk-tests-<random>` when tests start, points the test JVM's
+  `java.io.tmpdir` and `user.home` at it, and removes it when the build ends,
+  pass or fail (#94). Two builds of one checkout each get their own. So
+  `Files.createTempDirectory` in a test needs no cleanup of its own, and tests
+  never touch `~/.fhir-walk` or JGit's `~/.config/jgit`, nor read `~/.gitconfig`.
+  That holds only under Gradle: an IDE run that bypasses it still uses `/tmp` and
+  the real home. Keep the directory outside the project, since tests like
+  `GitPoolTest`'s `not-a-repo` need a directory in no git repository. A test
+  asserting on a path should read `Repl.outputOf`, not printed text: the printer
+  shortens long paths to the window.
 - `Repl` keeps its expressions, names, views, state and line history in a workspace
   under `~/.fhir-walk` by default. Tests must pass `Workspaces(null)` (all in memory)
   or `Workspaces(<temp dir>)`, or they write into the developer's home. `./gradlew run` does not forward `JAVA_OPTS`, so `-Duser.home=…` does not

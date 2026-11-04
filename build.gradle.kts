@@ -1,3 +1,5 @@
+import java.nio.file.Files
+
 plugins {
     // Must be >= the stdlib HAPI pulls in transitively (via okhttp), or the
     // compiler cannot read those modules' metadata.
@@ -69,24 +71,61 @@ application {
     mainClass.set("dev.fhirwalk.MainKt")
 }
 
-// A test's temporary files go under a directory of this checkout's own (#94), emptied
-// before a run and removed after it, pass or fail, so a run leaves nothing in the
-// system's temp directory, which on a tmpfs runs out of inodes. It stays outside the
-// project: some tests need a directory that is in no git repository.
-val testTemp = File(System.getProperty("java.io.tmpdir"), "fhir-walk-tests-" + Integer.toHexString(rootDir.absolutePath.hashCode()))
+/**
+ * Where one build's tests keep their temporary files (#94): a fresh directory under
+ * the system's temp, made the first time a test JVM starts and removed when the build
+ * ends, whether the tests passed or failed. Its own name for every build, so two
+ * builds of one checkout never share it, and outside the project, since some tests
+ * need a directory that is in no git repository. Ones left by a build that never got
+ * to end (a killed daemon) are swept once a day old.
+ */
+abstract class TestTemp : BuildService<BuildServiceParameters.None>, AutoCloseable {
+    private var made: File? = null
 
-val removeTestTemp by tasks.registering(Delete::class) {
-    delete(testTemp)
+    @get:Synchronized
+    val dir: File
+        get() = made ?: run {
+            sweep()
+            Files.createTempDirectory(PREFIX).toFile().also {
+                File(it, "home").mkdirs()
+                made = it
+            }
+        }
+
+    private fun sweep() {
+        val dayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        File(System.getProperty("java.io.tmpdir")).listFiles { file ->
+            file.isDirectory && file.name.startsWith(PREFIX) && file.lastModified() < dayAgo
+        }?.forEach { it.deleteRecursively() }
+    }
+
+    override fun close() {
+        made?.deleteRecursively()
+    }
+
+    private companion object {
+        const val PREFIX = "fhir-walk-tests-"
+    }
 }
+
+/**
+ * Hands [TestTemp] to the test JVM as its temp directory and its home, so tests write
+ * neither into the system's temp nor into the user's home (`~/.fhir-walk`, JGit's
+ * `~/.config/jgit`) and read no `~/.gitconfig`. Internal: the path is new each build,
+ * and must not make every build's tests look changed to the build cache.
+ */
+class TestTempArguments(@get:Internal val temp: Provider<TestTemp>) : CommandLineArgumentProvider {
+    override fun asArguments(): List<String> = temp.get().dir.let {
+        listOf("-Djava.io.tmpdir=$it", "-Duser.home=${File(it, "home")}")
+    }
+}
+
+val testTemp = gradle.sharedServices.registerIfAbsent("fhirWalkTestTemp", TestTemp::class) {}
 
 tasks.test {
     useJUnitPlatform()
-    systemProperty("java.io.tmpdir", testTemp.absolutePath)
-    doFirst {
-        testTemp.deleteRecursively()
-        testTemp.mkdirs()
-    }
-    finalizedBy(removeTestTemp)
+    usesService(testTemp)
+    jvmArgumentProviders += TestTempArguments(testTemp)
 }
 
 tasks.named<JavaExec>("run") {
