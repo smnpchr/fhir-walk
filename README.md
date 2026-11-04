@@ -440,9 +440,10 @@ spelling: `:delta main~5..main` moves to `main` and compares it with `main~5`, a
 (with a branch as the other end, that branch as of that date). Either
 end takes what `:at` takes; an empty one is where the pool is. The range is one tree
 diff: a resource changed twice is listed once, and one added and deleted within it not
-at all. The prompt spells it the same way (`in@a1b2c3d..533a322 Δ15`), the scope is
-its delta, so `:tally` or `:all` answer "what did the runs since Monday change?" in a
-line. A base that is not an ancestor is still compared, as two trees, and says so.
+at all. The prompt spells it the same way (`in@a1b2c3d..533a322 Δ15`), and the scope is
+its delta. The pool is still the snapshot at the end of the range, so `:tally` or
+`:all` say which resources the runs since Monday touched and what those look like
+now, not what they were before: for one resource's earlier answers, `:trace`. A base that is not an ancestor is still compared, as two trees, and says so.
 `:step` and `:at` go back to comparing with the parent, and so does `:delta ..`.
 
 `:at` also takes a date — `2026-03`, `2026-03-11`, `2026-03-11T11:00`, or the
