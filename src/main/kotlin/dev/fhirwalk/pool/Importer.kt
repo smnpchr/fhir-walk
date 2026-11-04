@@ -41,8 +41,12 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
 
     /** A resource [parse] found, kept so it can be added to a pool more than once. */
     class Parsed(val resource: IBaseResource, val fullUrl: String?, val origin: String) {
-        /** As [PooledResource.label] would have it, for a resource that is in no pool. */
-        fun label(ctx: FhirContext): String {
+        /**
+         * As [PooledResource.label] would have it, for a resource that is in no pool.
+         *
+         * @param origin where it is said to be from, when that is another file than the one it was parsed as.
+         */
+        fun label(ctx: FhirContext, origin: String = this.origin): String {
             val type = ctx.getResourceType(resource)
             val id = resource.idElement?.idPart?.takeIf { it.isNotBlank() }
             return id?.let { "$type/$it" } ?: fullUrl ?: "$type ($origin)"
@@ -127,12 +131,24 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     fun parse(name: String, text: String, report: Report): List<Parsed> {
         val found = mutableListOf<Parsed>()
         val sink: Sink = { resource, fullUrl, origin -> found += Parsed(resource, fullUrl, origin) }
-        when (name.substringAfterLast('.', "").lowercase()) {
-            "ndjson", "jsonl" -> parseNdjson(text.lineSequence(), name, report, sink)
+        when (formatOf(name)) {
+            "ndjson" -> parseNdjson(text.lineSequence(), name, report, sink)
             "xml" -> parseSingle(text, xml, name, report, sink)
             "json" -> parseSingle(text, json, name, report, sink)
         }
         return found
+    }
+
+    /**
+     * How [parse] reads a file with this name: `json`, `ndjson` or `xml`, or empty for
+     * one it does not read. The same bytes under another format are another parse, so
+     * whatever keeps parses by content keeps them by this too.
+     */
+    fun formatOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "ndjson", "jsonl" -> "ndjson"
+        "xml" -> "xml"
+        "json" -> "json"
+        else -> ""
     }
 
     /** Whether [load] and [parse] read a file with this name. */

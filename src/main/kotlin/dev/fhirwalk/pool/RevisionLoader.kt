@@ -30,23 +30,29 @@ class RevisionLoader(
     private class Blob(val path: String, val parsed: List<Importer.Parsed>, val problems: List<String>) {
         /** [origin], one of this blob's, as the file at [file] has it: `a.json#entry[2]` read as `b.json`. */
         fun originAt(file: String, origin: String): String =
-            if (file == path || !origin.startsWith(path)) origin else file + origin.removePrefix(path)
+            if (origin.startsWith(path)) file + origin.removePrefix(path) else origin
 
         fun problemsAt(file: String): List<String> = problems.map { originAt(file, it) }
     }
 
-    /** A revision's blobs, by id: one parse for each of its files that holds the blob. */
-    private class Blobs {
-        private val byId = HashMap<ObjectId, MutableList<Blob>>()
+    /**
+     * A revision's blobs: one parse for each of its files that holds the blob, kept
+     * by the blob and the format its file is read as, since the same bytes in an
+     * `.ndjson` and a `.json` file are two different parses.
+     */
+    private inner class Blobs {
+        private val byKey = HashMap<Pair<ObjectId, String>, MutableList<Blob>>()
 
-        /** The [n]th parse of [id], if one is held. */
-        fun get(id: ObjectId, n: Int): Blob? = byId[id]?.getOrNull(n)
+        private fun key(id: ObjectId, path: String) = id to importer.formatOf(path)
 
-        /** How many parses of [id] are held. */
-        fun count(id: ObjectId): Int = byId[id]?.size ?: 0
+        /** The [n]th parse of [id] as the file at [path] reads it, if one is held. */
+        fun get(id: ObjectId, path: String, n: Int): Blob? = byKey[key(id, path)]?.getOrNull(n)
 
-        fun add(id: ObjectId, blob: Blob) {
-            byId.getOrPut(id) { mutableListOf() } += blob
+        /** How many parses of [id] as the file at [path] reads it are held. */
+        fun count(id: ObjectId, path: String): Int = byKey[key(id, path)]?.size ?: 0
+
+        fun add(id: ObjectId, path: String, blob: Blob) {
+            byKey.getOrPut(key(id, path)) { mutableListOf() } += blob
         }
     }
 
@@ -77,15 +83,18 @@ class RevisionLoader(
     var delta: Delta? = null
         private set
 
-    /** Blobs parsed so far, as opposed to taken from what was kept. */
+    /**
+     * Files parsed so far by loads, as opposed to taken from what was kept: one per
+     * blob, and one more for each further file of a revision holding the same blob.
+     */
     var parsedBlobs = 0
         private set
 
     private var current = Blobs()
     private var previous = Blobs()
 
-    /** The [n]th parse of [id] the last two revisions held. */
-    private fun kept(id: ObjectId, n: Int): Blob? = current.get(id, n) ?: previous.get(id, n)
+    /** The [n]th parse of [id] as the file at [path] reads it, held by the last two revisions. */
+    private fun kept(id: ObjectId, path: String, n: Int): Blob? = current.get(id, path, n) ?: previous.get(id, path, n)
 
     /** What [commit] changed against [Delta.base], file by file, for reading the base side. */
     private var fileChanges: List<GitSource.Change> = emptyList()
@@ -126,8 +135,8 @@ class RevisionLoader(
             // Everything read before anything is added, as a load does.
             val taken = Blobs()
             val files = source.files(against, importer::reads).map {
-                val blob = kept(it.blob, taken.count(it.blob)) ?: parse(it.path, it.blob, counted = false)
-                taken.add(it.blob, blob)
+                val blob = kept(it.blob, it.path, taken.count(it.blob, it.path)) ?: parse(it.path, it.blob, counted = false)
+                taken.add(it.blob, it.path, blob)
                 it to blob
             }
             for ((file, blob) in files) {
@@ -152,13 +161,13 @@ class RevisionLoader(
         val next = Blobs()
         // Each file takes the next parse of its blob: a second file of the same content gets its own.
         fun blobOf(path: String, id: ObjectId): Blob =
-            (kept(id, next.count(id)) ?: parse(path, id)).also { next.add(id, it) }
+            (kept(id, path, next.count(id, path)) ?: parse(path, id)).also { next.add(id, path, it) }
         val files = source.files(commit, importer::reads).map { it to blobOf(it.path, it.blob) }
         val changes = if (base == null) source.changes(commit, importer::reads) else source.changes(commit, importer::reads, base.id)
         // Kept with this revision's: the base holds them, which after a step is the last revision.
         // Read for their labels only, so any parse of the blob will do.
         val deletedBlobs = changes.filter { it.kind == GitSource.Kind.DELETED }
-            .map { change -> change to change.oldBlob?.let { next.get(it, 0) ?: blobOf(change.path, it) } }
+            .map { change -> change to change.oldBlob?.let { next.get(it, change.path, 0) ?: blobOf(change.path, it) } }
         val against = base ?: commit.parent?.let(source::commit)
 
         val report = Importer.Report()
@@ -177,7 +186,7 @@ class RevisionLoader(
             added = changes.filter { it.kind == GitSource.Kind.ADDED }.flatMap { byFile[it.path].orEmpty() },
             modified = changes.filter { it.kind == GitSource.Kind.MODIFIED }.flatMap { byFile[it.path].orEmpty() },
             deleted = deletedBlobs.flatMap { (change, blob) ->
-                blob?.parsed?.map { it.label(pool.ctx) }?.ifEmpty { null } ?: listOf(change.path)
+                blob?.parsed?.map { it.label(pool.ctx, blob.originAt(change.path, it.origin)) }?.ifEmpty { null } ?: listOf(change.path)
             },
         )
         previous = current
