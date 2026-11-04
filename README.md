@@ -694,12 +694,16 @@ Three loaders, one extension point (`Importer`):
 R4 by default; `--fhir r5` or `:fhir r5` to switch. One pool is always one version —
 switching resets it. Mixed-version pools are the one complexity refused outright.
 
-R4 and R5 structures ship by default; R4B and DSTU3 need their dependency lines
-uncommented in `build.gradle.kts`. The enum entries are already there. Until then
-`:fhir` alone lists only the versions that load and says what the others need, TAB
-after `:fhir` offers only those, and switching to one says which dependency to add. Since FHIR JSON carries no
-version marker, the version is declared rather than sniffed — but a parse failure
-retries under the other versions and tells you which one fits.
+A version loads with two JARs: its structures, and its base definitions
+(`hapi-fhir-validation-resources-*`), without which `ofType()` fails on every resource.
+R4 and R5 ship both. R4B and DSTU3 need both of their lines uncommented in
+`build.gradle.kts`; the enum entries are already there. Until then `:fhir` alone lists
+only the versions that load and says what each other one needs, TAB after `:fhir`
+offers only those, and switching to one names the dependencies to add.
+
+Since FHIR JSON carries no version marker, the version is declared rather than
+sniffed — but a parse failure retries under the other versions that load, and tells
+you which one fits.
 
 ## Architecture
 

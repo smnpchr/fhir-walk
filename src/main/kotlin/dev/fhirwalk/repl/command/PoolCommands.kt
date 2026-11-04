@@ -182,7 +182,7 @@ internal class PoolCommands(
             out.text("FHIR ${session.version.id} — available: ${FhirVersion.availableIds()}")
             // The others are listed by what they need, which is a line in build.gradle.kts.
             FhirVersion.entries.filterNot { it.isAvailable() }.forEach {
-                out.hint("  ${it.id} needs ${it.missing} in build.gradle.kts")
+                out.hint("  ${it.id} needs ${it.missing.joinToString(" and ")} in build.gradle.kts")
             }
             return
         }
