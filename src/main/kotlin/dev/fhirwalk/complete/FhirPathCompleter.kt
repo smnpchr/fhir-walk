@@ -469,6 +469,9 @@ class FhirPathCompleter(
                 slice.substring(cursor.coerceAtMost(slice.length)),
             )
 
+            // `"female'` would not parse; an identifier is spelled without quotes.
+            CursorKind.QUOTED_NAME -> Unit
+
             CursorKind.MEMBER -> {
                 if (context.basePath.isBlank()) {
                     resourceTypes(nav, candidates, all = context.partial.isNotEmpty())
@@ -599,8 +602,9 @@ class FhirPathCompleter(
             tail.isBlank() && context.enclosingCall != null -> "')"
             else -> "'"
         }
+        // Inserted inside '…', so a quote or backslash in the value is escaped.
         fun stringCand(value: String, group: String, descr: String?) =
-            cand(value + closer, value, group, descr)
+            cand(value.replace("\\", "\\\\").replace("'", "\\'") + closer, value, group, descr)
 
         val censusPath = nav.censusPath(context.basePath)
         when (context.enclosingCall) {
@@ -633,7 +637,7 @@ class FhirPathCompleter(
                 // observed at the sibling path.
                 val systems = census.codeSystemsAt(censusPath)
                     .ifEmpty { census.codeSystemsAt(censusPath.substringBeforeLast('.')) }
-                systems.take(MAX_ROWS).forEach {
+                systems.filter { it.value !in context.listed }.take(MAX_ROWS).forEach {
                     candidates += stringCand(it.value, MenuGroups.SYSTEMS, "${it.count} ×")
                 }
             }

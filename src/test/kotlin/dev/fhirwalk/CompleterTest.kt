@@ -382,6 +382,30 @@ class CompleterTest {
         assertEquals(listOf("male"), displays("Patient.gender in('female' | '"))
         // All of them listed: nothing, rather than code systems.
         assertEquals(emptyList(), displays("Patient.gender in ('female' | 'male' | '"))
+        // Negated, in the only way FHIRPath has.
+        assertEquals(setOf("female", "male"), displays("Patient.where((gender in ('").toSet())
+        // Code systems, the fallback, leave out the listed ones too.
+        val systems = displays("Observation.code.coding.where(system in ('")
+        assertTrue("http://loinc.org" in systems, systems.toString())
+        assertTrue("http://loinc.org" !in displays("Observation.code.coding.where(system in ('http://loinc.org' | '"))
+        // A quoted identifier is not a string: nothing fits there.
+        assertEquals(emptyList(), displays("Patient.gender in (\""))
+    }
+
+    @Test
+    fun `a value holding a quote is inserted escaped, so the string still parses`() {
+        val pool = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        pool.add(json.parseResource("""{"resourceType":"Observation","id":"o1","status":"final","code":{"coding":[{"code":"O'Brien\\x"}]}}"""), null, "test")
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        fun complete(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        val offered = complete("Observation.code.coding.code = '").single()
+        assertEquals("O'Brien\\x", offered.displ())
+        assertEquals("O\\'Brien\\\\x'", offered.value())
+        // Listed as typed, escaped, it is not offered again.
+        assertEquals(emptyList(), complete("Observation.code.coding.code in ('O\\'Brien\\\\x' | '").map { it.displ() })
     }
 
     @Test
