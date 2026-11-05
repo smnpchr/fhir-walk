@@ -150,8 +150,9 @@ Type a FHIRPath expression, or:
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
 across the pool, one row per resource it matches, its values joined with `, ` as in a
-`:view` cell (`Patient/pat1  Erika, Maria, Rika`). A row too long for the window is cut;
-`:more` lists each value whole.
+`:view` cell and counted when there are several (`Patient/pat1  Erika, Maria, Rika  (3
+values)`). A row too long for the window is cut, its count still shown; `:more` lists
+each value whole.
 
 ### Focusing on an element
 

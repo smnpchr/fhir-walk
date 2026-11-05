@@ -98,8 +98,10 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                     label(state.shown(hit.resource).padEnd(ReplState.LABEL_WIDTH))
                     +" "
                     // Every value, joined as a :view cell joins them; the printer cuts
-                    // what does not fit, and :more shows each whole.
-                    shrink(hit.values.joinToString(", ") { session.render.value(it) }, Output.Kind.PREVIEW, cutsEnd = true)
+                    // what does not fit, and :more shows each whole. The count stays
+                    // in sight however much is cut, and tells "a, b" from "a", "b".
+                    shrink(joined(hit.values), Output.Kind.PREVIEW, cutsEnd = true)
+                    if (hit.values.size > 1) hint("  (${hit.values.size} values)")
                 }
             },
             // The full form keeps every value whole and adds the origin, so one
@@ -109,6 +111,20 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                     hit.values.flatMap { state.expanded("      ", it) }
             },
         )
+    }
+
+    /**
+     * [values] joined with ", " for one row, which is only ever printed cut to the
+     * window: past [ROW_CAP] characters the rest is not encoded, only marked.
+     */
+    private fun joined(values: List<IBase>): String {
+        val text = StringBuilder()
+        for ((i, value) in values.withIndex()) {
+            if (i > 0) text.append(", ")
+            if (text.length > ROW_CAP) return text.append("…").toString()
+            text.append(session.render.value(value, ROW_CAP))
+        }
+        return text.toString()
     }
 
     /**
@@ -370,5 +386,10 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                 }
             },
         )
+    }
+
+    private companion object {
+        /** Wider than any window a row is fitted to. */
+        const val ROW_CAP = 2000
     }
 }

@@ -10,6 +10,7 @@ import dev.fhirwalk.repl.Style
 import dev.fhirwalk.repl.Workspaces
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -45,8 +46,30 @@ class ReplTest {
     fun `across the pool a row holds every value its resource gave, as a view cell does`() {
         val listing = repl.outputOf("Patient.name.given").listing as Output.Listing
         val rows = listing.rows.map { line -> line.spans.joinToString("") { it.text }.trimEnd() }
-        assertTrue(rows.any { it.startsWith("  Patient/pat1") && it.endsWith(" Erika, Maria, Rika") }, rows.toString())
-        assertTrue(rows.none { "(+" in it }, rows.toString())
+        assertTrue(rows.any { it.startsWith("  Patient/pat1") && it.endsWith(" Erika, Maria, Rika  (3 values)") }, rows.toString())
+        // One value, no count.
+        assertTrue(rows.any { it.startsWith("  Patient/pat2") && it.endsWith(" Hans") }, rows.toString())
+    }
+
+    @Test
+    fun `a cut row keeps its count in sight`() {
+        val listing = repl.outputOf("Observation.descendants()").listing as Output.Listing
+        val row = listing.rows.first().spans.joinToString("") { it.text }
+        assertTrue(Regex("""  \(\d+ values\)$""").containsMatchIn(row), row)
+    }
+
+    @Test
+    fun `a row with many values stops encoding them past what a window could show`() {
+        val dir = Files.createTempDirectory("many")
+        val given = (1..500).joinToString(",") { "\"Name$it\"" }
+        Files.writeString(dir.resolve("p.json"), """{"resourceType":"Patient","id":"many","name":[{"given":[$given]}]}""")
+        val many = Repl(FhirVersion.R4, emptyList(), Workspaces(null)).also { it.outputOf(":load $dir") }
+        val listing = many.outputOf("Patient.name.given").listing as Output.Listing
+        val row = listing.rows.single().spans.joinToString("") { it.text }
+        assertTrue(row.endsWith("…  (500 values)"), row.takeLast(80))
+        assertTrue(row.length < 2200, "${row.length}")
+        // Whole, every one.
+        assertTrue(listing.full!!.any { line -> line.spans.any { "Name500" in it.text } })
     }
 
     @Test

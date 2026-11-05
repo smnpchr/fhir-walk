@@ -286,8 +286,10 @@ topics:
     text: |
       With a focus set, an expression runs against that resource;
       with no focus it runs across the whole pool, one row per resource
-      it matches, its values joined with ", " as in a :view cell. A row
-      too long for the window is cut; :more lists each value whole.
+      it matches, its values joined with ", " as in a :view cell and
+      counted when there are several: Erika, Maria, Rika  (3 values). A
+      row too long for the window is cut, its count still shown; :more
+      lists each value whole.
 
       :why with no expression re-diagnoses the last one you ran, so the
       hint printed after an empty result can be followed by just :why.
