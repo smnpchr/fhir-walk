@@ -707,7 +707,10 @@ up front, letting the terminal scroll instead.
 TAB completes, including inside the `:all`, `:why`, `:tally`, `:changes` and `:tree` arguments, which are expressions
 like any other. On an empty line it lists the pool's resource types; after a `.` the
 elements and functions available there, pool-populated ones first; inside
-`extension('…')` the URLs observed on that element.
+`extension('…')` the URLs observed on that element. A string on the right of `=`,
+`!=`, `~` or `!~` offers the coded values observed on the left operand, with counts:
+`Patient.gender = '` offers `female` and `male`. So does one in an `in` list, less the
+values the list already holds: `Patient.where(gender in ('female' | '` offers `male`.
 
 Types are followed through calls where they can be known. `resolve()` takes the type
 its references were observed to point at. `repeat(…)` keeps its input's type when the

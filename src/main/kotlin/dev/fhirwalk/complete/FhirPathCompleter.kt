@@ -623,7 +623,8 @@ class FhirPathCompleter(
                 // are only the answer for a `system` operand, which records none.
                 val values = context.comparedPath?.let { census.valuesAt(nav.censusPath(it)) }.orEmpty()
                 if (values.isNotEmpty()) {
-                    values.take(MAX_ROWS).forEach {
+                    // In an `in (…)` list, less the ones it already holds.
+                    values.filter { it.value !in context.listed }.take(MAX_ROWS).forEach {
                         candidates += stringCand(it.value, MenuGroups.OBSERVED_VALUES, "${it.count} ×")
                     }
                     return

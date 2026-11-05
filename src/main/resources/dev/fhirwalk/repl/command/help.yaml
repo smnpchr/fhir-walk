@@ -474,7 +474,8 @@ topics:
       empty line it lists the pool's resource types; after a '.' the
       elements and functions available there, with the ones present in
       the pool first; inside extension('…') the URLs observed on that
-      element.
+      element. A string after =, !=, ~ or !~, or in a list after in, as in
+      gender in ('female' | ', offers the values observed on the left.
       Up/Down or further TABs walk the candidates; Enter takes the one shown.
       A command completes where the cursor is, whatever follows: :sco 0787
       with the cursor after :sco becomes :scope 0787, and a second TAB

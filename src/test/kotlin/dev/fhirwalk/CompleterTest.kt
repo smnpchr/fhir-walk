@@ -372,6 +372,19 @@ class CompleterTest {
     }
 
     @Test
+    fun `a literal in an in list offers the observed values not yet in it`() {
+        val gender = candidates("Patient.where(gender in ('")
+        assertEquals(setOf("female", "male"), gender.map { it.displ() }.toSet())
+        assertTrue(gender.all { it.group() == "observed values" })
+        // It closes the literal only: | or ) comes next.
+        assertTrue(gender.all { it.value().endsWith("'") && !it.value().endsWith("')") }, "got ${gender.map { it.value() }}")
+        assertEquals(listOf("male"), displays("Patient.where(gender in ('female' | '"))
+        assertEquals(listOf("male"), displays("Patient.gender in('female' | '"))
+        // All of them listed: nothing, rather than code systems.
+        assertEquals(emptyList(), displays("Patient.gender in ('female' | 'male' | '"))
+    }
+
+    @Test
     fun `values reach through extension steps and filters`() {
         val ext = "Patient.extension('http://hl7.org/fhir/StructureDefinition/patient-nationality')" +
             ".extension('code').value.coding.code = '"

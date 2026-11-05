@@ -144,6 +144,27 @@ class FhirPathTokenizerTest {
     }
 
     @Test
+    fun `a literal in an in list knows the left of in, and what the list holds`() {
+        fun context(expr: String) = FhirPathTokenizer.cursorContext(expr, expr.length)
+
+        assertEquals("Patient.gender", context("Patient.gender in ('").comparedPath)
+        assertEquals("Patient.gender", context("Patient.gender in('").comparedPath)
+        // Inside where(), relative to its input, one paren further out.
+        assertEquals("Specimen.type.coding.code", context("Specimen.where(type.coding.code in ( '").comparedPath)
+        assertEquals("Patient.gender", context("Patient.where(\$this.gender in ('").comparedPath)
+        val later = context("Specimen.where( type.coding.code in ( 'NUM' |\n 'EDTA' | 'C")
+        assertEquals("Specimen.type.coding.code", later.comparedPath)
+        assertEquals(setOf("NUM", "EDTA"), later.listed)
+        assertEquals("C", later.partial)
+        assertEquals(null, later.enclosingCall)
+        // Not a list after in: no operand.
+        assertEquals(null, context("Patient.where(gender in ('a' 'b").comparedPath)
+        assertEquals(null, context("Patient.where(name.join('").comparedPath)
+        assertEquals(null, context("Patient.where(gender in ('a' | x | '").comparedPath)
+        assertEquals(null, context("Patient.name.where(main('").comparedPath)
+    }
+
+    @Test
     fun `a path is identifiers, calls and indexers joined by dots`() {
         listOf("name", "Patient.name[0].given", "extension('http://x.org/a b').value", "where(a = 'b').code", "\$this.x")
             .forEach { assertTrue(FhirPathTokenizer.isPath(it), it) }
