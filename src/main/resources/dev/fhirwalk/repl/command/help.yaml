@@ -202,19 +202,19 @@ commands:
         topic: tally
       - name: ":tally-join"
         args: "#n|name|@view …"
-        summary: "counts grouped by recorded expressions, a cell whole, e.g. :tally-join category type"
+        summary: "counts grouped by recorded expressions, e.g. :tally-join gender given"
         details: |
           Groups a view's rows by the first column, then by the next within
-          each group, counting at every level, most first. A cell with
-          several values counts as it reads in :view, so each resource is
-          counted once at each level. :more lists the resources under each
-          innermost group.
+          each group, counting at every level, most first. Values count as
+          :view shows them, and a cell with several counts as it reads, so
+          each resource is counted once at each level. :more lists the
+          resources under each innermost group.
         topic: tally
       - name: ":tally-split"
         args: "#n|name|@view …"
         summary: "as :tally-join, but each value of a cell counted on its own"
         details: |
-          A cell's values are counted one by one, as :tally does, so a
+          A cell's values are counted one by one, as :view shows them, so a
           resource holding two values sits in both groups and the counts can
           add up to more than the resources.
         topic: tally
@@ -249,7 +249,7 @@ commands:
         topic: recording
       - name: ":name-view"
         args: "[view]"
-        summary: name and save the last :view's columns, or :tree-view's, to rerun as @view; alone, list
+        summary: "name and save the last :view's, :tree-view's or tally's columns as @view; alone, list"
         topic: recording
       - name: ":unname-view"
         args: "<view>"
@@ -316,36 +316,6 @@ topics:
       below the focus only. :tree takes FHIRPath only; a recorded or
       named link is :tree-view's, see :manual recording.
 
-  - name: tally
-    title: Counting values
-    text: |
-      :tally Specimen.type.coding.code counts each distinct value across
-      the scope, with how many resources hold it, most first. :more lists
-      the resources under each value.
-
-      :tally-join and :tally-split count by several recorded expressions
-      at once, grouped in the order given: :tally-join category type is
-      the categories, and within each the types, each with its count. They
-      take what :view takes (#n, names, @view), and build the same rows:
-      one root type, primitive columns, over the scope. Their columns count
-      as the last view's, so :name-view saves them.
-
-      The two differ only where a cell holds several values. Patient/pat1
-      has the given names Erika, Maria and Rika:
-
-                      gender  given
-        Patient/pat1  female  Erika, Maria, Rika
-        Patient/pat2  male    Hans
-
-      :tally-join gender given counts the cell as it reads, one value
-      "Erika, Maria, Rika": each resource is counted once at each level,
-      and the counts add up to the resources. :tally-split gender given
-      counts Erika, Maria and Rika each, as :tally would: pat1 is under
-      all three, and the counts under female add up to 3. Where every
-      column holds one value per resource, the two answer the same. A cell
-      with no value is a group of its own, shown as —; one that failed,
-      shown as !.
-
   - name: focus
     title: Focusing on a resource or an element
     text: |
@@ -375,6 +345,37 @@ topics:
       parents names it, and :tree-view parents kind collected shows the
       tree with those columns along it, one row per resource in tree order.
       A row marked as shown elsewhere has no cells; its cells are there.
+
+  - name: tally
+    title: Counting values
+    text: |
+      :tally Specimen.type.coding.code counts each distinct value across
+      the scope, with how many resources hold it, most first. :more lists
+      the resources under each value.
+
+      :tally-join and :tally-split count by several recorded expressions
+      at once, grouped in the order given: :tally-join gender given is
+      the genders, and within each the given names, each with its count.
+      They take what :view takes (#n, names, @view), and build the same
+      rows: one root type, primitive columns, over the scope. Their columns
+      count as the last view's, so :name-view saves them. They count values
+      as :view shows them, trimmed and without their type, so unlike :tally
+      they count "Ann " and "Ann" as one.
+
+      The two differ only where a cell holds several values. Patient/pat1
+      has the given names Erika, Maria and Rika:
+
+                      gender  given
+        Patient/pat1  female  Erika, Maria, Rika
+        Patient/pat2  male    Hans
+
+      :tally-join gender given counts the cell as it reads, one value
+      "Erika, Maria, Rika": each resource is counted once at each level,
+      and the counts add up to the resources. :tally-split gender given
+      counts Erika, Maria and Rika each: pat1 is under all three, and the
+      counts under female add up to 3. Where every column holds one value
+      per resource, the two answer the same. A cell with no value is a
+      group of its own, shown as (no value); one that failed, as (failed).
 
   - name: pools
     title: Several pools

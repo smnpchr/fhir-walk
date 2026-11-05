@@ -4,6 +4,7 @@ import dev.fhirwalk.model.FhirVersion
 import dev.fhirwalk.repl.Output
 import dev.fhirwalk.repl.Repl
 import dev.fhirwalk.repl.Workspaces
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -35,6 +36,9 @@ class TallyTest {
             rows(":tally-join gender given"),
         )
         assertEquals("2 Patient(s) by gender › given", repl.outputOf(":tally-join gender given").lines().first())
+        // Whole, the resources under each innermost group.
+        val more = whole(":tally-join gender given")
+        assertEquals("          Patient/pat2", more[more.indexOf("      1  Hans") + 1])
     }
 
     @Test
@@ -86,12 +90,64 @@ class TallyTest {
         // value comes after the named ones that hold as many.
         repl.outputOf("Patient.name.given.where(\$this = 'Hans')")
         repl.outputOf(":name-expr hans")
-        assertEquals(listOf("  1  Hans", "      1  male", "  1  —", "      1  female"), rows(":tally-join hans gender"))
+        assertEquals(listOf("  1  Hans", "      1  male", "  1  (no value)", "      1  female"), rows(":tally-join hans gender"))
 
+        // single() fails on pat1's three names. Its row is still grouped further.
         repl.outputOf("Patient.name.given.single()")
         repl.outputOf(":name-expr one")
-        val failed = repl.outputOf(":tally-join one")
+        val failed = repl.outputOf(":tally-join one gender")
         assertTrue("1 error(s)" in failed.lines().first(), failed.lines().first())
-        assertTrue(rows(":tally-join one").any { it.endsWith("  !") }, rows(":tally-join one").toString())
+        assertEquals(listOf("  1  Hans", "      1  male", "  1  (failed)", "      1  female"), rows(":tally-join one gender"))
+    }
+
+    @Test
+    fun `a tally leaves the last expression nameable and clears picks`() {
+        repl.outputOf("Patient.gender")
+        repl.outputOf(":tally-join gender")
+        assertTrue(repl.outputOf(":name-expr sex").lines().first().contains("sex"))
+        assertEquals(rows(":tally-join gender"), rows(":tally-join sex"))
+        repl.outputOf("Patient.name.given")
+        repl.outputOf(":tally-split given")
+        assertTrue("nothing numbered to pick from" in repl.outputOf(":focus [1]").lines().first())
+    }
+
+    /** Patients made for the case: padded, repeated, blank and missing given names. */
+    private val made = Repl(FhirVersion.R4, emptyList(), Workspaces(null)).also { repl ->
+        val dir = Files.createTempDirectory("tally")
+        val given = listOf("p1" to """["  Ann  "]""", "p2" to """["Ann"]""", "p3" to """["Bo","Bo"]""", "p4" to null, "p5" to """["Cy","Di"]""")
+        for ((id, names) in given) {
+            val name = names?.let { ""","name":[{"given":$it}]""" }.orEmpty()
+            Files.writeString(dir.resolve("$id.json"), """{"resourceType":"Patient","id":"$id"$name}""")
+        }
+        repl.outputOf(":load $dir")
+        for ((expression, label) in listOf("Patient.name.given" to "given", "Patient.name.given.single()" to "one")) {
+            repl.outputOf(expression)
+            repl.outputOf(":name-expr $label")
+        }
+    }
+
+    private fun madeRows(line: String) = (made.outputOf(line).listing as Output.Listing).rows.map(::text)
+
+    @Test
+    fun `values count as view shows them, so padding does not split them as in tally`() {
+        assertEquals(listOf("  2  Ann", "  1  Bo", "  1  Cy", "  1  Di", "  1  (no value)"), madeRows(":tally-split given"))
+        assertEquals(listOf("  2  Ann", "  1  Bo, Bo", "  1  Cy, Di", "  1  (no value)"), madeRows(":tally-join given"))
+        // :tally keeps the padded one apart.
+        val tally = madeRows(":tally Patient.name.given")
+        assertTrue(tally.none { it.trimStart().startsWith("2 ") && "Ann" in it }, tally.toString())
+        assertTrue("one by one" !in made.outputOf(":tally-join given").lines().first())
+    }
+
+    @Test
+    fun `groups that count alike list values, then no value, then failed`() {
+        // + fails on several values and gives nothing for none: p3 and p5 fail, p2
+        // (only Ann) and p4 have none, and p1's padded Ann reads as :view shows it.
+        made.outputOf("Patient.name.given.where(\$this != 'Ann') + 'x'")
+        made.outputOf(":name-expr plus")
+        assertEquals(listOf("  2  (no value)", "  2  (failed)", "  1  Ann x"), madeRows(":tally-join plus"))
+        // single() fails on Bo, Bo: grouped by given first, the failure sits under Bo.
+        // p3 holds Bo twice and counts once under it.
+        assertEquals("  1  Bo", madeRows(":tally-split given one").first { "Bo" in it })
+        assertEquals("      1  (failed)", madeRows(":tally-split given one").let { it[it.indexOf("  1  Bo") + 1] })
     }
 }

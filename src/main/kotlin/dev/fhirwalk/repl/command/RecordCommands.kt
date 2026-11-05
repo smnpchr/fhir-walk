@@ -251,7 +251,7 @@ internal class RecordCommands(private val state: ReplState) : CommandGroup {
             return
         }
         val columns = state.lastView ?: run {
-            out.text("nothing to save — run a :view or a :tree-view with columns first")
+            out.text("nothing to save — run a :view, a :tree-view with columns, or a :tally-join or :tally-split first")
             return
         }
         val before = views.set(name, columns)

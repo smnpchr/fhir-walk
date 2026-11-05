@@ -8,11 +8,14 @@ import dev.fhirwalk.repl.Output
  * groups a view's rows by its first column, then by the second within each group,
  * and counts at every level, most first.
  *
+ * Both count values as `:view` shows them: one line each, trimmed, without their
+ * type. So, unlike `:tally`, they count `"Ann "` and `"Ann"` as one value.
+ *
  * The two commands differ only where a cell holds several values. `:tally-join`
  * counts the cell as it reads in `:view` (`Erika, Maria, Rika` is one value), so every
  * resource is counted once at each level. `:tally-split` counts each value on its own,
- * as `:tally` does, so one resource can sit under several groups. Where every column
- * holds one value per resource, they answer the same.
+ * so one resource can sit under several groups. Where every column holds one value per
+ * resource, they answer the same.
  *
  * Like `:view`, they take recorded expressions only (`#n`, names, `@view`); `:tally`
  * is the one that takes an expression.
@@ -24,13 +27,20 @@ internal class TallyCommands(private val state: ReplState, private val records: 
         command(":tally-split") { argument, out -> tally(argument, out, split = true) },
     )
 
-    /** One group: the value it stands for, the rows under it, and its groups by the next column. */
-    private class Node(val key: String, val failed: Boolean, val rows: List<ViewBuilder.Row>, val children: List<Node>) {
+    /** What a group stands for. Declared in the order groups of one count are listed. */
+    private enum class Kind { VALUE, NONE, FAILED }
+
+    private data class Key(val kind: Kind, val text: String = "")
+
+    /** One group: what it stands for, the rows under it, and its groups by the next column. */
+    private class Node(val key: Key, val rows: List<ViewBuilder.Row>, val children: List<Node>) {
         val count: Int get() = rows.size
     }
 
     private fun tally(argument: String, out: Output, split: Boolean) {
         val name = if (split) ":tally-split" else ":tally-join"
+        // A result with no numbered rows, so :focus [n] has nothing to pick (see
+        // ReplState.lastPicks).
         state.lastPicks = null
         val refs = argument.split(Regex("[\\s,]+")).filter { it.isNotEmpty() }
         if (refs.isEmpty()) {
@@ -41,7 +51,7 @@ internal class TallyCommands(private val state: ReplState, private val records: 
         val picked = records.columns(refs, out) ?: return
         val table = when (val result = state.session.viewBuilder.build(picked)) {
             is ViewBuilder.Result.Refused -> {
-                out.error("${result.message}")
+                out.error(result.message)
                 return
             }
             is ViewBuilder.Result.Table -> result
@@ -61,18 +71,20 @@ internal class TallyCommands(private val state: ReplState, private val records: 
             +"    ".repeat(level)
             count(node.count.toString().padStart(width))
             +"  "
-            when {
-                node.failed -> error(ViewBuilder.ERROR_CELL)
-                node.key.isEmpty() -> hint("—")
-                else -> shrink(node.key, Output.Kind.PREVIEW, cutsEnd = true)
+            when (node.key.kind) {
+                Kind.FAILED -> error(FAILED)
+                Kind.NONE -> hint(NO_VALUE)
+                // A value that is only whitespace reads as nothing once trimmed.
+                Kind.VALUE -> if (node.key.text.isEmpty()) hint("\"\"") else shrink(node.key.text, Output.Kind.PREVIEW, cutsEnd = true)
             }
         }
         val rows = mutableListOf<Output.Line>()
         val full = mutableListOf<Output.Line>()
         fun walk(nodes: List<Node>, level: Int) {
             for (node in nodes) {
-                rows += line(node, level)
-                full += line(node, level)
+                val shown = line(node, level)
+                rows += shown
+                full += shown
                 if (node.children.isEmpty()) {
                     // Whole, each innermost group lists the resources counted in it.
                     node.rows.forEach { row -> full += Output.line { +"  "; +"    ".repeat(level + 1); label(row.resource.label) } }
@@ -87,22 +99,29 @@ internal class TallyCommands(private val state: ReplState, private val records: 
 
     /**
      * The rows grouped by column [level], most first, each group grouped again by the
-     * next column. A row whose cell there failed is one group, `!`; one with no value
-     * there is one group, shown `—`.
+     * next column. Rows whose cell there failed are one group, and rows with no value
+     * there another; of groups that count alike, values come first, then those two.
      */
     private fun group(rows: List<ViewBuilder.Row>, level: Int, depth: Int, split: Boolean): List<Node> {
-        class Key(val text: String, val failed: Boolean)
-        val byKey = LinkedHashMap<Pair<String, Boolean>, MutableList<ViewBuilder.Row>>()
+        val byKey = LinkedHashMap<Key, MutableList<ViewBuilder.Row>>()
         for (row in rows) {
+            val values = row.values[level]
             val keys = when {
-                level in row.failed -> listOf(Key("", failed = true))
-                split -> row.values[level].distinct().ifEmpty { listOf("") }.map { Key(it, failed = false) }
-                else -> listOf(Key(row.cells[level], failed = false))
+                level in row.failed -> listOf(Key(Kind.FAILED))
+                values.isEmpty() -> listOf(Key(Kind.NONE))
+                split -> values.distinct().map { Key(Kind.VALUE, it) }
+                else -> listOf(Key(Kind.VALUE, row.cells[level]))
             }
-            keys.forEach { key -> byKey.getOrPut(key.text to key.failed) { mutableListOf() } += row }
+            keys.forEach { key -> byKey.getOrPut(key) { mutableListOf() } += row }
         }
         return byKey.map { (key, under) ->
-            Node(key.first, key.second, under, if (level + 1 < depth) group(under, level + 1, depth, split) else emptyList())
-        }.sortedWith(compareByDescending<Node> { it.count }.thenBy { it.failed }.thenBy { it.key.isEmpty() }.thenBy { it.key })
+            Node(key, under, if (level + 1 < depth) group(under, level + 1, depth, split) else emptyList())
+        }.sortedWith(compareByDescending<Node> { it.count }.thenBy { it.key.kind }.thenBy { it.key.text })
+    }
+
+    private companion object {
+        /** Markers no value is likely to read as: a cell's value could be `!` or `—`. */
+        const val NO_VALUE = "(no value)"
+        const val FAILED = "(failed)"
     }
 }

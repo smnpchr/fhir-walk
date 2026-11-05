@@ -130,7 +130,7 @@ Type a FHIRPath expression, or:
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:tally <expr>` | how many resources hold each value, e.g. `:tally Observation.status` |
-| `:tally-join #n\|name\|@view …` | counts grouped by recorded expressions, a cell whole, e.g. `:tally-join category type` |
+| `:tally-join #n\|name\|@view …` | counts grouped by recorded expressions, e.g. `:tally-join gender given` |
 | `:tally-split #n\|name\|@view …` | as `:tally-join`, but each value of a cell counted on its own |
 | `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
@@ -139,7 +139,7 @@ Type a FHIRPath expression, or:
 | `:tree-view <#n\|name> [#n\|name\|@view …]` | a recorded link's tree, with `:view`'s columns along it |
 | `:name-expr [name [#n]]` | name the expression just run, or `#n`, for `:view`; alone, list the names |
 | `:unname-expr <name>` | forget an expression's name |
-| `:name-view [view]` | name and save the last `:view`'s columns, or `:tree-view`'s, to rerun as `@view`; alone, list the saved views |
+| `:name-view [view]` | name and save the last `:view`'s, `:tree-view`'s or tally's columns to rerun as `@view`; alone, list the saved views |
 | `:unname-view <view>` | forget a saved view |
 | `:workspace [name]` | switch workspace; alone, show it and list the others |
 | `:more` | reprint the last listing in full, nothing shortened |
@@ -249,11 +249,13 @@ r4:pool(6)> :tally-split gender given
       1  Hans
 ```
 
-`:tally-join` counts a cell as `:view` shows it, so each resource is counted once at
-each level and the counts add up to the resources. `:tally-split` counts each value,
-as `:tally` does, so a resource holding several sits in several groups. Where every
-column holds one value per resource, they answer the same. A cell with no value is a
-group shown as `—`, and one that failed as `!`. `:more` lists the resources under each
+Both count values as `:view` shows them, trimmed and without their type, so unlike
+`:tally` they count `"Ann "` and `"Ann"` as one. `:tally-join` counts a cell as it
+reads, so each resource is counted once at each level and the counts add up to the
+resources. `:tally-split` counts each value on its own, so a resource holding several
+sits in several groups. Where every column holds one value per resource, they answer
+the same. A cell with no value is a group shown as `(no value)`, and one that failed
+as `(failed)`. `:more` lists the resources under each
 innermost group, and `:name-view` saves the columns as a view. `:manual tally` has
 the same in brief.
 

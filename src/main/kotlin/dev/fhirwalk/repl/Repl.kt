@@ -14,8 +14,8 @@ import dev.fhirwalk.repl.command.Manual
 import dev.fhirwalk.repl.command.MetaCommands
 import dev.fhirwalk.repl.command.PoolCommands
 import dev.fhirwalk.repl.command.RecordCommands
-import dev.fhirwalk.repl.command.TallyCommands
 import dev.fhirwalk.repl.command.ReplState
+import dev.fhirwalk.repl.command.TallyCommands
 import dev.fhirwalk.repl.command.TreeCommands
 import dev.fhirwalk.repl.command.WorkspaceCommands
 import dev.fhirwalk.repl.command.command
