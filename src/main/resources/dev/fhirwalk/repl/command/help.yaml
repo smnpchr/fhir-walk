@@ -291,6 +291,10 @@ topics:
       row too long for the window is cut, its count still shown; :more
       lists each value whole.
 
+      An expression pasted over several lines is read as one: its line
+      breaks are folded away, and it says what it ran. A line break inside
+      a string is refused, and so are several commands pasted at once.
+
       :why with no expression re-diagnoses the last one you ran, so the
       hint printed after an empty result can be followed by just :why.
       With a focus it counts the values each step gives there; with none

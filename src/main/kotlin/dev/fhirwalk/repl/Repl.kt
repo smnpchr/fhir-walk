@@ -262,7 +262,18 @@ class Repl(
         output.listing?.let { state.lastListing = it }
     }
 
-    private fun dispatch(input: String, out: Output): Boolean {
+    private fun dispatch(line: String, out: Output): Boolean {
+        val input = when (val pasted = PastedLine.fold(line)) {
+            is PastedLine.Result.Refused -> {
+                out.error(pasted.message)
+                return true
+            }
+            is PastedLine.Result.Line -> pasted.text.also {
+                // What is run, and recorded, is no longer what the terminal echoed.
+                if (pasted.folded) out.line { hint("read as one line: "); shrink(it, Output.Kind.PREVIEW, cutsEnd = true) }
+            }
+        }
+        if (input.isEmpty()) return true
         // The repository may have gone while the prompt waited; nothing should answer
         // from it. Once per line: each check opens every git pool's repository afresh.
         checkSources(out)

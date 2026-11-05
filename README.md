@@ -154,6 +154,12 @@ across the pool, one row per resource it matches, its values joined with `, ` as
 values)`). A row too long for the window is cut, its count still shown; `:more` lists
 each value whole.
 
+An expression pasted over several lines, say a `match:` from a rules file, is read as
+one: the line breaks and the indentation around them are folded away, and a `//`
+comment ends at its line break. What was run, and recorded, is shown once as `read as
+one line: …`. A line break inside a string cannot be folded and is refused, and so is
+a paste of several commands: paste them one at a time.
+
 ### Focusing on an element
 
 `:focus` also takes an expression. It runs against the current focus (or across the
