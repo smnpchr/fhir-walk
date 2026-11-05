@@ -437,6 +437,9 @@ class CompleterTest {
         // Neither a name nor a number already on the line comes back.
         assertEquals(setOf("born", "#2"), values(":view family #1 ").toSet())
         assertEquals(listOf("family"), values(":view fa"))
+        // The grouped tallies take a view's columns, and complete them alike.
+        assertEquals(listOf("family"), values(":tally-join fa"))
+        assertEquals(listOf("family"), values(":tally-split fa"))
         // Names are case-sensitive; completion is not, and inserts the name as it is spelled.
         assertEquals(listOf("family"), values(":view Fa"))
         // A name and the number it holds are one column: either rules out the other.

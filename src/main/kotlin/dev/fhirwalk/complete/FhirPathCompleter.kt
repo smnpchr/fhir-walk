@@ -141,7 +141,8 @@ class FhirPathCompleter(
             ":ext" -> pool().census.extensions.keys.map { it.path }.distinct().take(MAX_ROWS).forEach {
                 candidates += commandCand(it, it, "paths with extensions", null)
             }
-            ":view" -> viewColumns(arguments, lastToken, candidates)
+            // Columns, as :view takes them: the grouped tallies count a view's rows.
+            ":view", ":tally-join", ":tally-split" -> viewColumns(arguments, lastToken, candidates)
             // The link first, a name or a number; then the columns, as :view takes them.
             ":tree-view" -> if (arguments.size == 1) {
                 val room = MAX_MENU - names(lastToken, emptySet(), MAX_ROWS, candidates)

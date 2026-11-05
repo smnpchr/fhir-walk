@@ -36,6 +36,18 @@ class ViewBuilderTest {
         )
         assertEquals(listOf("Muster mann", "A, B"), table.rows.single().cells)
         assertEquals(emptySet(), table.rows.single().failed)
+        // One by one, each value as its cell shows it.
+        assertEquals(listOf(listOf("Muster mann"), listOf("A", "B")), table.rows.single().values)
+    }
+
+    @Test
+    fun `a cell with no value and a failed one both hold no values`() {
+        val table = assertIs<ViewBuilder.Result.Table>(
+            builder.build(listOf(Column("Patient.birthDate", 1), Column("Patient.name.given.single()", 2))),
+        )
+        val row = table.rows.single()
+        assertEquals(listOf(emptyList(), emptyList()), row.values)
+        assertEquals(setOf(1), row.failed)
     }
 
     @Test
