@@ -149,7 +149,9 @@ Type a FHIRPath expression, or:
 | `:manual [topic]` | how they fit together, one topic at a time; alone, the topics; `all` for the lot |
 
 With a focus set, a bare expression runs against that resource; with no focus it runs
-across the pool.
+across the pool, one row per resource it matches, its values joined with `, ` as in a
+`:view` cell (`Patient/pat1  Erika, Maria, Rika`). A row too long for the window is cut;
+`:more` lists each value whole.
 
 ### Focusing on an element
 

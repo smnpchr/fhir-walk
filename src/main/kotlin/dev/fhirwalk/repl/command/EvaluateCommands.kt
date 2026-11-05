@@ -97,8 +97,9 @@ internal class EvaluateCommands(private val state: ReplState) : CommandGroup {
                     +"  "
                     label(state.shown(hit.resource).padEnd(ReplState.LABEL_WIDTH))
                     +" "
-                    shrink(hit.values.firstOrNull()?.let { session.render.value(it) }.orEmpty(), Output.Kind.PREVIEW, cutsEnd = true)
-                    if (hit.values.size > 1) hint(" (+${hit.values.size - 1})")
+                    // Every value, joined as a :view cell joins them; the printer cuts
+                    // what does not fit, and :more shows each whole.
+                    shrink(hit.values.joinToString(", ") { session.render.value(it) }, Output.Kind.PREVIEW, cutsEnd = true)
                 }
             },
             // The full form keeps every value whole and adds the origin, so one

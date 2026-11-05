@@ -42,6 +42,14 @@ class ReplTest {
         assertTrue(output.contains(expected), "expected \"$expected\" in:\n$output")
 
     @Test
+    fun `across the pool a row holds every value its resource gave, as a view cell does`() {
+        val listing = repl.outputOf("Patient.name.given").listing as Output.Listing
+        val rows = listing.rows.map { line -> line.spans.joinToString("") { it.text }.trimEnd() }
+        assertTrue(rows.any { it.startsWith("  Patient/pat1") && it.endsWith(" Erika, Maria, Rika") }, rows.toString())
+        assertTrue(rows.none { "(+" in it }, rows.toString())
+    }
+
+    @Test
     fun `an expression under a focus numbers its rows for a pick`() {
         run(":focus Patient/pat1")
         run("name")
