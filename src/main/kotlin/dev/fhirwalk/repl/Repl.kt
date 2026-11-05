@@ -281,7 +281,7 @@ class Repl(
         }
         val name = input.substringBefore(' ')
         val argument = input.substringAfter(' ', "").trim()
-        // Saved even when the command throws part-way: a path already in the pool
+        // Saved even when the command throws part-way: what it changed before throwing
         // must not be missing from the workspace. Expressions change nothing saved.
         try {
             val command = byName[name]

@@ -302,8 +302,11 @@ class WorkspaceTest {
     @Test
     fun `starting again with a path the workspace restores does not double the pool`() {
         Session(paths = listOf(basic))
+        Session().run(":focus Patient/pat1")
         val next = Session(paths = listOf(basic))
         assertContains(next.out, "6 replaced; pool now 6")
+        // Restored once, and not announced again by the reload on top.
+        assertEquals(1, next.out.lines().count { it.startsWith("focus Patient/pat1") }, next.out)
         assertContains(next.run(":pool"), "6 resource(s)")
     }
 

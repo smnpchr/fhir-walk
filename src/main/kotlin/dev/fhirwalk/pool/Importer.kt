@@ -32,8 +32,10 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
         /** Files that were one Bundle, as against a single resource or NDJSON, which may hold Bundles. */
         var bundles: Int = 0,
         val problems: MutableList<String> = mutableListOf(),
-        /** Resources that took the place of one with the same identity; see [ResourcePool.merge]. */
+        /** Resources that took the place of one the pool held under the same identity; see [ResourcePool.merge]. */
         var replaced: Int = 0,
+        /** Identities read more than once in this load, with how often; the last read is kept. */
+        var repeated: Map<String, Int> = emptyMap(),
     ) {
         fun summary(): String = buildString {
             append("$resources resource(s) from $files file(s)")
@@ -65,20 +67,28 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
      */
     fun load(path: Path): Report {
         val report = Report()
-        read.clear()
-        when {
-            path.isDirectory() -> loadTree(path, report)
-            path.isRegularFile() -> loadFile(path, report)
-            else -> report.problems += "not found: $path"
+        // What this load read, merged into the pool once all of it is read; nothing
+        // is added when reading throws part-way.
+        val read = mutableListOf<ResourcePool.Incoming>()
+        reading = read
+        try {
+            when {
+                path.isDirectory() -> loadTree(path, report)
+                path.isRegularFile() -> loadFile(path, report)
+                else -> report.problems += "not found: $path"
+            }
+        } finally {
+            reading = null
         }
-        report.replaced = pool.merge(read.toList())
-        read.clear()
+        val merged = pool.merge(read)
+        report.replaced = merged.replaced
+        report.repeated = merged.repeated
         pool.settleReferences()
         return report
     }
 
-    /** What the load under way has read, merged into the pool once it is done. */
-    private val read = mutableListOf<ResourcePool.Incoming>()
+    /** Where [addToPool] puts what the load under way reads. */
+    private var reading: MutableList<ResourcePool.Incoming>? = null
 
     /** Import #2: walk a directory tree, picking up everything that looks like FHIR. */
     private fun loadTree(root: Path, report: Report) {
@@ -168,7 +178,7 @@ class Importer(private val ctx: FhirContext, private val pool: ResourcePool) {
     fun reads(name: String): Boolean = name.substringAfterLast('.', "").lowercase() in SUPPORTED
 
     private fun addToPool(resource: IBaseResource, fullUrl: String?, origin: String) {
-        read += ResourcePool.Incoming(resource, fullUrl, origin)
+        checkNotNull(reading) { "not loading" } += ResourcePool.Incoming(resource, fullUrl, origin)
     }
 
     /** Import #1: a Bundle flattens into its entries, recursively. */

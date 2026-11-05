@@ -105,8 +105,13 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
         )
     }
 
-    /** Follows [steps], as [focusSteps] wrote them, as far as they still reach one value. */
-    fun restoreFocus(steps: List<String>, out: Output) {
+    /**
+     * Follows [steps], as [focusSteps] wrote them, as far as they still reach one value.
+     *
+     * @param quietly whether to say nothing when the focus comes back whole: a reload
+     *   that put it back where it was has nothing to tell. Falling short is always said.
+     */
+    fun restoreFocus(steps: List<String>, out: Output, quietly: Boolean = false) {
         if (steps.isEmpty()) return
         var current: Focus? = null
         for (step in steps) {
@@ -119,6 +124,8 @@ internal class FocusCommands(private val state: ReplState) : CommandGroup {
             }
         }
         session.focus = current
+        val whole = current != null && focusSteps(current) == steps
+        if (quietly && whole) return
         current?.let { out.text("focus ${it.label}${state.inPool()}") }
     }
 

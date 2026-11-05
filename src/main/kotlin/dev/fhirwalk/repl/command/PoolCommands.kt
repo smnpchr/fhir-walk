@@ -40,11 +40,12 @@ internal class PoolCommands(
         }
         val steps = focus.focusSteps(session.focus)
         val report = session.importer.load(Paths.get(state.expandHome(path)))
-        if (report.replaced > 0) {
-            // The pool was rebuilt: rows and picks name resources it no longer holds, and
-            // a focused one may be among those replaced. Found again by its steps.
+        val rebuilt = report.replaced > 0 || report.repeated.isNotEmpty()
+        if (rebuilt) {
+            // Picks name resources the pool may no longer hold, and a focused one may be
+            // among those replaced: found again by its steps. A listing keeps its rows,
+            // whose #index still holds.
             state.lastPicks = null
-            state.lastListing = null
             session.focus = null
         }
         // Absolute, so the next session finds it from wherever it is started.
@@ -52,7 +53,13 @@ internal class PoolCommands(
         val loaded = session.current.loadedPaths
         if (report.files > 0 && absolute !in loaded) loaded += absolute
         state.withProblems(out, "loaded ${report.summary()}; ${state.poolName()} now ${session.pool.size}", report.problems)
-        if (report.replaced > 0) focus.restoreFocus(steps, out)
+        // Read twice in this load: the same resource by its identity, whatever files
+        // held it, and the load's order decides which read stays.
+        report.repeated.entries.take(MAX_REPEATED).forEach { (identity, times) ->
+            out.hint("  $identity read $times times in this load — the last read is kept")
+        }
+        if (report.repeated.size > MAX_REPEATED) out.hint("  and ${report.repeated.size - MAX_REPEATED} more read more than once")
+        if (rebuilt) focus.restoreFocus(steps, out, quietly = true)
     }
 
     private fun poolSummary(out: Output) {
@@ -241,5 +248,10 @@ internal class PoolCommands(
         } catch (e: FhirVersionUnavailable) {
             out.error("${e.message}")
         }
+    }
+
+    private companion object {
+        /** Identities read twice in one load that are named; the rest are counted. */
+        const val MAX_REPEATED = 5
     }
 }

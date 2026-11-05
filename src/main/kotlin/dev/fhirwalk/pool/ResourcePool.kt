@@ -135,44 +135,62 @@ class ResourcePool(val ctx: FhirContext, private val censused: Boolean = true) {
     class Incoming(val resource: IBaseResource, val fullUrl: String?, val origin: String)
 
     /**
-     * Adds [incoming] to a plain pool, each read resource taking the place of the one
-     * already held under the same identity: `Type/id`, else its fullUrl. That identity
-     * is what makes two resources the same one, whatever file either came from, so
-     * loading a path again, or one overlapping it, replaces rather than doubles, and a
-     * file edited since it was read updates the pool. A resource with neither id nor
-     * fullUrl has no identity and is added. A replaced resource keeps its place, and
-     * so its `#index`; the indexes and the census are then rebuilt, as for a revision.
+     * What a [merge] did besides adding.
      *
-     * @return how many resources replaced one held before or read earlier in [incoming].
+     * @param replaced how many read resources took the place of one the pool held.
+     * @param repeated identities read more than once in the same load, with how often:
+     *   only the last read of each is kept, as the order of the load has it.
      */
-    fun merge(incoming: List<Incoming>): Int {
-        class Slot(val resource: IBaseResource, val fullUrl: String?, val origin: String)
-        fun identity(resource: IBaseResource, fullUrl: String?): String? =
-            resource.idElement?.idPart?.takeIf { it.isNotBlank() }?.let { "${ctx.getResourceType(resource)}/$it" }
-                ?: fullUrl?.takeIf { it.isNotBlank() }
-        val slots = items.mapTo(mutableListOf()) { Slot(it.resource, it.fullUrl, it.origin) }
+    class Merged(val replaced: Int, val repeated: Map<String, Int>)
+
+    /**
+     * Adds [incoming] to a plain pool, each read resource taking the place of the one
+     * already held under the same identity ([identityOf]). That identity is what makes
+     * two resources the same one, whatever file either came from, so loading a path
+     * again, or one overlapping it, replaces rather than doubles, and a file edited
+     * since it was read updates the pool. Read twice in one load, the last read is
+     * kept. A resource with neither id nor fullUrl has no identity and is added. A
+     * replaced resource keeps its place, and so its `#index`; the indexes and the
+     * census are then rebuilt, which costs about a fresh load of the pool.
+     *
+     * Only for a plain pool: a git or meta pool is filled by its own loader, with a
+     * scope or parts that a rebuild here would lose.
+     */
+    fun merge(incoming: List<Incoming>): Merged {
+        require(partNames.isEmpty() && scope == null) { "merge is for a plain pool" }
+        val slots = items.mapTo(mutableListOf()) { Incoming(it.resource, it.fullUrl, it.origin) }
+        val held = slots.size
         val at = HashMap<String, Int>()
-        slots.forEachIndexed { i, slot -> identity(slot.resource, slot.fullUrl)?.let { at.putIfAbsent(it, i) } }
+        slots.forEachIndexed { i, slot -> identityOf(slot.resource, slot.fullUrl)?.let { at.putIfAbsent(it, i) } }
         var replaced = 0
+        val reads = HashMap<String, Int>()
         for (read in incoming) {
-            val id = identity(read.resource, read.fullUrl)
+            val id = identityOf(read.resource, read.fullUrl)
+            id?.let { reads.merge(it, 1, Int::plus) }
             val i = id?.let(at::get)
             if (i != null) {
-                slots[i] = Slot(read.resource, read.fullUrl, read.origin)
-                replaced++
+                slots[i] = read
+                if (i < held) replaced++
             } else {
                 id?.let { at[it] = slots.size }
-                slots += Slot(read.resource, read.fullUrl, read.origin)
+                slots += read
             }
         }
-        if (replaced == 0) {
+        val repeated = reads.filterValues { it > 1 }
+        if (slots.size == held + incoming.size) {
+            // Nothing took another's place: an ordinary add.
             incoming.forEach { add(it.resource, it.fullUrl, it.origin) }
         } else {
             clear()
             slots.forEach { add(it.resource, it.fullUrl, it.origin) }
         }
-        return replaced
+        return Merged(replaced, repeated)
     }
+
+    /** What makes [resource] the same one wherever it is read: `Type/id`, else its fullUrl; null for neither. */
+    fun identityOf(resource: IBaseResource, fullUrl: String?): String? =
+        resource.idElement?.idPart?.takeIf { it.isNotBlank() }?.let { "${ctx.getResourceType(resource)}/$it" }
+            ?: fullUrl?.takeIf { it.isNotBlank() }
 
     /**
      * Types the references the census could not type from their string, by resolving

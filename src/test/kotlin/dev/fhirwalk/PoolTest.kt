@@ -295,4 +295,40 @@ class PoolTest {
         }
 
     private fun <T> requireNonNull(value: T?): T = assertNotNull(value)
+
+    @Test
+    fun `merge replaces by identity in place, appends what has none, and keeps the last read`() {
+        val pool = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        fun read(text: String, origin: String = "x.json") = ResourcePool.Incoming(json.parseResource(text), null, origin)
+        fun patient(id: String?, family: String) =
+            read("""{"resourceType":"Patient"${id?.let { ""","id":"$it"""" }.orEmpty()},"name":[{"family":"$family"}]}""")
+        fun family(i: Int) = ((pool.byIndex(i)!!.resource as org.hl7.fhir.r4.model.Patient).nameFirstRep.family)
+
+        assertEquals(0, pool.merge(listOf(patient("p1", "A"), patient("p2", "B"))).replaced)
+        val again = pool.merge(listOf(patient("p1", "A2")))
+        assertEquals(1, again.replaced)
+        assertEquals(2, pool.size)
+        // In place: #0 is still p1, as it now reads.
+        assertEquals("A2", family(0))
+
+        // No identity: added each time.
+        pool.merge(listOf(patient(null, "X")))
+        pool.merge(listOf(patient(null, "X")))
+        assertEquals(4, pool.size)
+
+        // Read twice in one load: one resource, the last read, and said so; nothing held was replaced.
+        val twice = pool.merge(listOf(patient("p3", "C"), patient("p3", "C2")))
+        assertEquals(0, twice.replaced)
+        assertEquals(mapOf("Patient/p3" to 2), twice.repeated)
+        assertEquals(5, pool.size)
+        assertEquals("C2", family(4))
+    }
+
+    @Test
+    fun `merge refuses a pool with parts`() {
+        val pool = ResourcePool(ctx)
+        pool.add(ctx.newJsonParser().parseResource("""{"resourceType":"Patient","id":"p"}"""), null, "b.json", part = "bundle-1")
+        kotlin.test.assertFailsWith<IllegalArgumentException> { pool.merge(emptyList()) }
+    }
 }
