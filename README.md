@@ -130,6 +130,8 @@ Type a FHIRPath expression, or:
 | `:all <expr>` | evaluate across the whole pool |
 | `:why <expr>` | find the step where the expression goes empty |
 | `:tally <expr>` | how many resources hold each value, e.g. `:tally Observation.status` |
+| `:tally-join #n\|name\|@view …` | counts grouped by recorded expressions, a cell whole, e.g. `:tally-join category type` |
+| `:tally-split #n\|name\|@view …` | as `:tally-join`, but each value of a cell counted on its own |
 | `:tree <expr>` | what the expression links, as a tree from each root down, e.g. `:tree Specimen.parent` |
 | `:ext [path]` | extension URLs observed in the pool |
 | `:history [filter]` | recorded pool-wide expressions, newest first |
@@ -223,6 +225,37 @@ many bundles hold it. `:more` lists the resources under each value. Values are t
 apart by type and exact text, structured ones by their JSON: `"Stool"` and `"Stool "`,
 or the string `"5"` and the integer `5`, are two rows, spelled out with their type
 and quotes where a row would otherwise show them alike.
+
+`:tally-join` and `:tally-split` count by several recorded expressions at once,
+grouped in the order given. They take what `:view` takes (`#n`, names from
+`:name-expr`, `@view`) and build the same rows: one root type, primitive columns,
+over the scope. The two differ only where a cell holds several values, as
+`Patient/pat1`'s three given names do:
+
+```
+r4:pool(6)> :tally-join gender given
+2 Patient(s) by gender › given
+  1  female
+      1  Erika, Maria, Rika
+  1  male
+      1  Hans
+r4:pool(6)> :tally-split gender given
+2 Patient(s) by gender › given; a cell's values counted one by one
+  1  female
+      1  Erika
+      1  Maria
+      1  Rika
+  1  male
+      1  Hans
+```
+
+`:tally-join` counts a cell as `:view` shows it, so each resource is counted once at
+each level and the counts add up to the resources. `:tally-split` counts each value,
+as `:tally` does, so a resource holding several sits in several groups. Where every
+column holds one value per resource, they answer the same. A cell with no value is a
+group shown as `—`, and one that failed as `!`. `:more` lists the resources under each
+innermost group, and `:name-view` saves the columns as a view. `:manual tally` has
+the same in brief.
 
 ### Recorded expressions and `:view`
 

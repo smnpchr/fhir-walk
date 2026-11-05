@@ -14,6 +14,7 @@ import dev.fhirwalk.repl.command.Manual
 import dev.fhirwalk.repl.command.MetaCommands
 import dev.fhirwalk.repl.command.PoolCommands
 import dev.fhirwalk.repl.command.RecordCommands
+import dev.fhirwalk.repl.command.TallyCommands
 import dev.fhirwalk.repl.command.ReplState
 import dev.fhirwalk.repl.command.TreeCommands
 import dev.fhirwalk.repl.command.WorkspaceCommands
@@ -84,7 +85,7 @@ class Repl(
     private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 
     private val commands: List<Command> = listOf(
-        poolCommands, metaCommands, gitCommands, ChangeCommands(state), evaluateCommands, TreeCommands(state, recordCommands), focusCommands, recordCommands, workspaceCommands,
+        poolCommands, metaCommands, gitCommands, ChangeCommands(state), evaluateCommands, TallyCommands(state, recordCommands), TreeCommands(state, recordCommands), focusCommands, recordCommands, workspaceCommands,
         DisplayCommands(state),
         // Asked for only when :help runs; the aliases include :help's own, so they
         // cannot be known before this list is.

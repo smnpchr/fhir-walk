@@ -176,14 +176,6 @@ commands:
         args: "[expr]"
         summary: find the step where the expression goes empty
         topic: evaluating
-      - name: ":tally"
-        args: "<expr>"
-        summary: how many resources hold each value, e.g. :tally Observation.status
-        details: |
-          Runs across the scope as :all does, and counts each distinct value
-          once per resource that holds it, most first. :more lists the
-          resources under each value.
-        topic: evaluating
       - name: ":tree"
         args: "<expr>"
         summary: what the expression links, as a tree from each root down, e.g. :tree Specimen.parent
@@ -197,6 +189,35 @@ commands:
         args: "[path]"
         summary: extension URLs observed in the pool
         topic: completion
+
+  - group: Counting
+    commands:
+      - name: ":tally"
+        args: "<expr>"
+        summary: how many resources hold each value, e.g. :tally Observation.status
+        details: |
+          Runs across the scope as :all does, and counts each distinct value
+          once per resource that holds it, most first. :more lists the
+          resources under each value.
+        topic: tally
+      - name: ":tally-join"
+        args: "#n|name|@view …"
+        summary: "counts grouped by recorded expressions, a cell whole, e.g. :tally-join category type"
+        details: |
+          Groups a view's rows by the first column, then by the next within
+          each group, counting at every level, most first. A cell with
+          several values counts as it reads in :view, so each resource is
+          counted once at each level. :more lists the resources under each
+          innermost group.
+        topic: tally
+      - name: ":tally-split"
+        args: "#n|name|@view …"
+        summary: "as :tally-join, but each value of a cell counted on its own"
+        details: |
+          A cell's values are counted one by one, as :tally does, so a
+          resource holding two values sits in both groups and the counts can
+          add up to more than the resources.
+        topic: tally
 
   - group: Recorded expressions and views
     commands:
@@ -278,9 +299,8 @@ topics:
       middle to fit the window; :more prints every step whole.
 
       An expression across the pool runs once per resource, so distinct()
-      only removes repeats within one. :tally Specimen.type.coding.code
-      counts across them: each value with how many resources hold it,
-      most first, over the scope. :more lists the resources under each.
+      only removes repeats within one. :tally counts across them; see
+      :manual tally.
 
       :tree Specimen.parent follows the links an expression makes, from
       each resource to its parents, and prints them top down: roots first,
@@ -295,6 +315,36 @@ topics:
       in a meta pool within each bundle; with a focus it shows the tree
       below the focus only. :tree takes FHIRPath only; a recorded or
       named link is :tree-view's, see :manual recording.
+
+  - name: tally
+    title: Counting values
+    text: |
+      :tally Specimen.type.coding.code counts each distinct value across
+      the scope, with how many resources hold it, most first. :more lists
+      the resources under each value.
+
+      :tally-join and :tally-split count by several recorded expressions
+      at once, grouped in the order given: :tally-join category type is
+      the categories, and within each the types, each with its count. They
+      take what :view takes (#n, names, @view), and build the same rows:
+      one root type, primitive columns, over the scope. Their columns count
+      as the last view's, so :name-view saves them.
+
+      The two differ only where a cell holds several values. Patient/pat1
+      has the given names Erika, Maria and Rika:
+
+                      gender  given
+        Patient/pat1  female  Erika, Maria, Rika
+        Patient/pat2  male    Hans
+
+      :tally-join gender given counts the cell as it reads, one value
+      "Erika, Maria, Rika": each resource is counted once at each level,
+      and the counts add up to the resources. :tally-split gender given
+      counts Erika, Maria and Rika each, as :tally would: pat1 is under
+      all three, and the counts under female add up to 3. Where every
+      column holds one value per resource, the two answer the same. A cell
+      with no value is a group of its own, shown as —; one that failed,
+      shown as !.
 
   - name: focus
     title: Focusing on a resource or an element

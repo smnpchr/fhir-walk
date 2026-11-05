@@ -54,8 +54,17 @@ class ViewBuilder(
             }
     }
 
-    /** @param failed the columns whose expression failed here, shown as [ERROR_CELL]. */
-    data class Row(val resource: PooledResource, val cells: List<String>, val failed: Set<Int> = emptySet())
+    /**
+     * @param failed the columns whose expression failed here, shown as [ERROR_CELL].
+     * @param values each cell's values one by one, as [cells] joins them; empty for a
+     *   cell with none, and for one that failed.
+     */
+    data class Row(
+        val resource: PooledResource,
+        val cells: List<String>,
+        val failed: Set<Int> = emptySet(),
+        val values: List<List<String>> = emptyList(),
+    )
 
     sealed interface Result {
         data class Table(
@@ -121,7 +130,7 @@ class ViewBuilder(
                                     "not a primitive — only primitive values fit a column; navigate one level further",
                             )
                         }
-                        cell(outcome.values)
+                        outcome.values.map(::text)
                     }
                     // Null until the rows are made, so a value that reads "!" is not taken for one.
                     is Outcome.Failure -> {
@@ -134,18 +143,23 @@ class ViewBuilder(
         }
 
         val rows = resources.mapIndexed { idx, resource ->
-            Row(resource, cellsByColumn.map { it[idx] ?: ERROR_CELL }, cellsByColumn.indices.filter { cellsByColumn[it][idx] == null }.toSet())
+            Row(
+                resource,
+                cellsByColumn.map { column -> column[idx]?.joinToString(", ")?.trim() ?: ERROR_CELL },
+                cellsByColumn.indices.filter { cellsByColumn[it][idx] == null }.toSet(),
+                cellsByColumn.map { column -> column[idx].orEmpty() },
+            )
         }
         return Result.Table(type, columns, rows, errors, firstError)
     }
 
     /**
-     * One line, whatever the values hold: a narrative `div` or a note with line breaks
-     * would otherwise spread one row over several and break the column alignment.
+     * One value on one line, whatever it holds: a narrative `div` or a note with line
+     * breaks would otherwise spread one row over several and break the column alignment.
+     * A cell joins its values with ", ".
      */
-    private fun cell(values: List<IBase>): String =
-        values.joinToString(", ") { (it as IPrimitiveType<*>).valueAsString.orEmpty() }
-            .replace(WHITESPACE, " ").trim()
+    private fun text(value: IBase): String =
+        (value as IPrimitiveType<*>).valueAsString.orEmpty().replace(WHITESPACE, " ").trim()
 
     private fun rootType(expression: String): String? =
         FhirPathTokenizer.segments(expression).firstOrNull()?.name
