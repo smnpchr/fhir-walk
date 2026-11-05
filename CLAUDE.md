@@ -212,9 +212,10 @@ produces confusing results that look like product bugs.
   or `Workspaces(<temp dir>)`, or they write into the developer's home. `./gradlew run` does not forward `JAVA_OPTS`, so `-Duser.home=…` does not
   redirect it there either; the installed start script does honour it.
 - **Everything a workspace keeps is one entry per line** (expression log, names,
-  views, state). A line reaches commands only through `PastedLine.fold` at the top of
-  `Repl.dispatch`, which folds a bracketed paste's line breaks or refuses one inside a
-  string (#103). Anything new that stores what the user typed relies on that.
+  views, state). Every line typed at the prompt goes through `PastedLine.fold` at the
+  top of `Repl.dispatch`, which folds a bracketed paste's line breaks or refuses one
+  inside a string (#103); only the paths given on the command line skip it. Anything
+  new that stores what the user typed relies on that.
 - Commands write into an `Output` and `Printer` prints it: colour, fitting to the
   window, the row limit and `:more` all live there. Write new output with spans
   (`out.line { index(id); +"  "; shrink(subject) }`, `out.listing(…)`), marking the

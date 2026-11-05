@@ -44,12 +44,37 @@ class PastedLineTest {
     }
 
     @Test
+    fun `a block comment is kept, one line, with quotes and slashes in it as text`() {
+        assertEquals("Patient.name /* don't */.given", folded("Patient.name /* don't */\n  .given"))
+        assertEquals("Patient /* see http://x */.given", folded("Patient /* see http://x */\n  .given"))
+        assertEquals("Patient /* a b */.name", folded("Patient /* a\n   b */\n.name"))
+    }
+
+    @Test
+    fun `a command that takes no FHIRPath only has its breaks made spaces`() {
+        assertEquals(":load /tmp/x//y more", folded(":load /tmp/x//y\nmore"))
+        assertEquals(":load ~/O'Brien more", folded(":load ~/O'Brien\nmore"))
+        // One that takes FHIRPath is folded as an expression.
+        assertEquals(":all Patient.name.given", folded(":all Patient.name // names\n  .given"))
+    }
+
+    @Test
+    fun `several commands pasted at once are refused`() {
+        val refused = assertIs<PastedLine.Result.Refused>(PastedLine.fold(":pool\n:history"))
+        assertTrue("paste one at a time" in refused.message, refused.message)
+        assertIs<PastedLine.Result.Refused>(PastedLine.fold("Patient.name\n  :history"))
+    }
+
+    @Test
     fun `a break inside a string or a quoted identifier is refused`() {
         val refused = assertIs<PastedLine.Result.Refused>(PastedLine.fold("Patient.name.where(family = 'Muster\nmann')"))
         assertTrue("inside a string" in refused.message && "\\n" in refused.message, refused.message)
         assertIs<PastedLine.Result.Refused>(PastedLine.fold("Patient.`na\nme`"))
         // An escaped quote does not end the string.
         assertIs<PastedLine.Result.Refused>(PastedLine.fold("name.where(family = 'O\\'Bri\nen')"))
+        // Nor does a backslash let a break through.
+        assertIs<PastedLine.Result.Refused>(PastedLine.fold("name.where(family = 'a\\\nb')"))
+        assertIs<PastedLine.Result.Refused>(PastedLine.fold("name.where(family = 'a\\\r\nb')"))
     }
 
     @Test
