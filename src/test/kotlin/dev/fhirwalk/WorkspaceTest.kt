@@ -298,4 +298,24 @@ class WorkspaceTest {
         assertContains(listed, "  tree")
         assertContains(listed, "* other")
     }
+
+    @Test
+    fun `starting again with a path the workspace restores does not double the pool`() {
+        Session(paths = listOf(basic))
+        Session().run(":focus Patient/pat1")
+        val next = Session(paths = listOf(basic))
+        assertContains(next.out, "6 replaced; pool now 6")
+        // Restored once, and not announced again by the reload on top.
+        assertEquals(1, next.out.lines().count { it.startsWith("focus Patient/pat1") }, next.out)
+        assertContains(next.run(":pool"), "6 resource(s)")
+    }
+
+    @Test
+    fun `a state that loaded a file and then its directory restores whole, each resource once`() {
+        Files.createDirectories(stateFile().parent)
+        Files.writeString(stateFile(), "fhir\tr4\nload\t$basic/bundle.json\nload\t$basic\n")
+        val restored = Session()
+        assertContains(restored.out, "3 replaced; pool now 6")
+        assertContains(restored.run(":pool"), "6 resource(s)")
+    }
 }

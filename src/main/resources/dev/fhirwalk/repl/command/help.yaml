@@ -21,6 +21,11 @@ commands:
       - name: ":load"
         args: "<path>"
         summary: import a file, bundle, NDJSON or directory tree
+        details: |
+          A resource with the Type/id (else fullUrl) of one the pool holds
+          replaces it, whatever file it came from: loading a path again updates
+          the pool rather than doubling it. Read twice in one load, the last read
+          is kept, with a hint. One with neither id nor fullUrl is added again.
         topic: pools
       - name: ":pool"
         args: "[name]"

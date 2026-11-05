@@ -15,6 +15,7 @@ internal class PoolCommands(
     private val state: ReplState,
     private val git: GitCommands,
     private val meta: MetaCommands,
+    private val focus: FocusCommands,
 ) : CommandGroup {
 
     private val session: Session get() = state.session
@@ -37,12 +38,28 @@ internal class PoolCommands(
             out.text("${state.poolName()} is a meta pool of ${it.definition.dir} — :meta ${session.current.name} reads it again; :open another pool to load files")
             return
         }
+        val steps = focus.focusSteps(session.focus)
         val report = session.importer.load(Paths.get(state.expandHome(path)))
+        val rebuilt = report.replaced > 0 || report.repeated.isNotEmpty()
+        if (rebuilt) {
+            // Picks name resources the pool may no longer hold, and a focused one may be
+            // among those replaced: found again by its steps. A listing keeps its rows,
+            // whose #index still holds.
+            state.lastPicks = null
+            session.focus = null
+        }
         // Absolute, so the next session finds it from wherever it is started.
         val absolute = Paths.get(state.expandHome(path)).toAbsolutePath().normalize().toString()
         val loaded = session.current.loadedPaths
         if (report.files > 0 && absolute !in loaded) loaded += absolute
         state.withProblems(out, "loaded ${report.summary()}; ${state.poolName()} now ${session.pool.size}", report.problems)
+        // Read twice in this load: the same resource by its identity, whatever files
+        // held it, and the load's order decides which read stays.
+        report.repeated.entries.take(MAX_REPEATED).forEach { (identity, times) ->
+            out.hint("  $identity read $times times in this load — the last read is kept")
+        }
+        if (report.repeated.size > MAX_REPEATED) out.hint("  and ${report.repeated.size - MAX_REPEATED} more read more than once")
+        if (rebuilt) focus.restoreFocus(steps, out, quietly = true)
     }
 
     private fun poolSummary(out: Output) {
@@ -231,5 +248,10 @@ internal class PoolCommands(
         } catch (e: FhirVersionUnavailable) {
             out.error("${e.message}")
         }
+    }
+
+    private companion object {
+        /** Identities read twice in one load that are named; the rest are counted. */
+        const val MAX_REPEATED = 5
     }
 }

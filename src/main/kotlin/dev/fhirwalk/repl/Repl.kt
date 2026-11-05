@@ -80,7 +80,7 @@ class Repl(
     private val focusCommands = FocusCommands(state)
     private val metaCommands = MetaCommands(state)
     private val gitCommands = GitCommands(state, focusCommands, metaCommands)
-    private val poolCommands = PoolCommands(state, gitCommands, metaCommands)
+    private val poolCommands = PoolCommands(state, gitCommands, metaCommands, focusCommands)
     private val workspaceCommands = WorkspaceCommands(state, poolCommands, gitCommands, focusCommands)
 
     private val commands: List<Command> = listOf(
@@ -281,7 +281,7 @@ class Repl(
         }
         val name = input.substringBefore(' ')
         val argument = input.substringAfter(' ', "").trim()
-        // Saved even when the command throws part-way: a path already in the pool
+        // Saved even when the command throws part-way: what it changed before throwing
         // must not be missing from the workspace. Expressions change nothing saved.
         try {
             val command = byName[name]
