@@ -142,6 +142,9 @@ object FhirPathTokenizer {
         /** Completing inside a quoted string argument, e.g. `extension('…`. */
         STRING_ARG,
 
+        /** Inside a "…" or `…` quoted identifier, where nothing is offered. */
+        QUOTED_NAME,
+
         /** Completing a type name argument, e.g. `ofType(…`. */
         TYPE_ARG,
     }
@@ -155,7 +158,9 @@ object FhirPathTokenizer {
      * @param comparedPath for a [CursorKind.STRING_ARG] on the right of `=`, `!=`, `~`
      *   or `!~`: the absolute path of the left operand, e.g. `Patient.gender` for
      *   `Patient.gender = '…` or `Observation.code.coding.code` for
-     *   `Observation.code.coding.where(code = '…`.
+     *   `Observation.code.coding.where(code = '…`. Also for one inside the list of
+     *   `gender in ('female' | '…` (#102), where it is the left of `in`.
+     * @param listed the values already in such a list, which need not be offered again.
      */
     data class CursorContext(
         val kind: CursorKind,
@@ -164,6 +169,7 @@ object FhirPathTokenizer {
         val replaceFrom: Int,
         val enclosingCall: String? = null,
         val comparedPath: String? = null,
+        val listed: Set<String> = emptySet(),
     )
 
     private val IDENT = Regex("[A-Za-z0-9_]")
@@ -195,14 +201,14 @@ object FhirPathTokenizer {
 
         val innermostOpen = openCalls.lastOrNull()
         val callName = innermostOpen?.let { identifierEndingAt(head, it) }
-        val callInputPath = innermostOpen?.let { open ->
-            val nameStart = open - (callName?.length ?: 0)
-            head.substring(0, nameStart).trimEnd().removeSuffix(".").trimEnd()
-        }
+        val callInputPath = innermostOpen?.let { inputOf(head, openCalls, openCalls.lastIndex) }
 
         // Inside a string literal: the only sensible completions are data-derived
         // (extension URLs, systems, profiles), which is exactly the corpus axis.
         if (quote != null && quoteStart >= 0) {
+            // "…" and `…` quote an identifier: no value, URL or system belongs there.
+            if (quote != '\'') return CursorContext(CursorKind.QUOTED_NAME, callInputPath ?: "", head.substring(quoteStart + 1), quoteStart + 1)
+            membership(head, openCalls, quoteStart)?.let { return it }
             val operand = comparedOperand(head.substring((innermostOpen?.plus(1)) ?: 0, quoteStart))
             val compared = when {
                 operand == null -> null
@@ -250,6 +256,76 @@ object FhirPathTokenizer {
 
     private val TYPE_ARG_FUNCTIONS = setOf("ofType", "as", "is")
 
+    /** Before a list's `(`: the left operand, then `in`, as a word. */
+    private val IN_LIST = Regex("""(.*\S)\s+in\s*$""", RegexOption.DOT_MATCHES_ALL)
+
+    /** Inside a list, up to the literal being typed: whole literals, each followed by `|`. */
+    private val LISTED = Regex("""^\s*('(?:[^'\\]|\\.)*'\s*\|\s*)*$""")
+    private val LITERAL = Regex("""'((?:[^'\\]|\\.)*)'""")
+
+    /**
+     * A string literal typed as a member of `<operand> in ( … | '…`: the values
+     * observed at the operand are the answer, as on the right of `=`. The operand
+     * stands where the list's `(` does, so inside a `where(` it is relative to that
+     * call's input, one paren further out.
+     */
+    private fun membership(head: String, openCalls: List<Int>, quoteStart: Int): CursorContext? {
+        val open = openCalls.lastOrNull() ?: return null
+        if (head[open] != '(') return null
+        val listText = head.substring(open + 1, quoteStart)
+        if (!LISTED.matches(listText)) return null
+        val outer = openCalls.getOrNull(openCalls.size - 2)
+        if (outer != null && head[outer] == '[') return null
+        val outerInput = inputOf(head, openCalls, openCalls.size - 2)
+        // `in(` reads as a call named in; `in (` as a bare paren. Both are a list.
+        val name = identifierEndingAt(head, open)
+        val before = head.substring((outer?.plus(1)) ?: 0, open - name.length)
+        val left = when (name) {
+            "in" -> before.trimEnd().takeIf { it.isNotEmpty() && before.last().isWhitespace() }
+            "" -> IN_LIST.find(before)?.groupValues?.get(1)
+            else -> null
+        } ?: return null
+        val operand = operandOf(left) ?: return null
+        val compared = when {
+            outerInput == null -> operand
+            operand == "\$this" -> outerInput
+            else -> listOfNotNull(outerInput?.takeIf { it.isNotBlank() }, operand).joinToString(".")
+        }
+        return CursorContext(
+            kind = CursorKind.STRING_ARG,
+            basePath = outerInput ?: "",
+            partial = head.substring(quoteStart + 1),
+            replaceFrom = quoteStart + 1,
+            enclosingCall = null,
+            comparedPath = compared,
+            // As the census holds them: 'O\'Brien' is O'Brien.
+            listed = LITERAL.findAll(listText).map { it.groupValues[1].replace(ESCAPE, "$1") }.toSet(),
+        )
+    }
+
+    private val ESCAPE = Regex("""\\(.)""")
+
+    /**
+     * The input of the call whose bracket is `openCalls[index]`: what a path inside it
+     * is relative to. A bare paren, as in `where((gender in (…)).not())`, groups and
+     * nothing more, so the input is that of the call around it; null at the root.
+     */
+    private fun inputOf(head: String, openCalls: List<Int>, index: Int): String? {
+        var k = index
+        while (k >= 0) {
+            val open = openCalls[k]
+            val name = identifierEndingAt(head, open)
+            if (head[open] == '(' && name.isEmpty()) {
+                k--
+                continue
+            }
+            return head.substring(0, open - name.length).trimEnd().removeSuffix(".").trimEnd()
+        }
+        return null
+    }
+
+    private val WHITESPACE = Regex("""\s""")
+
     private val COMPARISON = Regex("""(?<![<>])(!=|!~|=|~)\s*$""")
 
     /**
@@ -260,8 +336,14 @@ object FhirPathTokenizer {
     private fun comparedOperand(text: String): String? {
         val lastArg = splitTopLevel(text, ',').last()
         val match = COMPARISON.find(lastArg) ?: return null
-        val left = lastArg.substring(0, match.range.first).trimEnd()
-        val operand = splitTopLevel(left, ' ').last().trim()
+        return operandOf(lastArg.substring(0, match.range.first))
+    }
+
+    /** The last term of [left], the last argument's, as a path; `$this` as itself. */
+    private fun operandOf(left: String): String? {
+        // A pasted line keeps its breaks until it is run, and TAB sees them.
+        val terms = splitTopLevel(left, ',').last().replace(WHITESPACE, " ").trimEnd()
+        val operand = splitTopLevel(terms, ' ').last().trim()
         return if (operand == "\$this") operand else operand.removePrefix("\$this.").takeIf { it.isNotEmpty() }
     }
 

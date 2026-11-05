@@ -372,6 +372,43 @@ class CompleterTest {
     }
 
     @Test
+    fun `a literal in an in list offers the observed values not yet in it`() {
+        val gender = candidates("Patient.where(gender in ('")
+        assertEquals(setOf("female", "male"), gender.map { it.displ() }.toSet())
+        assertTrue(gender.all { it.group() == "observed values" })
+        // It closes the literal only: | or ) comes next.
+        assertTrue(gender.all { it.value().endsWith("'") && !it.value().endsWith("')") }, "got ${gender.map { it.value() }}")
+        assertEquals(listOf("male"), displays("Patient.where(gender in ('female' | '"))
+        assertEquals(listOf("male"), displays("Patient.gender in('female' | '"))
+        // All of them listed: nothing, rather than code systems.
+        assertEquals(emptyList(), displays("Patient.gender in ('female' | 'male' | '"))
+        // Negated, in the only way FHIRPath has.
+        assertEquals(setOf("female", "male"), displays("Patient.where((gender in ('").toSet())
+        // Code systems, the fallback, leave out the listed ones too.
+        val systems = displays("Observation.code.coding.where(system in ('")
+        assertTrue("http://loinc.org" in systems, systems.toString())
+        assertTrue("http://loinc.org" !in displays("Observation.code.coding.where(system in ('http://loinc.org' | '"))
+        // A quoted identifier is not a string: nothing fits there.
+        assertEquals(emptyList(), displays("Patient.gender in (\""))
+    }
+
+    @Test
+    fun `a value holding a quote is inserted escaped, so the string still parses`() {
+        val pool = ResourcePool(ctx)
+        val json = ctx.newJsonParser()
+        pool.add(json.parseResource("""{"resourceType":"Observation","id":"o1","status":"final","code":{"coding":[{"code":"O'Brien\\x"}]}}"""), null, "test")
+        val completer = FhirPathCompleter({ ModelNavigator(ctx, pool.census) }, { pool }, { COMMANDS })
+        fun complete(line: String) = mutableListOf<Candidate>().also {
+            completer.complete(reader, parser.parse(line, line.length, Parser.ParseContext.COMPLETE), it)
+        }
+        val offered = complete("Observation.code.coding.code = '").single()
+        assertEquals("O'Brien\\x", offered.displ())
+        assertEquals("O\\'Brien\\\\x'", offered.value())
+        // Listed as typed, escaped, it is not offered again.
+        assertEquals(emptyList(), complete("Observation.code.coding.code in ('O\\'Brien\\\\x' | '").map { it.displ() })
+    }
+
+    @Test
     fun `values reach through extension steps and filters`() {
         val ext = "Patient.extension('http://hl7.org/fhir/StructureDefinition/patient-nationality')" +
             ".extension('code').value.coding.code = '"
